@@ -66,6 +66,14 @@ export function readyForNextShot(state: GameState): GameState {
   };
 }
 
+export function resolveSettledState(state: GameState): GameState {
+  if (state.cueBallPocketed) {
+    return resetCueBall(state);
+  }
+
+  return readyForNextShot(state);
+}
+
 export function restartGame(targetCount: number): GameState {
   return createGameState(targetCount);
 }

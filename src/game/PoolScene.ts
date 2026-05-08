@@ -14,9 +14,8 @@ import {
   createGameState,
   pocketCueBall,
   pocketTargetBall,
-  readyForNextShot,
   recordStroke,
-  resetCueBall,
+  resolveSettledState,
   restartGame,
   type GameState,
 } from './state';
@@ -338,10 +337,8 @@ export class PoolScene extends Phaser.Scene {
 
     if (this.state.cueBallPocketed) {
       this.resetCueBallBody();
-      this.state = resetCueBall(this.state);
-    } else {
-      this.state = readyForNextShot(this.state);
     }
+    this.state = resolveSettledState(this.state);
     this.updateHud();
   }
 
