@@ -9,44 +9,61 @@ export type BallTextureOptions = {
 
 export function createBallTexture(scene: Phaser.Scene, options: BallTextureOptions): void {
   const size = BALL_RADIUS * 2 + 12;
-  const graphics = scene.make.graphics({ x: 0, y: 0 });
+  const texture = scene.textures.createCanvas(options.key, size, size);
+  const canvas = texture?.getSourceImage() as HTMLCanvasElement | undefined;
+  const context = canvas?.getContext('2d');
 
-  graphics.fillStyle(0x000000, 0.28);
-  graphics.fillCircle(size / 2 + 2, size / 2 + 3, BALL_RADIUS);
-  graphics.fillStyle(Phaser.Display.Color.HexStringToColor(options.fill).color, 1);
-  graphics.fillCircle(size / 2, size / 2, BALL_RADIUS);
-  graphics.fillGradientStyle(0xffffff, 0xffffff, 0x000000, 0x000000, 0.42, 0.08, 0.16, 0.24);
-  graphics.fillCircle(size / 2 - 2, size / 2 - 2, BALL_RADIUS - 2);
-  graphics.fillStyle(0xffffff, 0.62);
-  graphics.fillCircle(size / 2 - 5, size / 2 - 6, BALL_RADIUS * 0.28);
-
-  if (options.label) {
-    graphics.fillStyle(0xf8ecd6, 0.98);
-    graphics.fillCircle(size / 2, size / 2, BALL_RADIUS * 0.43);
+  if (!texture || !context) {
+    return;
   }
 
-  graphics.lineStyle(1, 0xffffff, 0.18);
-  graphics.strokeCircle(size / 2, size / 2, BALL_RADIUS - 1);
-  graphics.generateTexture(options.key, size, size);
-  graphics.destroy();
+  const center = size / 2;
+  context.clearRect(0, 0, size, size);
+
+  context.fillStyle = 'rgba(0, 0, 0, 0.28)';
+  context.beginPath();
+  context.arc(center + 2, center + 3, BALL_RADIUS, 0, Math.PI * 2);
+  context.fill();
+
+  context.fillStyle = options.fill;
+  context.beginPath();
+  context.arc(center, center, BALL_RADIUS, 0, Math.PI * 2);
+  context.fill();
+
+  const shade = context.createRadialGradient(center - 5, center - 6, 1, center, center, BALL_RADIUS);
+  shade.addColorStop(0, 'rgba(255, 255, 255, 0.5)');
+  shade.addColorStop(0.42, 'rgba(255, 255, 255, 0.1)');
+  shade.addColorStop(1, 'rgba(0, 0, 0, 0.24)');
+  context.fillStyle = shade;
+  context.beginPath();
+  context.arc(center, center, BALL_RADIUS - 1, 0, Math.PI * 2);
+  context.fill();
+
+  context.fillStyle = 'rgba(255, 255, 255, 0.62)';
+  context.beginPath();
+  context.arc(center - 5, center - 6, BALL_RADIUS * 0.28, 0, Math.PI * 2);
+  context.fill();
 
   if (options.label) {
-    const label = scene.add.text(size / 2, size / 2 + 1, options.label, {
-      color: '#20160f',
-      fontFamily: 'Georgia, serif',
-      fontSize: '11px',
-      fontStyle: 'bold',
-    });
-    label.setOrigin(0.5);
-    const renderTexture = scene.add.renderTexture(0, 0, size, size);
-    renderTexture.draw(options.key, size / 2, size / 2);
-    renderTexture.draw(label, size / 2, size / 2);
-    renderTexture.saveTexture(`${options.key}-numbered`);
-    label.destroy();
-    renderTexture.destroy();
-    scene.textures.remove(options.key);
-    scene.textures.renameTexture(`${options.key}-numbered`, options.key);
+    context.fillStyle = 'rgba(248, 236, 214, 0.98)';
+    context.beginPath();
+    context.arc(center, center, BALL_RADIUS * 0.43, 0, Math.PI * 2);
+    context.fill();
+
+    context.fillStyle = '#20160f';
+    context.font = 'bold 11px Georgia, serif';
+    context.textAlign = 'center';
+    context.textBaseline = 'middle';
+    context.fillText(options.label, center, center + 0.5);
   }
+
+  context.strokeStyle = 'rgba(255, 255, 255, 0.18)';
+  context.lineWidth = 1;
+  context.beginPath();
+  context.arc(center, center, BALL_RADIUS - 1, 0, Math.PI * 2);
+  context.stroke();
+
+  texture.refresh();
 }
 
 export function drawPoolHall(scene: Phaser.Scene): void {
