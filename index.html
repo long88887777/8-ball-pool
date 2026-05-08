@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Realistic 2D Pool</title>
+  </head>
+  <body>
+    <main class="game-shell">
+      <section class="game-header" aria-label="Game status">
+        <div>
+          <p class="eyebrow">Practice Table</p>
+          <h1>Realistic 2D Pool</h1>
+        </div>
+        <div class="hud" aria-live="polite">
+          <span id="score">Score 0</span>
+          <span id="strokes">Strokes 0</span>
+          <span id="remaining">Balls 0</span>
+          <button id="restart" type="button">Restart</button>
+        </div>
+      </section>
+      <section class="table-frame" aria-label="Playable pool table">
+        <div id="game"></div>
+      </section>
+      <p id="message" class="message">Drag from the cue ball to aim. Release to shoot.</p>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
