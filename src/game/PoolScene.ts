@@ -1,26 +1,30 @@
 import Phaser from 'phaser';
 import { PoolAudio } from './audio';
 import {
+  BALLS,
   BALL_COLORS,
   BALL_RADIUS,
   CUE,
   CUE_START,
   PLAY_AREA,
   POCKETS,
+  RACK_CENTER,
   TABLE,
-  TARGET_STARTS,
   type Vector,
 } from './constants';
-import { clampShotPower, distance, getCuePullback, isInPocket, isTableReady } from './geometry';
+import { clampShotPower, createTriangleRack, distance, getCuePullback, isInPocket, isTableReady } from './geometry';
 import { createBallTexture, drawCueStick, drawPoolHall, drawRefinedTable } from './rendering';
 import {
   createGameState,
+  completeRack,
   pocketCueBall,
   pocketTargetBall,
+  readBestStrokes,
   recordStroke,
   resolveSettledState,
   restartGame,
   type GameState,
+  writeBestStrokes,
 } from './state';
 
 type BallKind = 'cue' | 'target';
@@ -49,7 +53,7 @@ export class PoolScene extends Phaser.Scene {
   private targetBalls: PoolBall[] = [];
   private aimLine!: Phaser.GameObjects.Graphics;
   private cueGraphics!: Phaser.GameObjects.Graphics;
-  private state: GameState = createGameState(TARGET_STARTS.length);
+  private state: GameState = createGameState(BALLS.length);
   private aimState: AimState | null = null;
   private wasMoving = false;
   private strikeLocked = false;
@@ -72,6 +76,7 @@ export class PoolScene extends Phaser.Scene {
       32,
     );
     this.createTextures();
+    this.state = createGameState(BALLS.length, this.readBest());
     this.drawRoom();
     this.drawTable();
     this.createBalls();
@@ -96,8 +101,8 @@ export class PoolScene extends Phaser.Scene {
 
   private createTextures(): void {
     createBallTexture(this, { key: 'cue-ball', fill: '#f8f0dd' });
-    BALL_COLORS.forEach((color, index) => {
-      createBallTexture(this, { key: `target-ball-${index}`, fill: color });
+    BALLS.forEach((ball, index) => {
+      createBallTexture(this, { key: `target-ball-${index}`, fill: ball.color, label: String(ball.id) });
     });
   }
 
@@ -115,7 +120,7 @@ export class PoolScene extends Phaser.Scene {
     this.targetBalls = [];
 
     this.cueBall = this.createBall(CUE_START, 'cue-ball', 'cue');
-    TARGET_STARTS.forEach((position, index) => {
+    createTriangleRack(RACK_CENTER, BALLS.length).forEach((position, index) => {
       this.targetBalls.push(this.createBall(position, `target-ball-${index}`, 'target'));
     });
   }
@@ -320,6 +325,10 @@ export class PoolScene extends Phaser.Scene {
       this.resetCueBallBody();
     }
     this.state = resolveSettledState(this.state);
+    if (this.state.rackComplete) {
+      const best = writeBestStrokes(window.localStorage, this.state.strokes);
+      this.state = completeRack(this.state, best);
+    }
     this.updateHud();
   }
 
@@ -363,20 +372,28 @@ export class PoolScene extends Phaser.Scene {
     this.cueGraphics?.clear();
     this.strikeLocked = false;
     this.createBalls();
-    this.state = restartGame(TARGET_STARTS.length);
+    this.state = restartGame(BALLS.length, this.readBest());
     this.wasMoving = false;
     this.updateHud();
   }
 
   private updateHud(): void {
+    const mode = document.querySelector('#mode');
     const score = document.querySelector('#score');
     const strokes = document.querySelector('#strokes');
+    const best = document.querySelector('#best');
     const remaining = document.querySelector('#remaining');
     const message = document.querySelector('#message');
 
+    if (mode) mode.textContent = 'Clear Table';
     if (score) score.textContent = `Score ${this.state.score}`;
     if (strokes) strokes.textContent = `Strokes ${this.state.strokes}`;
+    if (best) best.textContent = `Best ${this.state.bestStrokes ?? '--'}`;
     if (remaining) remaining.textContent = `Balls ${this.state.remainingTargets}`;
     if (message) message.textContent = this.state.message;
+  }
+
+  private readBest(): number | null {
+    return readBestStrokes(window.localStorage);
   }
 }

@@ -72,6 +72,11 @@ h1 {
   color: #f5ead8;
 }
 
+.hud #mode {
+  border-color: rgba(216, 176, 113, 0.5);
+  background: rgba(83, 48, 20, 0.72);
+}
+
 .hud button {
   cursor: pointer;
 }
@@ -109,6 +114,7 @@ h1 {
   color: #d7c6aa;
   text-align: center;
   font-size: 15px;
+  text-wrap: balance;
 }
 
 @media (max-width: 760px) {

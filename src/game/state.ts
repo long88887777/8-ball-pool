@@ -86,8 +86,8 @@ export function resolveSettledState(state: GameState): GameState {
   return readyForNextShot(state);
 }
 
-export function restartGame(targetCount: number): GameState {
-  return createGameState(targetCount);
+export function restartGame(targetCount: number, bestStrokes: number | null = null): GameState {
+  return createGameState(targetCount, bestStrokes);
 }
 
 export function completeRack(state: GameState, bestStrokes = state.bestStrokes): GameState {
