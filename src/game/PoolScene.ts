@@ -10,6 +10,7 @@ import {
   type Vector,
 } from './constants';
 import { clampShotPower, distance, isInPocket, isTableReady } from './geometry';
+import { createBallTexture, drawPoolHall, drawRefinedTable } from './rendering';
 import {
   createGameState,
   pocketCueBall,
@@ -87,69 +88,18 @@ export class PoolScene extends Phaser.Scene {
   }
 
   private createTextures(): void {
-    this.createBallTexture('cue-ball', '#f8f0dd', '#ffffff');
+    createBallTexture(this, { key: 'cue-ball', fill: '#f8f0dd' });
     BALL_COLORS.forEach((color, index) => {
-      this.createBallTexture(`target-ball-${index}`, color, '#fff2c8');
+      createBallTexture(this, { key: `target-ball-${index}`, fill: color });
     });
   }
 
-  private createBallTexture(key: string, fill: string, shine: string): void {
-    const size = BALL_RADIUS * 2 + 8;
-    const graphics = this.make.graphics({ x: 0, y: 0 });
-    graphics.fillStyle(0x000000, 0.22);
-    graphics.fillCircle(size / 2 + 2, size / 2 + 3, BALL_RADIUS);
-    graphics.fillStyle(Phaser.Display.Color.HexStringToColor(fill).color, 1);
-    graphics.fillCircle(size / 2, size / 2, BALL_RADIUS);
-    graphics.fillStyle(Phaser.Display.Color.HexStringToColor(shine).color, 0.55);
-    graphics.fillCircle(size / 2 - 5, size / 2 - 6, BALL_RADIUS * 0.34);
-    graphics.lineStyle(1, 0xffffff, 0.16);
-    graphics.strokeCircle(size / 2, size / 2, BALL_RADIUS - 1);
-    graphics.generateTexture(key, size, size);
-    graphics.destroy();
-  }
-
   private drawRoom(): void {
-    const room = this.add.graphics().setDepth(DEPTH.room);
-    room.fillGradientStyle(0x241914, 0x241914, 0x0e0b09, 0x0e0b09, 1);
-    room.fillRect(0, 0, TABLE.width, TABLE.height);
-    room.fillStyle(0xf3bd71, 0.13);
-    room.fillEllipse(TABLE.width / 2, 44, 520, 150);
+    drawPoolHall(this);
   }
 
   private drawTable(): void {
-    const table = this.add.graphics().setDepth(DEPTH.table);
-    table.fillStyle(0x25150d, 1);
-    table.fillRoundedRect(44, 44, TABLE.width - 88, TABLE.height - 88, 34);
-    table.lineStyle(8, 0x0d0805, 0.9);
-    table.strokeRoundedRect(44, 44, TABLE.width - 88, TABLE.height - 88, 34);
-
-    table.fillStyle(0x5b321b, 1);
-    table.fillRoundedRect(56, 56, TABLE.width - 112, TABLE.height - 112, 26);
-    table.lineStyle(3, 0xa66b35, 0.42);
-    table.strokeRoundedRect(62, 62, TABLE.width - 124, TABLE.height - 124, 22);
-
-    table.fillStyle(0x0b5c3e, 1);
-    table.fillRoundedRect(
-      PLAY_AREA.left,
-      PLAY_AREA.top,
-      PLAY_AREA.right - PLAY_AREA.left,
-      PLAY_AREA.bottom - PLAY_AREA.top,
-      18,
-    );
-
-    const cloth = this.add.graphics().setDepth(DEPTH.table + 0.1);
-    cloth.fillStyle(0xffffff, 0.025);
-    for (let y = PLAY_AREA.top + 20; y < PLAY_AREA.bottom; y += 18) {
-      cloth.fillRect(PLAY_AREA.left + 8, y, PLAY_AREA.right - PLAY_AREA.left - 16, 1);
-    }
-
-    const pockets = this.add.graphics().setDepth(DEPTH.pocket);
-    for (const pocket of POCKETS) {
-      pockets.fillStyle(0x050403, 1);
-      pockets.fillCircle(pocket.x, pocket.y, TABLE.pocketRadius);
-      pockets.lineStyle(3, 0x160d08, 1);
-      pockets.strokeCircle(pocket.x, pocket.y, TABLE.pocketRadius - 1);
-    }
+    drawRefinedTable(this);
   }
 
   private createBalls(): void {
