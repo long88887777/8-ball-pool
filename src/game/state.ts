@@ -1,17 +1,32 @@
+export type StorageAdapter = {
+  getItem(key: string): string | null;
+  setItem(key: string, value: string): void;
+};
+
+export type PracticeMode = 'clear-table';
+
+export const BEST_STROKES_KEY = 'pool.bestStrokes.clearTable';
+
 export type GameState = {
   score: number;
   strokes: number;
   remainingTargets: number;
   cueBallPocketed: boolean;
+  rackComplete: boolean;
+  mode: PracticeMode;
+  bestStrokes: number | null;
   message: string;
 };
 
-export function createGameState(targetCount: number): GameState {
+export function createGameState(targetCount: number, bestStrokes: number | null = null): GameState {
   return {
     score: 0,
     strokes: 0,
     remainingTargets: targetCount,
     cueBallPocketed: false,
+    rackComplete: false,
+    mode: 'clear-table',
+    bestStrokes,
     message: 'Drag from the cue ball to aim. Release to shoot.',
   };
 }
@@ -54,10 +69,7 @@ export function resetCueBall(state: GameState): GameState {
 
 export function readyForNextShot(state: GameState): GameState {
   if (state.remainingTargets === 0) {
-    return {
-      ...state,
-      message: 'Table cleared. Restart for another rack.',
-    };
+    return completeRack(state);
   }
 
   return {
@@ -76,4 +88,42 @@ export function resolveSettledState(state: GameState): GameState {
 
 export function restartGame(targetCount: number): GameState {
   return createGameState(targetCount);
+}
+
+export function completeRack(state: GameState, bestStrokes = state.bestStrokes): GameState {
+  const nextBest = bestStrokes === null ? state.strokes : Math.min(bestStrokes, state.strokes);
+
+  return {
+    ...state,
+    rackComplete: true,
+    bestStrokes: nextBest,
+    message: `Rack cleared in ${state.strokes} strokes. Start a new rack when ready.`,
+  };
+}
+
+export function readBestStrokes(storage: Pick<StorageAdapter, 'getItem'>): number | null {
+  try {
+    const value = storage.getItem(BEST_STROKES_KEY);
+    if (!value) {
+      return null;
+    }
+
+    const parsed = Number(value);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+export function writeBestStrokes(storage: StorageAdapter, strokes: number): number | null {
+  const previous = readBestStrokes(storage);
+  const next = previous === null ? strokes : Math.min(previous, strokes);
+
+  try {
+    storage.setItem(BEST_STROKES_KEY, String(next));
+  } catch {
+    return previous;
+  }
+
+  return next;
 }
