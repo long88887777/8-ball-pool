@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import {
   BALL_COLORS,
   BALL_RADIUS,
+  CUE,
   CUE_START,
   PLAY_AREA,
   POCKETS,
@@ -9,8 +10,8 @@ import {
   TARGET_STARTS,
   type Vector,
 } from './constants';
-import { clampShotPower, distance, isInPocket, isTableReady } from './geometry';
-import { createBallTexture, drawPoolHall, drawRefinedTable } from './rendering';
+import { clampShotPower, distance, getCuePullback, isInPocket, isTableReady } from './geometry';
+import { createBallTexture, drawCueStick, drawPoolHall, drawRefinedTable } from './rendering';
 import {
   createGameState,
   pocketCueBall,
@@ -46,9 +47,11 @@ export class PoolScene extends Phaser.Scene {
   private cueBall!: PoolBall;
   private targetBalls: PoolBall[] = [];
   private aimLine!: Phaser.GameObjects.Graphics;
+  private cueGraphics!: Phaser.GameObjects.Graphics;
   private state: GameState = createGameState(TARGET_STARTS.length);
   private aimState: AimState | null = null;
   private wasMoving = false;
+  private strikeLocked = false;
   private restartButton?: HTMLButtonElement;
   private restartHandler = (): void => {
     this.restartRack();
@@ -71,6 +74,7 @@ export class PoolScene extends Phaser.Scene {
     this.drawTable();
     this.createBalls();
     this.aimLine = this.add.graphics().setDepth(DEPTH.aim);
+    this.cueGraphics = this.add.graphics().setDepth(DEPTH.aim + 1);
     this.bindInput();
     this.bindRestart();
     this.updateHud();
@@ -175,7 +179,7 @@ export class PoolScene extends Phaser.Scene {
   }
 
   private canAim(): boolean {
-    return !this.state.cueBallPocketed && this.state.remainingTargets > 0 && this.tableReady();
+    return !this.strikeLocked && !this.state.cueBallPocketed && this.state.remainingTargets > 0 && this.tableReady();
   }
 
   private cuePosition(): Vector {
@@ -201,13 +205,32 @@ export class PoolScene extends Phaser.Scene {
       return;
     }
 
+    const cueAngle = Math.atan2(-pull.y / dragDistance, -pull.x / dragDistance);
+    this.strikeLocked = true;
+    this.tweens.addCounter({
+      from: getCuePullback(power),
+      to: 12,
+      duration: CUE.strikeDurationMs,
+      ease: 'Cubic.easeIn',
+      onUpdate: (tween) => {
+        drawCueStick(this.cueGraphics, cue.x, cue.y, cueAngle, tween.getValue() ?? 12);
+      },
+      onComplete: () => {
+        this.cueGraphics.clear();
+        this.applyCueImpulse(pull, dragDistance, power);
+        this.strikeLocked = false;
+      },
+    });
+    this.state = recordStroke(this.state);
+    this.wasMoving = true;
+    this.updateHud();
+  }
+
+  private applyCueImpulse(pull: Vector, dragDistance: number, power: number): void {
     const impulseScale = TABLE.maxImpulse * power;
     this.cueBall.applyForce(
       new Phaser.Math.Vector2((-pull.x / dragDistance) * impulseScale, (-pull.y / dragDistance) * impulseScale),
     );
-    this.state = recordStroke(this.state);
-    this.wasMoving = true;
-    this.updateHud();
   }
 
   private renderAim(): void {
@@ -232,8 +255,9 @@ export class PoolScene extends Phaser.Scene {
       x: -pull.x / dragDistance,
       y: -pull.y / dragDistance,
     };
+    const cueAngle = Math.atan2(direction.y, direction.x);
     const guideLength = 120 + power * 190;
-    const cueBack = 36 + power * 90;
+    const cueBack = getCuePullback(power);
 
     this.aimLine.lineStyle(3, 0xf6e7b4, 0.9);
     this.aimLine.beginPath();
@@ -241,14 +265,9 @@ export class PoolScene extends Phaser.Scene {
     this.aimLine.lineTo(cue.x + direction.x * guideLength, cue.y + direction.y * guideLength);
     this.aimLine.strokePath();
 
-    this.aimLine.lineStyle(7, 0x8a5a32, 0.95);
-    this.aimLine.beginPath();
-    this.aimLine.moveTo(cue.x - direction.x * (BALL_RADIUS + cueBack), cue.y - direction.y * (BALL_RADIUS + cueBack));
-    this.aimLine.lineTo(cue.x - direction.x * (BALL_RADIUS + 8), cue.y - direction.y * (BALL_RADIUS + 8));
-    this.aimLine.strokePath();
-
     this.aimLine.fillStyle(0xd9a441, 0.95);
     this.aimLine.fillRoundedRect(PLAY_AREA.left, PLAY_AREA.bottom + 24, power * 220, 10, 5);
+    drawCueStick(this.cueGraphics, cue.x, cue.y, cueAngle, cueBack);
   }
 
   private checkPockets(): void {
@@ -329,6 +348,8 @@ export class PoolScene extends Phaser.Scene {
   private restartRack(): void {
     this.aimState = null;
     this.aimLine?.clear();
+    this.cueGraphics?.clear();
+    this.strikeLocked = false;
     this.createBalls();
     this.state = restartGame(TARGET_STARTS.length);
     this.wasMoving = false;
