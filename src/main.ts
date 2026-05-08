@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { PoolScene } from './game/PoolScene';
 import './styles.css';
 
 const config: Phaser.Types.Core.GameConfig = {
@@ -7,7 +8,7 @@ const config: Phaser.Types.Core.GameConfig = {
   width: 1100,
   height: 640,
   backgroundColor: '#10100e',
-  scene: [],
+  scene: [PoolScene],
   physics: {
     default: 'matter',
     matter: {
