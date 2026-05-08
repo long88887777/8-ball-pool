@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { PoolAudio } from './audio';
 import {
   BALL_COLORS,
   BALL_RADIUS,
@@ -52,6 +53,7 @@ export class PoolScene extends Phaser.Scene {
   private aimState: AimState | null = null;
   private wasMoving = false;
   private strikeLocked = false;
+  private readonly audio = new PoolAudio();
   private restartButton?: HTMLButtonElement;
   private restartHandler = (): void => {
     this.restartRack();
@@ -76,6 +78,7 @@ export class PoolScene extends Phaser.Scene {
     this.aimLine = this.add.graphics().setDepth(DEPTH.aim);
     this.cueGraphics = this.add.graphics().setDepth(DEPTH.aim + 1);
     this.bindInput();
+    this.bindCollisions();
     this.bindRestart();
     this.updateHud();
 
@@ -145,6 +148,7 @@ export class PoolScene extends Phaser.Scene {
         return;
       }
 
+      this.audio.unlock();
       const point = { x: pointer.worldX, y: pointer.worldY };
       if (distance(point, this.cuePosition()) > BALL_RADIUS * 2.2) {
         return;
@@ -231,6 +235,7 @@ export class PoolScene extends Phaser.Scene {
     this.cueBall.applyForce(
       new Phaser.Math.Vector2((-pull.x / dragDistance) * impulseScale, (-pull.y / dragDistance) * impulseScale),
     );
+    this.audio.play('cue');
   }
 
   private renderAim(): void {
@@ -286,8 +291,15 @@ export class PoolScene extends Phaser.Scene {
       } else {
         this.state = pocketTargetBall(this.state);
       }
+      this.audio.play('pocket');
       this.updateHud();
     }
+  }
+
+  private bindCollisions(): void {
+    this.matter.world.on('collisionstart', () => {
+      this.audio.play('collision');
+    });
   }
 
   private handleSettledTable(): void {
