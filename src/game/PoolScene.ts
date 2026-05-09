@@ -2,36 +2,60 @@ import Phaser from 'phaser';
 import { PoolAudio } from './audio';
 import {
   BALLS,
-  BALL_COLORS,
   BALL_RADIUS,
   CUE,
   CUE_START,
+  CUSHION_NOSE_INSET,
   PLAY_AREA,
   POCKETS,
   RACK_CENTER,
   TABLE,
   type Vector,
 } from './constants';
-import { clampShotPower, createTriangleRack, distance, getCuePullback, isInPocket, isTableReady } from './geometry';
-import { createBallTexture, drawCueStick, drawPoolHall, drawRefinedTable } from './rendering';
 import {
-  createGameState,
-  completeRack,
-  pocketCueBall,
-  pocketTargetBall,
-  readBestStrokes,
-  recordStroke,
-  resolveSettledState,
-  restartGame,
-  type GameState,
-  writeBestStrokes,
-} from './state';
+  clampBreakCuePosition,
+  clampShotPower,
+  createTriangleRack,
+  getCuePullback,
+  isOnTableSurface,
+  predictCollisionDirections,
+  rayCircleIntersection,
+} from './geometry';
+import { formatMessage, getCopy, getInitialLanguage, type Language } from './i18n';
+import { ProfessionalPoolEngine } from './proPhysics/engine';
+import {
+  SPIN_PRESETS,
+  contactOffsetMatchesPreset,
+  normalizeCueContactOffset,
+  type CueSpinPreset,
+} from './proPhysics/spin';
+import type { PhysicsBallSnapshot, PhysicsEvent } from './proPhysics/types';
+import {
+  createBallTexture,
+  drawCueStick,
+  drawPoolHall,
+  drawRefinedTable,
+} from './rendering';
+import {
+  clearEightBallBallInHand,
+  createEightBallState,
+  getPocketedDisplayBallIds,
+  getPlayerRemainingBallIds,
+  getRemainingEightBallCount,
+  recordEightBallFirstContact,
+  recordEightBallPocket,
+  recordEightBallTimeoutFoul,
+  resolveEightBallShot,
+  startEightBallShot,
+  type EightBallState,
+} from './eightBallRules';
+import { createGameState, recordStroke, restartGame, type GameState } from './state';
 
 type BallKind = 'cue' | 'target';
 
-type PoolBall = Phaser.Physics.Matter.Image & {
-  body: MatterJS.BodyType;
+type PoolBall = Phaser.GameObjects.Image & {
   ballKind: BallKind;
+  ballId: number;
   pocketed?: boolean;
 };
 
@@ -40,70 +64,136 @@ type AimState = {
   current: Vector;
 };
 
+type CuePlacementState = {
+  pointerId: number;
+  kind: 'break' | 'ball-in-hand';
+};
+
 const DEPTH = {
   room: 0,
   table: 1,
-  pocket: 2,
   ball: 4,
   aim: 5,
 };
+
+const SHOT_CLOCK_SECONDS = 20;
 
 export class PoolScene extends Phaser.Scene {
   private cueBall!: PoolBall;
   private targetBalls: PoolBall[] = [];
   private aimLine!: Phaser.GameObjects.Graphics;
   private cueGraphics!: Phaser.GameObjects.Graphics;
+  private forbiddenIcon!: Phaser.GameObjects.Graphics;
+  private handSprite!: Phaser.GameObjects.Image;
+  private cuePlacementValid = true;
   private state: GameState = createGameState(BALLS.length);
+  private rules: EightBallState = createEightBallState();
   private aimState: AimState | null = null;
+  private cuePlacementState: CuePlacementState | null = null;
   private wasMoving = false;
   private strikeLocked = false;
+  private shotClockRemaining = SHOT_CLOCK_SECONDS;
   private readonly audio = new PoolAudio();
+  private readonly physicsEngine = new ProfessionalPoolEngine();
   private restartButton?: HTMLButtonElement;
+  private languageButton?: HTMLButtonElement;
+  private victoryOverlay?: HTMLElement;
+  private victoryTitle?: HTMLElement;
+  private victoryDetail?: HTMLElement;
+  private victoryRestartButton?: HTMLButtonElement;
+  private spinPadButton?: HTMLButtonElement;
+  private spinMarker?: HTMLElement;
+  private spinPresetButtons: HTMLButtonElement[] = [];
+  private selectedSpin: Vector = SPIN_PRESETS.center;
+  private spinPadPointerId: number | null = null;
+  private language: Language = getInitialLanguage(navigator.language);
   private restartHandler = (): void => {
     this.restartRack();
+  };
+  private victoryRestartHandler = (): void => {
+    this.restartRack();
+  };
+  private languageHandler = (): void => {
+    this.language = this.language === 'en' ? 'zh' : 'en';
+    this.updateHud();
   };
 
   constructor() {
     super('PoolScene');
   }
 
+  preload(): void {
+    this.load.image('hand-raw', 'assets/hand-raw.png');
+  }
+
   create(): void {
-    this.matter.world.setBounds(
-      PLAY_AREA.left,
-      PLAY_AREA.top,
-      PLAY_AREA.right - PLAY_AREA.left,
-      PLAY_AREA.bottom - PLAY_AREA.top,
-      32,
-    );
     this.createTextures();
-    this.state = createGameState(BALLS.length, this.readBest());
+    this.state = createGameState(BALLS.length, null);
+    this.rules = createEightBallState();
     this.drawRoom();
     this.drawTable();
+    this.createHandTexture();
+    this.handSprite = this.add.image(0, 0, 'hand').setDepth(DEPTH.ball + 1).setVisible(false);
     this.createBalls();
     this.aimLine = this.add.graphics().setDepth(DEPTH.aim);
     this.cueGraphics = this.add.graphics().setDepth(DEPTH.aim + 1);
+    this.forbiddenIcon = this.createForbiddenIcon();
     this.bindInput();
-    this.bindCollisions();
     this.bindRestart();
+    this.bindLanguage();
+    this.bindSpinControl();
     this.updateHud();
+
+    this.bindVictoryOverlay();
 
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       this.restartButton?.removeEventListener('click', this.restartHandler);
+      this.languageButton?.removeEventListener('click', this.languageHandler);
+      this.victoryRestartButton?.removeEventListener('click', this.victoryRestartHandler);
+      this.unbindSpinControl();
     });
   }
 
   update(): void {
-    this.applyRollingFriction();
-    this.checkPockets();
-    this.handleSettledTable();
+    try {
+      const step = this.physicsEngine.step(this.game.loop.delta / 1000);
+      this.handlePhysicsEvents(step.events);
+      this.syncBallsFromPhysics(step.balls);
+      this.handleSettledTable(step.settled);
+    } catch {
+      // Physics engine hit unresolvable state — keep UI responsive
+    }
+    this.updateShotClock(this.game.loop.delta / 1000);
+    this.updateForbiddenIcon();
+    this.updateHandSprite();
     this.renderAim();
   }
 
   private createTextures(): void {
     createBallTexture(this, { key: 'cue-ball', fill: '#f8f0dd' });
     BALLS.forEach((ball, index) => {
-      createBallTexture(this, { key: `target-ball-${index}`, fill: ball.color, label: String(ball.id) });
+      createBallTexture(this, { key: `target-ball-${index}`, fill: ball.color, label: String(ball.id), stripe: ball.id >= 9 });
     });
+  }
+
+  private createHandTexture(): void {
+    const rawTex = this.textures.get('hand-raw');
+    const source = rawTex.getSourceImage() as HTMLImageElement;
+    const canvas = this.textures.createCanvas('hand', source.width, source.height);
+    const ctx = canvas.getContext();
+    ctx.drawImage(source, 0, 0);
+    const imageData = ctx.getImageData(0, 0, source.width, source.height);
+    const data = imageData.data;
+    for (let i = 0; i < data.length; i += 4) {
+      const r = data[i];
+      const g = data[i + 1];
+      const b = data[i + 2];
+      if (g > 70 && g > r * 1.15 && g > b * 1.15) {
+        data[i + 3] = 0;
+      }
+    }
+    ctx.putImageData(imageData, 0, 0);
+    canvas.refresh();
   }
 
   private drawRoom(): void {
@@ -114,48 +204,87 @@ export class PoolScene extends Phaser.Scene {
     drawRefinedTable(this);
   }
 
+
+  private createForbiddenIcon(): Phaser.GameObjects.Graphics {
+    const gfx = this.add.graphics().setDepth(DEPTH.aim + 3).setVisible(false);
+    const r = BALL_RADIUS + 4;
+    gfx.fillStyle(0xcc2222, 0.85);
+    gfx.fillCircle(0, 0, r);
+    gfx.lineStyle(3, 0xffffff, 0.9);
+    gfx.beginPath();
+    gfx.moveTo(-r * 0.55, -r * 0.55);
+    gfx.lineTo(r * 0.55, r * 0.55);
+    gfx.strokePath();
+    gfx.lineStyle(3, 0xffffff, 0.9);
+    gfx.beginPath();
+    gfx.moveTo(r * 0.55, -r * 0.55);
+    gfx.lineTo(-r * 0.55, r * 0.55);
+    gfx.strokePath();
+    return gfx;
+  }
+
   private createBalls(): void {
     this.cueBall?.destroy();
     this.targetBalls.forEach((ball) => ball.destroy());
     this.targetBalls = [];
 
     this.cueBall = this.createBall(CUE_START, 'cue-ball', 'cue');
-    createTriangleRack(RACK_CENTER, BALLS.length).forEach((position, index) => {
-      this.targetBalls.push(this.createBall(position, `target-ball-${index}`, 'target'));
+    const rackPositions = createTriangleRack(RACK_CENTER, BALLS.length);
+    rackPositions.forEach((position, index) => {
+      this.targetBalls.push(this.createBall(position, `target-ball-${index}`, 'target', index + 1));
     });
+
+    this.physicsEngine.rack([
+      { id: 0, kind: 'cue', position: CUE_START },
+      ...rackPositions.map((position, index) => ({
+        id: index + 1,
+        kind: 'target' as const,
+        position,
+        label: index + 1,
+      })),
+    ]);
   }
 
-  private createBall(position: Vector, texture: string, kind: BallKind): PoolBall {
-    const ball = this.matter.add.image(position.x, position.y, texture, undefined, {
-      shape: {
-        type: 'circle',
-        radius: BALL_RADIUS,
-      },
-      restitution: 0.94,
-      friction: 0.002,
-      frictionAir: 0.012,
-      frictionStatic: 0,
-      density: 0.002,
-    }) as PoolBall;
+  private createBall(position: Vector, texture: string, kind: BallKind, ballId = 0): PoolBall {
+    const ball = this.add.image(position.x, position.y, texture) as PoolBall;
 
     ball.setDepth(DEPTH.ball);
-    ball.setCircle(BALL_RADIUS);
-    ball.setBounce(0.94);
-    ball.setFriction(0.002, 0, 0.012);
-    ball.setMass(1);
     ball.ballKind = kind;
+    ball.ballId = ballId;
+    ball.pocketed = false;
     return ball;
   }
 
   private bindInput(): void {
     this.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
+      this.audio.unlock();
+      const point = { x: pointer.worldX, y: pointer.worldY };
+      if (this.canPlaceBallInHandCueBall() && isOnTableSurface(point)) {
+        this.cuePlacementState = { pointerId: pointer.id, kind: 'ball-in-hand' };
+        this.aimState = null;
+        this.aimLine.clear();
+        this.cueGraphics.clear();
+
+        this.placeBallInHandCueBall(point);
+        this.updateHud();
+        return;
+      }
+
+      if (this.canPlaceBreakCueBall() && this.isCuePlacementStart(point)) {
+        this.cuePlacementState = { pointerId: pointer.id, kind: 'break' };
+        this.aimState = null;
+        this.aimLine.clear();
+        this.cueGraphics.clear();
+
+        this.placeCueBall(point);
+        return;
+      }
+
       if (!this.canAim()) {
         return;
       }
 
-      this.audio.unlock();
-      const point = { x: pointer.worldX, y: pointer.worldY };
-      if (distance(point, this.cuePosition()) > BALL_RADIUS * 2.2) {
+      if (!isOnTableSurface(point)) {
         return;
       }
 
@@ -166,6 +295,16 @@ export class PoolScene extends Phaser.Scene {
     });
 
     this.input.on('pointermove', (pointer: Phaser.Input.Pointer) => {
+      if (this.cuePlacementState && pointer.id === this.cuePlacementState.pointerId) {
+        const point = { x: pointer.worldX, y: pointer.worldY };
+        if (this.cuePlacementState.kind === 'break') {
+          this.placeCueBall(point);
+        } else {
+          this.placeBallInHandCueBall(point);
+        }
+        return;
+      }
+
       if (!this.aimState || pointer.id !== this.aimState.pointerId) {
         return;
       }
@@ -174,6 +313,23 @@ export class PoolScene extends Phaser.Scene {
     });
 
     this.input.on('pointerup', (pointer: Phaser.Input.Pointer) => {
+      if (this.cuePlacementState && pointer.id === this.cuePlacementState.pointerId) {
+        const point = { x: pointer.worldX, y: pointer.worldY };
+        if (this.cuePlacementState.kind === 'break') {
+          this.placeCueBall(point);
+          this.cuePlacementState = null;
+        } else {
+          this.placeBallInHandCueBall(point);
+          if (this.cuePlacementValid) {
+            this.rules = clearEightBallBallInHand(this.rules);
+            this.updateHud();
+            this.cuePlacementState = null;
+            this.forbiddenIcon.setVisible(false);
+          }
+        }
+        return;
+      }
+
       if (!this.aimState || pointer.id !== this.aimState.pointerId) {
         return;
       }
@@ -187,8 +343,194 @@ export class PoolScene extends Phaser.Scene {
     this.restartButton?.addEventListener('click', this.restartHandler);
   }
 
+  private bindLanguage(): void {
+    this.languageButton = document.querySelector<HTMLButtonElement>('#language') ?? undefined;
+    this.languageButton?.addEventListener('click', this.languageHandler);
+  }
+
+  private bindVictoryOverlay(): void {
+    this.victoryOverlay = document.querySelector<HTMLElement>('#victory-overlay') ?? undefined;
+    this.victoryTitle = document.querySelector<HTMLElement>('#victory-title') ?? undefined;
+    this.victoryDetail = document.querySelector<HTMLElement>('#victory-detail') ?? undefined;
+    this.victoryRestartButton = document.querySelector<HTMLButtonElement>('#victory-restart') ?? undefined;
+    this.victoryRestartButton?.addEventListener('click', this.victoryRestartHandler);
+  }
+
+  private showVictoryScreen(): void {
+    if (!this.victoryOverlay || !this.victoryTitle || !this.victoryDetail) return;
+    const copy = getCopy(this.language);
+    const isZh = this.language === 'zh';
+    const winner = this.rules.winner !== null ? this.rules.winner + 1 : 1;
+
+    this.victoryOverlay.hidden = false;
+    this.victoryTitle.textContent = isZh ? `玩家 ${winner} 获胜！` : `Player ${winner} Wins!`;
+    this.victoryDetail.textContent = isZh
+      ? `恭喜玩家 ${winner}，你赢得了这场比赛。`
+      : `Congratulations Player ${winner}, you won the match.`;
+  }
+
+  private hideVictoryScreen(): void {
+    if (this.victoryOverlay) this.victoryOverlay.hidden = true;
+  }
+
+  private bindSpinControl(): void {
+    this.spinPadButton = document.querySelector<HTMLButtonElement>('#spin-pad') ?? undefined;
+    this.spinMarker = document.querySelector<HTMLElement>('#spin-marker') ?? undefined;
+    this.spinPresetButtons = Array.from(document.querySelectorAll<HTMLButtonElement>('[data-spin-preset]'));
+    this.spinPadButton?.addEventListener('pointerdown', this.spinPadPointerDownHandler);
+    this.spinPadButton?.addEventListener('pointermove', this.spinPadPointerMoveHandler);
+    this.spinPadButton?.addEventListener('pointerup', this.spinPadPointerUpHandler);
+    this.spinPadButton?.addEventListener('pointercancel', this.spinPadPointerUpHandler);
+    this.spinPresetButtons.forEach((button) => {
+      button.addEventListener('pointerdown', this.stopDomControlEvent);
+      button.addEventListener('pointerup', this.stopDomControlEvent);
+      button.addEventListener('click', this.spinPresetClickHandler);
+    });
+    this.updateSpinControl();
+  }
+
+  private unbindSpinControl(): void {
+    this.spinPadButton?.removeEventListener('pointerdown', this.spinPadPointerDownHandler);
+    this.spinPadButton?.removeEventListener('pointermove', this.spinPadPointerMoveHandler);
+    this.spinPadButton?.removeEventListener('pointerup', this.spinPadPointerUpHandler);
+    this.spinPadButton?.removeEventListener('pointercancel', this.spinPadPointerUpHandler);
+    this.spinPresetButtons.forEach((button) => {
+      button.removeEventListener('pointerdown', this.stopDomControlEvent);
+      button.removeEventListener('pointerup', this.stopDomControlEvent);
+      button.removeEventListener('click', this.spinPresetClickHandler);
+    });
+  }
+
+  private readonly spinPadPointerDownHandler = (event: PointerEvent): void => {
+    this.stopDomControlEvent(event);
+    this.spinPadPointerId = event.pointerId;
+    try {
+      this.spinPadButton?.setPointerCapture(event.pointerId);
+    } catch {
+      // Some browsers can reject capture if the pointer is no longer active.
+    }
+    this.setSpinFromPadEvent(event);
+  };
+
+  private readonly spinPadPointerMoveHandler = (event: PointerEvent): void => {
+    this.stopDomControlEvent(event);
+    if (this.spinPadPointerId !== event.pointerId) {
+      return;
+    }
+    this.setSpinFromPadEvent(event);
+  };
+
+  private readonly spinPadPointerUpHandler = (event: PointerEvent): void => {
+    this.stopDomControlEvent(event);
+    if (this.spinPadPointerId !== event.pointerId) {
+      return;
+    }
+    this.spinPadPointerId = null;
+    try {
+      this.spinPadButton?.releasePointerCapture(event.pointerId);
+    } catch {
+      // The pointer may already be released by the browser.
+    }
+  };
+
+  private readonly spinPresetClickHandler = (event: MouseEvent): void => {
+    this.stopDomControlEvent(event);
+    const preset = (event.currentTarget as HTMLButtonElement).dataset.spinPreset as CueSpinPreset | undefined;
+    if (!preset || !(preset in SPIN_PRESETS)) {
+      return;
+    }
+    this.setSelectedSpin(SPIN_PRESETS[preset]);
+  };
+
+  private readonly stopDomControlEvent = (event: Event): void => {
+    event.preventDefault();
+    event.stopPropagation();
+  };
+
   private canAim(): boolean {
-    return !this.strikeLocked && !this.state.cueBallPocketed && this.state.remainingTargets > 0 && this.tableReady();
+    return (
+      !this.strikeLocked &&
+      !this.cuePlacementState &&
+      !this.rules.cueBallInHand &&
+      !this.rules.gameOver &&
+      this.physicsEngine.isSettled()
+    );
+  }
+
+  private canPlaceBreakCueBall(): boolean {
+    return (
+      !this.strikeLocked &&
+      this.state.strokes === 0 &&
+      !this.rules.cueBallInHand &&
+      !this.rules.gameOver &&
+      this.physicsEngine.isSettled()
+    );
+  }
+
+  private canPlaceBallInHandCueBall(): boolean {
+    return !this.strikeLocked && this.rules.cueBallInHand && !this.rules.gameOver && this.physicsEngine.isSettled();
+  }
+
+  private isCuePlacementStart(point: Vector): boolean {
+    return Phaser.Math.Distance.Between(point.x, point.y, this.cueBall.x, this.cueBall.y) <= BALL_RADIUS * 1.8;
+  }
+
+  private placeCueBall(point: Vector): void {
+    const next = clampBreakCuePosition(point);
+    this.cueBall.setPosition(next.x, next.y);
+    this.physicsEngine.resetCueBall(next);
+  }
+
+  private static readonly BALL_CUSHION_MARGIN = BALL_RADIUS + CUSHION_NOSE_INSET + 6;
+  private static readonly POCKET_SAFE_DIST = TABLE.pocketRadius + BALL_RADIUS * 2 + 6;
+
+  private placeBallInHandCueBall(point: Vector): void {
+    const next = {
+      x: Math.min(Math.max(point.x, PLAY_AREA.left + PoolScene.BALL_CUSHION_MARGIN), PLAY_AREA.right - PoolScene.BALL_CUSHION_MARGIN),
+      y: Math.min(Math.max(point.y, PLAY_AREA.top + PoolScene.BALL_CUSHION_MARGIN), PLAY_AREA.bottom - PoolScene.BALL_CUSHION_MARGIN),
+    };
+    this.cueBall.setPosition(next.x, next.y);
+    this.physicsEngine.resetCueBall(next);
+    this.cuePlacementValid = this.isPlacementClear(next);
+    this.updateForbiddenIcon();
+  }
+
+  private isPlacementClear(point: Vector): boolean {
+    const ballMinDist = BALL_RADIUS * 2 + 4;
+    const clearOfBalls = this.targetBalls.every((ball) => {
+      if (ball.pocketed) return true;
+      return Phaser.Math.Distance.Between(point.x, point.y, ball.x, ball.y) >= ballMinDist;
+    });
+    if (!clearOfBalls) return false;
+    const clearOfPockets = POCKETS.every((pocket) => {
+      return Phaser.Math.Distance.Between(point.x, point.y, pocket.x, pocket.y) >= PoolScene.POCKET_SAFE_DIST;
+    });
+    return clearOfPockets;
+  }
+
+  private updateForbiddenIcon(): void {
+    if (!this.forbiddenIcon) return;
+    const isPlacing = this.cuePlacementState?.kind === 'ball-in-hand';
+    const show = isPlacing && !this.cuePlacementValid;
+    this.forbiddenIcon.setVisible(show);
+    if (show) {
+      this.forbiddenIcon.setPosition(this.cueBall.x, this.cueBall.y);
+    }
+  }
+
+  private updateHandSprite(): void {
+    if (!this.handSprite) return;
+    const show = !this.aimState && (this.canPlaceBreakCueBall() || this.canPlaceBallInHandCueBall());
+    this.handSprite.setVisible(show);
+    if (show) {
+      const targetH = BALL_RADIUS * 2.6;
+      const scale = targetH / this.handSprite.height;
+      this.handSprite.setScale(scale);
+      this.handSprite.setPosition(
+        this.cueBall.x - BALL_RADIUS * 1.15,
+        this.cueBall.y + BALL_RADIUS * 0.95,
+      );
+    }
   }
 
   private cuePosition(): Vector {
@@ -231,15 +573,18 @@ export class PoolScene extends Phaser.Scene {
       },
     });
     this.state = recordStroke(this.state);
-    this.wasMoving = true;
+    this.rules = startEightBallShot(this.rules);
+    this.shotClockRemaining = SHOT_CLOCK_SECONDS;
     this.updateHud();
   }
 
   private applyCueImpulse(pull: Vector, dragDistance: number, power: number): void {
-    const impulseScale = TABLE.maxImpulse * power;
-    this.cueBall.applyForce(
-      new Phaser.Math.Vector2((-pull.x / dragDistance) * impulseScale, (-pull.y / dragDistance) * impulseScale),
-    );
+    this.physicsEngine.strikeCueBall({
+      direction: { x: -pull.x / dragDistance, y: -pull.y / dragDistance },
+      power,
+      contactOffset: this.selectedSpin,
+    });
+    this.wasMoving = true;
     this.audio.play('cue');
   }
 
@@ -275,41 +620,117 @@ export class PoolScene extends Phaser.Scene {
     this.aimLine.lineTo(cue.x + direction.x * guideLength, cue.y + direction.y * guideLength);
     this.aimLine.strokePath();
 
+    const nearestHit = this.raycastNearestTargetBall(cue, direction);
+    if (nearestHit) {
+      const prediction = predictCollisionDirections(cue, direction, nearestHit.ballPos);
+      if (prediction) {
+        const predLength = 45 + power * 80;
+        const hitPoint = prediction.hitPoint;
+
+        this.aimLine.fillStyle(0xffffff, 0.85);
+        this.aimLine.fillCircle(hitPoint.x, hitPoint.y, 3.5);
+
+        this.aimLine.lineStyle(2, 0xffffff, 0.75);
+        this.aimLine.beginPath();
+        this.aimLine.moveTo(hitPoint.x, hitPoint.y);
+        this.aimLine.lineTo(
+          hitPoint.x + prediction.targetBallDir.x * predLength,
+          hitPoint.y + prediction.targetBallDir.y * predLength,
+        );
+        this.aimLine.strokePath();
+
+        this.aimLine.beginPath();
+        this.aimLine.moveTo(hitPoint.x, hitPoint.y);
+        this.aimLine.lineTo(
+          hitPoint.x + prediction.cueBallDeflectDir.x * predLength * 0.55,
+          hitPoint.y + prediction.cueBallDeflectDir.y * predLength * 0.55,
+        );
+        this.aimLine.strokePath();
+      }
+    }
+
     this.aimLine.fillStyle(0xd9a441, 0.95);
     this.aimLine.fillRoundedRect(PLAY_AREA.left, PLAY_AREA.bottom + 24, power * 220, 10, 5);
+    this.drawSpinAimFeedback(cue);
     drawCueStick(this.cueGraphics, cue.x, cue.y, cueAngle, cueBack);
   }
 
-  private checkPockets(): void {
-    for (const ball of this.activeBalls()) {
-      if (ball.pocketed || !isInPocket({ x: ball.x, y: ball.y }, POCKETS)) {
+  private raycastNearestTargetBall(
+    origin: Vector,
+    direction: Vector,
+  ): { ballPos: Vector } | null {
+    let nearest: { ballPos: Vector; distance: number } | null = null;
+
+    for (const target of this.targetBalls) {
+      if (target.pocketed) continue;
+      const center = { x: target.x, y: target.y };
+      const hit = rayCircleIntersection(origin, direction, center, BALL_RADIUS);
+      if (hit && (!nearest || hit.distance < nearest.distance)) {
+        nearest = { ballPos: center, distance: hit.distance };
+      }
+    }
+
+    return nearest;
+  }
+
+  private drawSpinAimFeedback(cue: Vector): void {
+    if (contactOffsetMatchesPreset(this.selectedSpin, 'center')) {
+      return;
+    }
+
+    this.aimLine.lineStyle(2, 0x2a2118, 0.5);
+    this.aimLine.strokeCircle(cue.x, cue.y, BALL_RADIUS + 5);
+    this.aimLine.fillStyle(0xd64b3c, 0.96);
+    this.aimLine.fillCircle(cue.x + this.selectedSpin.x * 10, cue.y - this.selectedSpin.y * 10, 4.5);
+  }
+
+  private handlePhysicsEvents(events: PhysicsEvent[]): void {
+    for (const event of events) {
+      if (event.type === 'collision') {
+        this.recordFirstCueContact(event.ballId, event.otherBallId);
+        this.audio.play('collision');
         continue;
       }
-
-      ball.pocketed = true;
-      ball.setVisible(false);
-      ball.setCollisionCategory(0);
-      ball.setVelocity(0, 0);
-
-      if (ball.ballKind === 'cue') {
-        this.state = pocketCueBall(this.state);
-      } else {
-        this.state = pocketTargetBall(this.state);
+      if (event.type === 'cushion') {
+        this.audio.play('rail');
+        continue;
       }
+      if (event.type !== 'pocket') {
+        continue;
+      }
+      this.rules = recordEightBallPocket(this.rules, event.ballId);
       this.audio.play('pocket');
       this.updateHud();
     }
   }
 
-  private bindCollisions(): void {
-    this.matter.world.on('collisionstart', () => {
-      this.audio.play('collision');
-    });
+  private recordFirstCueContact(ballId: number, otherBallId?: number): void {
+    if (otherBallId === undefined) {
+      return;
+    }
+
+    if (ballId === 0 && otherBallId !== 0) {
+      this.rules = recordEightBallFirstContact(this.rules, otherBallId);
+    } else if (otherBallId === 0 && ballId !== 0) {
+      this.rules = recordEightBallFirstContact(this.rules, ballId);
+    }
   }
 
-  private handleSettledTable(): void {
-    const moving = !this.tableReady();
-    if (moving) {
+  private syncBallsFromPhysics(snapshots: PhysicsBallSnapshot[]): void {
+    for (const snapshot of snapshots) {
+      const ball = this.allBalls().find((candidate) => candidate.ballId === snapshot.id);
+      if (!ball) {
+        continue;
+      }
+
+      ball.setPosition(snapshot.position.x, snapshot.position.y);
+      ball.pocketed = snapshot.pocketed;
+      ball.setVisible(!snapshot.pocketed);
+    }
+  }
+
+  private handleSettledTable(settled: boolean): void {
+    if (!settled) {
       this.wasMoving = true;
       return;
     }
@@ -319,81 +740,242 @@ export class PoolScene extends Phaser.Scene {
     }
 
     this.wasMoving = false;
-    this.stopTinyDrift();
 
-    if (this.state.cueBallPocketed) {
-      this.resetCueBallBody();
+    if (this.rules.shot.pocketedBallIds.includes(0)) {
+      this.physicsEngine.resetCueBall(CUE_START);
+      this.syncBallsFromPhysics(this.physicsEngine.getBalls());
     }
-    this.state = resolveSettledState(this.state);
-    if (this.state.rackComplete) {
-      const best = writeBestStrokes(window.localStorage, this.state.strokes);
-      this.state = completeRack(this.state, best);
+    const playerBeforeResolve = this.rules.currentPlayer;
+    this.rules = resolveEightBallShot(this.rules);
+
+    if (this.rules.gameOver && this.rules.messageKey === 'eightBallLoss') {
+      this.shotClockRemaining = 0;
+    }
+
+    if (!this.rules.gameOver && this.rules.currentPlayer !== playerBeforeResolve) {
+      this.shotClockRemaining = SHOT_CLOCK_SECONDS;
+    } else if (!this.rules.gameOver && !this.rules.cueBallInHand) {
+      this.shotClockRemaining = SHOT_CLOCK_SECONDS;
     }
     this.updateHud();
   }
 
-  private activeBalls(): PoolBall[] {
-    return [this.cueBall, ...this.targetBalls].filter((ball) => !ball.pocketed);
-  }
-
-  private tableReady(): boolean {
-    return isTableReady(this.activeBalls().map((ball) => Math.hypot(ball.body.velocity.x, ball.body.velocity.y)));
-  }
-
-  private applyRollingFriction(): void {
-    for (const ball of this.activeBalls()) {
-      const velocity = ball.body.velocity;
-      const speed = Math.hypot(velocity.x, velocity.y);
-      if (speed > 0 && speed < TABLE.readySpeed) {
-        ball.setVelocity(0, 0);
-      }
+  private updateShotClock(deltaSeconds: number): void {
+    if (!this.shouldRunShotClock()) {
+      this.updateShotClockHud();
+      return;
     }
-  }
 
-  private stopTinyDrift(): void {
-    for (const ball of this.activeBalls()) {
-      ball.setVelocity(0, 0);
-      ball.setAngularVelocity(0);
+    this.shotClockRemaining = Math.max(0, this.shotClockRemaining - deltaSeconds);
+    if (this.shotClockRemaining === 0) {
+      this.aimState = null;
+      this.cuePlacementState = null;
+      this.aimLine.clear();
+      this.cueGraphics.clear();
+      this.rules = recordEightBallTimeoutFoul(this.rules);
+      this.shotClockRemaining = SHOT_CLOCK_SECONDS;
+      this.updateHud();
+      return;
     }
+
+    this.updateShotClockHud();
   }
 
-  private resetCueBallBody(): void {
-    this.cueBall.pocketed = false;
-    this.cueBall.setVisible(true);
-    this.cueBall.setCollisionCategory(1);
-    this.cueBall.setPosition(CUE_START.x, CUE_START.y);
-    this.cueBall.setVelocity(0, 0);
-    this.cueBall.setAngularVelocity(0);
+  private shouldRunShotClock(): boolean {
+    return (
+      !this.rules.gameOver &&
+      !this.strikeLocked &&
+      this.physicsEngine.isSettled()
+    );
+  }
+
+  private allBalls(): PoolBall[] {
+    return [this.cueBall, ...this.targetBalls];
   }
 
   private restartRack(): void {
     this.aimState = null;
+    this.cuePlacementState = null;
     this.aimLine?.clear();
     this.cueGraphics?.clear();
     this.strikeLocked = false;
+    this.setSelectedSpin(SPIN_PRESETS.center);
+    this.forbiddenIcon?.setVisible(false);
+    this.handSprite?.setVisible(false);
+    this.cuePlacementValid = true;
     this.createBalls();
-    this.state = restartGame(BALLS.length, this.readBest());
+    this.state = restartGame(BALLS.length, null);
+    this.rules = createEightBallState();
+    this.shotClockRemaining = SHOT_CLOCK_SECONDS;
     this.wasMoving = false;
+    this.hideVictoryScreen();
     this.updateHud();
   }
 
   private updateHud(): void {
+    const copy = getCopy(this.language);
+    const rawMessageValues =
+      this.rules.messageKey === 'eightBallReady' && !this.rules.messageValues
+        ? { player: this.rules.currentPlayer + 1 }
+        : (this.rules.messageValues ?? {});
+    const messageValues = {
+      ...rawMessageValues,
+      group:
+        rawMessageValues.group === 'solids' || rawMessageValues.group === 'stripes'
+          ? copy.hud.playerGroup(rawMessageValues.group)
+          : rawMessageValues.group,
+    };
+    const messageText = formatMessage(copy.message[this.rules.messageKey], messageValues);
+    const currentPlayer = this.rules.players[this.rules.currentPlayer];
+    const opponentPlayer = this.rules.players[this.rules.currentPlayer === 0 ? 1 : 0];
+    const remainingObjectBalls = getRemainingEightBallCount(this.rules);
+    document.documentElement.lang = this.language === 'zh' ? 'zh-CN' : 'en';
+    document.title = copy.documentTitle;
+
+    const eyebrow = document.querySelector('#eyebrow');
+    const title = document.querySelector('#title');
+    const playerLabel = document.querySelector('#player-label');
+    const opponentLabel = document.querySelector('#opponent-label');
+    const languageLabel = document.querySelector('#language-label');
     const mode = document.querySelector('#mode');
-    const score = document.querySelector('#score');
+    const groupStatus = document.querySelector('#group-status');
     const strokes = document.querySelector('#strokes');
     const best = document.querySelector('#best');
     const remaining = document.querySelector('#remaining');
+    const aimLabel = document.querySelector('#aim-label');
+    const aimState = document.querySelector('#aim-state');
+    const spinLabel = document.querySelector('#spin-label');
     const message = document.querySelector('#message');
 
-    if (mode) mode.textContent = 'Clear Table';
-    if (score) score.textContent = `Score ${this.state.score}`;
-    if (strokes) strokes.textContent = `Strokes ${this.state.strokes}`;
-    if (best) best.textContent = `Best ${this.state.bestStrokes ?? '--'}`;
-    if (remaining) remaining.textContent = `Balls ${this.state.remainingTargets}`;
-    if (message) message.textContent = this.state.message;
+    if (eyebrow) eyebrow.textContent = copy.eyebrow;
+    if (title) title.textContent = copy.title;
+    if (playerLabel) playerLabel.textContent = copy.hud.currentPlayer(this.rules.currentPlayer + 1);
+    if (opponentLabel) opponentLabel.textContent = copy.hud.currentPlayer(this.rules.currentPlayer === 0 ? 2 : 1);
+    if (languageLabel) languageLabel.textContent = copy.languageLabel;
+    if (this.languageButton) this.languageButton.textContent = copy.languageToggle;
+    if (this.restartButton) this.restartButton.textContent = copy.hud.restart;
+    if (mode) mode.textContent = copy.hud.eightBallMode;
+    if (groupStatus) groupStatus.textContent = copy.hud.playerGroup(currentPlayer.group);
+    if (strokes) strokes.textContent = copy.hud.strokes(this.state.strokes);
+    if (best) best.textContent = copy.hud.playerGroup(opponentPlayer.group);
+    if (remaining) remaining.textContent = copy.hud.remaining(remainingObjectBalls);
+    if (aimLabel) aimLabel.textContent = copy.aimLabel;
+    if (aimState) aimState.textContent = copy.aimOn;
+    if (spinLabel) spinLabel.textContent = copy.spin.label;
+    if (message) message.textContent = messageText;
+    this.updateSpinControl();
+    this.renderDomBallList('#pocketed-ball-strip', getPocketedDisplayBallIds(this.rules), '已进球');
+    this.renderDomBallList('#player-one-targets', getPlayerRemainingBallIds(this.rules, 0), '');
+    this.renderDomBallList('#player-two-targets', getPlayerRemainingBallIds(this.rules, 1), '');
+    this.updateShotClockHud();
+    if (this.rules.gameOver) {
+      this.showVictoryScreen();
+    }
   }
 
-  private readBest(): number | null {
-    return readBestStrokes(window.localStorage);
+  private updateShotClockHud(): void {
+    const progress = Math.max(0, Math.min(this.shotClockRemaining / SHOT_CLOCK_SECONDS, 1));
+    const playerOneCard = document.querySelector<HTMLElement>('#player-one-card');
+    const playerTwoCard = document.querySelector<HTMLElement>('#player-two-card');
+
+    this.updatePlayerClockCard(playerOneCard, this.rules.currentPlayer === 0 && !this.rules.gameOver, progress);
+    this.updatePlayerClockCard(playerTwoCard, this.rules.currentPlayer === 1 && !this.rules.gameOver, progress);
+  }
+
+  private updatePlayerClockCard(card: HTMLElement | null, active: boolean, progress: number): void {
+    if (!card) {
+      return;
+    }
+
+    card.classList.toggle('is-active-turn', active);
+    card.style.setProperty('--turn-progress', active ? `${progress * 100}%` : '0%');
+  }
+
+  private setSpinFromPadEvent(event: PointerEvent): void {
+    const rect = this.spinPadButton?.getBoundingClientRect();
+    if (!rect) {
+      return;
+    }
+
+    const radius = Math.min(rect.width, rect.height) / 2;
+    const offset = normalizeCueContactOffset({
+      x: (event.clientX - (rect.left + rect.width / 2)) / radius,
+      y: ((rect.top + rect.height / 2) - event.clientY) / radius,
+    });
+    this.setSelectedSpin(offset);
+  }
+
+  private setSelectedSpin(offset: Vector): void {
+    this.selectedSpin = normalizeCueContactOffset(offset);
+    this.updateSpinControl();
+  }
+
+  private updateSpinControl(): void {
+    const copy = getCopy(this.language);
+    const presetName = this.selectedSpinPreset();
+    const spinState = document.querySelector('#spin-state');
+    const spinPadLabel = copy.spin.selected(this.spinDisplayName(presetName));
+
+    if (spinState) spinState.textContent = spinPadLabel;
+    if (this.spinPadButton) {
+      this.spinPadButton.setAttribute('aria-label', `${copy.spin.label}: ${spinPadLabel}`);
+      this.spinPadButton.style.setProperty('--spin-x', String(this.selectedSpin.x));
+      this.spinPadButton.style.setProperty('--spin-y', String(this.selectedSpin.y));
+    }
+    if (this.spinMarker) {
+      this.spinMarker.style.setProperty('--spin-x', String(this.selectedSpin.x));
+      this.spinMarker.style.setProperty('--spin-y', String(this.selectedSpin.y));
+    }
+    this.spinPresetButtons.forEach((button) => {
+      const preset = button.dataset.spinPreset as CueSpinPreset | undefined;
+      const selected = preset ? presetName === preset : false;
+      button.textContent = preset ? this.spinDisplayName(preset) : '';
+      button.classList.toggle('is-selected', selected);
+      button.setAttribute('aria-pressed', selected ? 'true' : 'false');
+    });
+  }
+
+  private selectedSpinPreset(): CueSpinPreset | null {
+    const presets = Object.keys(SPIN_PRESETS) as CueSpinPreset[];
+    return presets.find((preset) => contactOffsetMatchesPreset(this.selectedSpin, preset)) ?? null;
+  }
+
+  private spinDisplayName(preset: CueSpinPreset | null): string {
+    const copy = getCopy(this.language);
+    if (preset) {
+      return copy.spin[preset];
+    }
+
+    const horizontal = this.selectedSpin.x < -0.15 ? copy.spin.left : this.selectedSpin.x > 0.15 ? copy.spin.right : '';
+    const vertical = this.selectedSpin.y > 0.15 ? copy.spin.high : this.selectedSpin.y < -0.15 ? copy.spin.low : '';
+
+    return [vertical, horizontal].filter(Boolean).join(' / ') || copy.spin.center;
+  }
+
+  private renderDomBallList(selector: string, ballIds: number[], emptyText: string): void {
+    const list = document.querySelector(selector);
+    if (!list) {
+      return;
+    }
+
+    list.replaceChildren(
+      ...(ballIds.length === 0
+        ? [this.createEmptyBallListNode(emptyText)]
+        : ballIds.map((ballId) => this.createBallBadgeNode(ballId))),
+    );
+  }
+
+  private createBallBadgeNode(ballId: number): HTMLSpanElement {
+    const badge = document.createElement('span');
+    badge.className = `ball-badge ball-badge-${ballId}`;
+    badge.textContent = String(ballId);
+    return badge;
+  }
+
+  private createEmptyBallListNode(text: string): HTMLSpanElement {
+    const empty = document.createElement('span');
+    empty.className = 'ball-list-empty';
+    empty.textContent = text;
+    return empty;
   }
 }
