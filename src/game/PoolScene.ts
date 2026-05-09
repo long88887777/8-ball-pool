@@ -106,6 +106,7 @@ export class PoolScene extends Phaser.Scene {
   private spinPresetButtons: HTMLButtonElement[] = [];
   private selectedSpin: Vector = SPIN_PRESETS.center;
   private spinPadPointerId: number | null = null;
+  private ballPrevPositions = new Map<number, Vector>();
   private language: Language = getInitialLanguage(navigator.language);
   private restartHandler = (): void => {
     this.restartRack();
@@ -723,9 +724,28 @@ export class PoolScene extends Phaser.Scene {
         continue;
       }
 
+      const prev = this.ballPrevPositions.get(snapshot.id);
+      if (prev && !snapshot.pocketed) {
+        const dx = snapshot.position.x - prev.x;
+        const dy = snapshot.position.y - prev.y;
+        const dist = Math.hypot(dx, dy);
+        if (dist > 0.05) {
+          ball.rotation += dist / BALL_RADIUS;
+        }
+      }
+
       ball.setPosition(snapshot.position.x, snapshot.position.y);
       ball.pocketed = snapshot.pocketed;
       ball.setVisible(!snapshot.pocketed);
+
+      if (!snapshot.pocketed) {
+        this.ballPrevPositions.set(snapshot.id, {
+          x: snapshot.position.x,
+          y: snapshot.position.y,
+        });
+      } else {
+        this.ballPrevPositions.delete(snapshot.id);
+      }
     }
   }
 
@@ -803,6 +823,7 @@ export class PoolScene extends Phaser.Scene {
     this.forbiddenIcon?.setVisible(false);
     this.handSprite?.setVisible(false);
     this.cuePlacementValid = true;
+    this.ballPrevPositions.clear();
     this.createBalls();
     this.state = restartGame(BALLS.length, null);
     this.rules = createEightBallState();
