@@ -10,7 +10,7 @@ type GameMode = 'pvp' | 'ai' | 'challenge' | 'online';
 
 let currentGame: Phaser.Game | null = null;
 
-function startGame(mode: GameMode): void {
+function startGame(mode: GameMode, roomInfo?: RoomInfo): void {
   const menu = document.getElementById('main-menu');
   const shell = document.querySelector<HTMLElement>('.game-shell');
   if (menu) menu.hidden = true;
@@ -37,6 +37,7 @@ function startGame(mode: GameMode): void {
     callbacks: {
       preBoot: (game) => {
         game.registry.set('initialMode', mode);
+        if (roomInfo) game.registry.set('roomInfo', roomInfo);
       },
     },
   };
@@ -132,8 +133,8 @@ async function init(): Promise<void> {
 
   initAuthPage(onAuthSuccess);
 
-  initMatchmaking((_roomInfo: RoomInfo) => {
-    startGame('online');
+  initMatchmaking((roomInfo: RoomInfo) => {
+    startGame('online', roomInfo);
   });
 
   if (session) {
