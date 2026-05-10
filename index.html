@@ -11,6 +11,11 @@
         <div class="auth-orb auth-orb-1"></div>
         <div class="auth-orb auth-orb-2"></div>
         <div class="auth-orb auth-orb-3"></div>
+        <div class="auth-shape auth-shape-1"></div>
+        <div class="auth-shape auth-shape-2"></div>
+        <div class="auth-shape auth-shape-3"></div>
+        <div class="auth-shape auth-shape-4"></div>
+        <div class="auth-shape auth-shape-5"></div>
       </div>
 
       <div class="auth-card" id="auth-login-card">
@@ -27,13 +32,6 @@
           <div class="auth-field">
             <label for="login-password">密码</label>
             <input type="password" id="login-password" required autocomplete="current-password" placeholder="输入密码" />
-          </div>
-          <div class="auth-field auth-captcha-field">
-            <label for="login-captcha">验证码</label>
-            <div class="auth-captcha-row">
-              <input type="text" id="login-captcha" required maxlength="4" placeholder="输入验证码" autocomplete="off" />
-              <canvas id="login-captcha-canvas" class="auth-captcha-canvas" width="120" height="44"></canvas>
-            </div>
           </div>
           <p id="login-error" class="auth-error" hidden></p>
           <button type="submit" class="auth-btn">登录</button>
@@ -59,13 +57,6 @@
           <div class="auth-field">
             <label for="register-password">密码</label>
             <input type="password" id="register-password" required minlength="6" autocomplete="new-password" placeholder="至少6位字符" />
-          </div>
-          <div class="auth-field auth-captcha-field">
-            <label for="register-captcha">验证码</label>
-            <div class="auth-captcha-row">
-              <input type="text" id="register-captcha" required maxlength="4" placeholder="输入验证码" autocomplete="off" />
-              <canvas id="register-captcha-canvas" class="auth-captcha-canvas" width="120" height="44"></canvas>
-            </div>
           </div>
           <p id="register-error" class="auth-error" hidden></p>
           <button type="submit" class="auth-btn">注册</button>
@@ -127,6 +118,60 @@
         </div>
       </div>
     </section>
+
+    <div id="matchmaking-modal" class="mm-overlay" hidden>
+      <div class="mm-backdrop"></div>
+      <div class="mm-dialog">
+        <button id="mm-close" class="mm-close" type="button" aria-label="Close">&times;</button>
+
+        <div id="mm-menu" class="mm-panel">
+          <h2 class="mm-title">联网对战</h2>
+          <div class="mm-options">
+            <button id="mm-quick" class="mm-option-btn" type="button">
+              <span class="mm-option-icon">🎲</span>
+              <span>快速匹配</span>
+            </button>
+            <button id="mm-create" class="mm-option-btn" type="button">
+              <span class="mm-option-icon">🏠</span>
+              <span>创建房间</span>
+            </button>
+            <button id="mm-join" class="mm-option-btn" type="button">
+              <span class="mm-option-icon">🚪</span>
+              <span>加入房间</span>
+            </button>
+          </div>
+        </div>
+
+        <div id="mm-searching" class="mm-panel" hidden>
+          <h2 class="mm-title">正在匹配...</h2>
+          <div class="mm-spinner"></div>
+          <p class="mm-hint">寻找对手中</p>
+          <button id="mm-cancel-search" class="mm-cancel-btn" type="button">取消匹配</button>
+        </div>
+
+        <div id="mm-hosting" class="mm-panel" hidden>
+          <h2 class="mm-title">等待对手</h2>
+          <p class="mm-room-code" id="mm-room-code"></p>
+          <p class="mm-hint">将房间码告诉朋友</p>
+          <div class="mm-spinner"></div>
+          <button id="mm-cancel-host" class="mm-cancel-btn" type="button">取消房间</button>
+        </div>
+
+        <div id="mm-joining" class="mm-panel" hidden>
+          <h2 class="mm-title">加入房间</h2>
+          <input id="mm-code-input" class="mm-input" type="text" maxlength="6" pattern="[0-9]{6}" placeholder="输入6位房间码" inputmode="numeric" />
+          <p id="mm-join-error" class="mm-error" hidden></p>
+          <div class="mm-join-buttons">
+            <button id="mm-do-join" class="mm-option-btn" type="button">加入</button>
+            <button id="mm-back-join" class="mm-cancel-btn" type="button">返回</button>
+          </div>
+        </div>
+
+        <div id="mm-success" class="mm-panel" hidden>
+          <h2 class="mm-title">匹配成功！</h2>
+        </div>
+      </div>
+    </div>
 
     <main class="game-shell" hidden>
       <section class="game-header" aria-label="Game status">

@@ -2,6 +2,8 @@ import Phaser from 'phaser';
 import { PoolScene } from './game/PoolScene';
 import { supabase } from './lib/supabase';
 import { initAuthPage, showAuthPage, hideAuthPage } from './auth/authPage';
+import { initMatchmaking, openMatchModal } from './online/matchmaking';
+import type { RoomInfo } from './online/types';
 import './styles.css';
 
 type GameMode = 'pvp' | 'ai' | 'challenge' | 'online';
@@ -59,6 +61,7 @@ document.querySelectorAll<HTMLButtonElement>('.menu-btn').forEach((btn) => {
   btn.addEventListener('click', () => {
     const mode = btn.dataset.mode as GameMode;
     if (mode === 'online') {
+      openMatchModal();
       return;
     }
     startGame(mode);
@@ -120,20 +123,25 @@ async function loadUserProfile(): Promise<void> {
 async function init(): Promise<void> {
   const { data: { session } } = await supabase.auth.getSession();
 
-  if (session) {
+  const onAuthSuccess = () => {
     hideAuthPage();
     const menu = document.getElementById('main-menu');
     if (menu) menu.hidden = false;
     loadUserProfile();
+  };
+
+  initAuthPage(onAuthSuccess);
+
+  initMatchmaking((_roomInfo: RoomInfo) => {
+    startGame('online');
+  });
+
+  if (session) {
+    onAuthSuccess();
   } else {
     showAuthPage();
     const menu = document.getElementById('main-menu');
     if (menu) menu.hidden = true;
-    initAuthPage(() => {
-      const menu = document.getElementById('main-menu');
-      if (menu) menu.hidden = false;
-      loadUserProfile();
-    });
   }
 
   supabase.auth.onAuthStateChange((event) => {
