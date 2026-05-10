@@ -24,6 +24,11 @@
           <button id="language" type="button">中文</button>
           <button id="restart" type="button">New Rack</button>
           <button id="mode-toggle" type="button">VS AI</button>
+          <button id="challenge-btn" type="button">Challenge</button>
+        </div>
+        <div id="challenge-hud" class="challenge-hud" hidden>
+          <span id="challenge-level-name"></span>
+          <span id="challenge-shots"></span>
         </div>
       </section>
 
@@ -100,6 +105,27 @@
           <h2 id="victory-title">Player 1 Wins!</h2>
           <p id="victory-detail">Congratulations Player 1, you won the match.</p>
           <button id="victory-restart" type="button">New Rack</button>
+        </div>
+      </section>
+
+      <section id="challenge-select" class="challenge-overlay" hidden>
+        <div class="challenge-dialog">
+          <h2 id="challenge-title">Challenge Mode</h2>
+          <div id="challenge-grid" class="challenge-grid"></div>
+          <button id="challenge-back" type="button">Back</button>
+        </div>
+      </section>
+
+      <section id="challenge-result" class="challenge-overlay" hidden>
+        <div class="challenge-dialog">
+          <h2 id="challenge-result-title">Level Complete!</h2>
+          <div id="challenge-stars" class="challenge-stars"></div>
+          <p id="challenge-result-detail"></p>
+          <div class="challenge-result-buttons">
+            <button id="challenge-retry" type="button">Retry</button>
+            <button id="challenge-next" type="button">Next Level</button>
+            <button id="challenge-to-select" type="button">Level Select</button>
+          </div>
         </div>
       </section>
     </main>
