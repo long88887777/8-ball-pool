@@ -33,3 +33,51 @@ export interface RoomRecord {
   status: 'waiting' | 'playing' | 'finished';
   created_at: string;
 }
+
+export type OnlinePhase =
+  | 'waiting_opponent'
+  | 'my_turn'
+  | 'watching_my_shot'
+  | 'opponent_turn'
+  | 'watching_opponent_shot'
+  | 'game_over';
+
+type MessageBase = { ts: number };
+
+export type ShotMessage = MessageBase & {
+  type: 'shot';
+  direction: { x: number; y: number };
+  power: number;
+  contactOffset: { x: number; y: number };
+  cueBallPos: { x: number; y: number };
+};
+
+export type ResultMessage = MessageBase & {
+  type: 'result';
+  balls: Array<{ id: number; x: number; y: number; pocketed: boolean }>;
+};
+
+export type TurnEndMessage = MessageBase & {
+  type: 'turn_end';
+  foul: boolean;
+  cueBallInHand: boolean;
+  nextPlayer: 0 | 1;
+  pocketedBallIds: number[];
+  gameOver: boolean;
+  winner: 0 | 1 | null;
+};
+
+export type HeartbeatMessage = MessageBase & { type: 'heartbeat' };
+
+export type GameOverMessage = MessageBase & {
+  type: 'game_over';
+  reason: 'disconnect' | 'surrender';
+  winner: 0 | 1;
+};
+
+export type OnlineMessage =
+  | ShotMessage
+  | ResultMessage
+  | TurnEndMessage
+  | HeartbeatMessage
+  | GameOverMessage;
