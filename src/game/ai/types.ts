@@ -1,7 +1,7 @@
 import type { Vector } from '../constants';
 import type { BallGroup, PlayerIndex } from '../eightBallRules';
 
-export type ShotType = 'pot' | 'safety';
+export type ShotType = 'pot' | 'safety' | 'kick' | 'break_cluster';
 
 export type ShotCandidate = {
   targetBallId: number;
@@ -47,4 +47,12 @@ export type MCTSNode = {
 export type AIDecision = {
   shot: ShotCandidate;
   placementPosition?: Vector;
+};
+
+export type PositionTarget = {
+  ballId: number;
+  pocketIndex: number;
+  idealZone: Vector;
+  zoneRadius: number;
+  shotQuality: number;
 };
