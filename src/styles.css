@@ -1038,6 +1038,7 @@ h2 {
 .menu-btn[data-mode="ai"] { border-left-color: #6c5ce7; }
 .menu-btn[data-mode="pvp"] { border-left-color: #00cec9; }
 .menu-btn[data-mode="challenge"] { border-left-color: #e4b74f; }
+.menu-btn[data-mode="online"] { border-left-color: #5b8def; }
 
 .menu-btn:hover {
   transform: translateY(-2px);
@@ -1202,4 +1203,33 @@ h2 {
   font-size: 0.85rem;
   margin: 0;
   text-align: center;
+}
+
+.menu-user-bar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.user-info {
+  color: #c0c0cc;
+  font-size: 0.85rem;
+}
+
+.menu-logout-btn {
+  padding: 0.4rem 0.75rem;
+  background: none;
+  border: 1px solid #3a3a45;
+  border-radius: 6px;
+  color: #8b8b9a;
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: border-color 0.2s, color 0.2s;
+}
+
+.menu-logout-btn:hover {
+  border-color: #e55;
+  color: #e55;
 }

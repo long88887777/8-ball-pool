@@ -1,8 +1,12 @@
 import Phaser from 'phaser';
 import { PoolScene } from './game/PoolScene';
+import { supabase } from './lib/supabase';
+import { initAuthPage, showAuthPage, hideAuthPage } from './auth/authPage';
 import './styles.css';
 
-type GameMode = 'pvp' | 'ai' | 'challenge';
+type GameMode = 'pvp' | 'ai' | 'challenge' | 'online';
+
+let currentGame: Phaser.Game | null = null;
 
 function startGame(mode: GameMode): void {
   const menu = document.getElementById('main-menu');
@@ -35,12 +39,115 @@ function startGame(mode: GameMode): void {
     },
   };
 
-  new Phaser.Game(config);
+  currentGame = new Phaser.Game(config);
+}
+
+function backToMenu(): void {
+  if (currentGame) {
+    currentGame.destroy(true);
+    currentGame = null;
+  }
+  const menu = document.getElementById('main-menu');
+  const shell = document.querySelector<HTMLElement>('.game-shell');
+  const pauseOverlay = document.getElementById('pause-overlay');
+  if (menu) menu.hidden = false;
+  if (shell) shell.hidden = true;
+  if (pauseOverlay) pauseOverlay.hidden = true;
 }
 
 document.querySelectorAll<HTMLButtonElement>('.menu-btn').forEach((btn) => {
   btn.addEventListener('click', () => {
     const mode = btn.dataset.mode as GameMode;
+    if (mode === 'online') {
+      return;
+    }
     startGame(mode);
   });
 });
+
+document.getElementById('btn-back')?.addEventListener('click', backToMenu);
+
+document.getElementById('btn-pause')?.addEventListener('click', () => {
+  const pauseOverlay = document.getElementById('pause-overlay');
+  if (pauseOverlay) {
+    pauseOverlay.hidden = false;
+    if (currentGame) {
+      currentGame.scene.getScene('PoolScene')?.scene.pause();
+    }
+  }
+});
+
+document.getElementById('pause-resume')?.addEventListener('click', () => {
+  const pauseOverlay = document.getElementById('pause-overlay');
+  if (pauseOverlay) {
+    pauseOverlay.hidden = true;
+    if (currentGame) {
+      currentGame.scene.getScene('PoolScene')?.scene.resume();
+    }
+  }
+});
+
+document.getElementById('btn-aim')?.addEventListener('click', () => {
+  const btn = document.getElementById('btn-aim');
+  if (!btn) return;
+  const isActive = btn.classList.toggle('is-active');
+  if (currentGame) {
+    currentGame.registry.set('aimLineEnabled', isActive);
+  }
+});
+
+async function loadUserProfile(): Promise<void> {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return;
+
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('nickname, wins, losses')
+    .eq('id', user.id)
+    .single();
+
+  if (profile) {
+    const infoEl = document.getElementById('user-info');
+    if (infoEl) {
+      const total = profile.wins + profile.losses;
+      const winRate = total > 0 ? Math.round((profile.wins / total) * 100) : 0;
+      infoEl.textContent = `${profile.nickname} | ${profile.wins}胜 ${profile.losses}负 (${winRate}%)`;
+      infoEl.hidden = false;
+    }
+  }
+}
+
+async function init(): Promise<void> {
+  const { data: { session } } = await supabase.auth.getSession();
+
+  if (session) {
+    hideAuthPage();
+    const menu = document.getElementById('main-menu');
+    if (menu) menu.hidden = false;
+    loadUserProfile();
+  } else {
+    showAuthPage();
+    const menu = document.getElementById('main-menu');
+    if (menu) menu.hidden = true;
+    initAuthPage(() => {
+      const menu = document.getElementById('main-menu');
+      if (menu) menu.hidden = false;
+      loadUserProfile();
+    });
+  }
+
+  supabase.auth.onAuthStateChange((event) => {
+    if (event === 'SIGNED_OUT') {
+      backToMenu();
+      const menu = document.getElementById('main-menu');
+      if (menu) menu.hidden = true;
+      showAuthPage();
+    }
+  });
+
+  document.getElementById('btn-logout')?.addEventListener('click', async () => {
+    await supabase.auth.signOut();
+  });
+}
+
+init();

@@ -32,7 +32,7 @@
       </div>
     </section>
 
-    <section id="main-menu" class="main-menu" aria-label="Game mode selection">
+    <section id="main-menu" class="main-menu" hidden aria-label="Game mode selection">
       <div class="menu-ball menu-ball-1" aria-hidden="true"></div>
       <div class="menu-ball menu-ball-2" aria-hidden="true"></div>
       <div class="menu-ball menu-ball-3" aria-hidden="true"></div>
@@ -44,6 +44,10 @@
         <div class="menu-title">
           <span class="menu-eyebrow">8-BALL</span>
           <h1 class="menu-heading">Pool Hall</h1>
+        </div>
+        <div class="menu-user-bar">
+          <span id="user-info" class="user-info" hidden></span>
+          <button id="btn-logout" class="menu-logout-btn" type="button">退出登录</button>
         </div>
         <div class="menu-buttons">
           <button class="menu-btn" data-mode="ai" aria-label="Player versus AI mode">
@@ -67,6 +71,14 @@
             <span class="menu-btn-text">
               <strong>台球闯关</strong>
               <small>Challenge Mode</small>
+            </span>
+            <span class="menu-btn-chevron" aria-hidden="true">›</span>
+          </button>
+          <button class="menu-btn" data-mode="online" aria-label="Online multiplayer mode">
+            <span class="menu-btn-icon">🌐</span>
+            <span class="menu-btn-text">
+              <strong>联网对战</strong>
+              <small>Online Battle</small>
             </span>
             <span class="menu-btn-chevron" aria-hidden="true">›</span>
           </button>
