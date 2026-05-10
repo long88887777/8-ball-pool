@@ -2,6 +2,20 @@ import Phaser from 'phaser';
 import { AIController } from './ai/aiController';
 import type { AIDecision } from './ai/types';
 import { PoolAudio } from './audio';
+import { CHALLENGE_LEVELS, type ChallengeLevel } from './challenge/levels';
+import {
+  createChallengeState,
+  recordChallengeShot,
+  recordChallengePocket,
+  recordChallengeCuePocket,
+  resolveChallengeResult,
+  type ChallengeState,
+} from './challenge/challengeState';
+import {
+  readProgress,
+  writeProgress,
+  isLevelUnlocked,
+} from './challenge/progress';
 import {
   BALLS,
   BALL_RADIUS,
@@ -121,7 +135,7 @@ export class PoolScene extends Phaser.Scene {
     this.language = this.language === 'en' ? 'zh' : 'en';
     this.updateHud();
   };
-  private gameMode: 'pvp' | 'ai' = 'ai';
+  private gameMode: 'pvp' | 'ai' | 'challenge' = 'ai';
   private aiController = new AIController();
   private aiThinking = false;
   private aiDecision: AIDecision | null = null;
@@ -129,6 +143,13 @@ export class PoolScene extends Phaser.Scene {
   private modeToggleHandler = (): void => {
     this.toggleGameMode();
   };
+  private challengeState: ChallengeState | null = null;
+  private currentLevel: ChallengeLevel | null = null;
+  private challengeBtn?: HTMLButtonElement;
+  private challengeSelectOverlay?: HTMLElement;
+  private challengeResultOverlay?: HTMLElement;
+  private challengeHud?: HTMLElement;
+  private challengeBtnHandler = (): void => { this.showChallengeSelect(); };
 
   constructor() {
     super('PoolScene');
@@ -155,6 +176,7 @@ export class PoolScene extends Phaser.Scene {
     this.bindLanguage();
     this.bindModeToggle();
     this.bindSpinControl();
+    this.bindChallengeUI();
     this.updateHud();
 
     this.bindVictoryOverlay();
@@ -164,20 +186,23 @@ export class PoolScene extends Phaser.Scene {
       this.languageButton?.removeEventListener('click', this.languageHandler);
       this.modeToggleButton?.removeEventListener('click', this.modeToggleHandler);
       this.victoryRestartButton?.removeEventListener('click', this.victoryRestartHandler);
+      this.challengeBtn?.removeEventListener('click', this.challengeBtnHandler);
       this.unbindSpinControl();
     });
   }
 
   update(): void {
-    try {
-      const step = this.physicsEngine.step(this.game.loop.delta / 1000);
-      this.handlePhysicsEvents(step.events);
-      this.syncBallsFromPhysics(step.balls);
-      this.handleSettledTable(step.settled);
-    } catch {
-      const rescuedEvents = this.physicsEngine.drainEvents();
-      if (rescuedEvents.length > 0) {
-        this.handlePhysicsEvents(rescuedEvents);
+    if (!this.cuePlacementState) {
+      try {
+        const step = this.physicsEngine.step(this.game.loop.delta / 1000);
+        this.handlePhysicsEvents(step.events);
+        this.syncBallsFromPhysics(step.balls);
+        this.handleSettledTable(step.settled);
+      } catch {
+        const rescuedEvents = this.physicsEngine.drainEvents();
+        if (rescuedEvents.length > 0) {
+          this.handlePhysicsEvents(rescuedEvents);
+        }
       }
     }
     this.updateShotClock(this.game.loop.delta / 1000);
@@ -380,6 +405,215 @@ export class PoolScene extends Phaser.Scene {
   private toggleGameMode(): void {
     this.gameMode = this.gameMode === 'ai' ? 'pvp' : 'ai';
     this.restartRack();
+  }
+
+  private bindChallengeUI(): void {
+    this.challengeBtn = document.querySelector<HTMLButtonElement>('#challenge-btn') ?? undefined;
+    this.challengeBtn?.addEventListener('click', this.challengeBtnHandler);
+    this.challengeSelectOverlay = document.querySelector<HTMLElement>('#challenge-select') ?? undefined;
+    this.challengeResultOverlay = document.querySelector<HTMLElement>('#challenge-result') ?? undefined;
+    this.challengeHud = document.querySelector<HTMLElement>('#challenge-hud') ?? undefined;
+
+    document.querySelector('#challenge-back')?.addEventListener('click', () => {
+      this.hideChallengeSelect();
+    });
+    document.querySelector('#challenge-retry')?.addEventListener('click', () => {
+      this.retryChallengeLevel();
+    });
+    document.querySelector('#challenge-next')?.addEventListener('click', () => {
+      this.nextChallengeLevel();
+    });
+    document.querySelector('#challenge-to-select')?.addEventListener('click', () => {
+      this.hideChallengeResult();
+      this.showChallengeSelect();
+    });
+  }
+
+  private showChallengeSelect(): void {
+    if (!this.challengeSelectOverlay) return;
+    const copy = getCopy(this.language);
+    const progress = readProgress(localStorage);
+    const grid = document.querySelector('#challenge-grid');
+    const title = document.querySelector('#challenge-title');
+    if (title) title.textContent = copy.challenge.title;
+    if (!grid) return;
+
+    grid.innerHTML = '';
+    for (const level of CHALLENGE_LEVELS) {
+      const unlocked = isLevelUnlocked(progress, level.id);
+      const result = progress.levels[String(level.id)];
+      const card = document.createElement('div');
+      card.className = `challenge-card${unlocked ? '' : ' is-locked'}`;
+
+      const number = document.createElement('div');
+      number.className = 'challenge-card-number';
+      number.textContent = String(level.id);
+
+      const name = document.createElement('div');
+      name.className = 'challenge-card-name';
+      name.textContent = this.language === 'zh' ? level.name.zh : level.name.en;
+
+      const stars = document.createElement('div');
+      stars.className = 'challenge-card-stars';
+      if (result) {
+        stars.innerHTML = Array.from({ length: 3 }, (_, i) =>
+          `<span class="${i < result.stars ? 'star-gold' : 'star-gray'}">★</span>`
+        ).join('');
+      } else if (!unlocked) {
+        stars.textContent = '🔒';
+      }
+
+      card.append(number, name, stars);
+      if (unlocked) {
+        card.addEventListener('click', () => this.startChallengeLevel(level));
+      }
+      grid.appendChild(card);
+    }
+
+    const backBtn = document.querySelector('#challenge-back');
+    if (backBtn) backBtn.textContent = copy.challenge.back;
+    this.challengeSelectOverlay.hidden = false;
+  }
+
+  private hideChallengeSelect(): void {
+    if (this.challengeSelectOverlay) this.challengeSelectOverlay.hidden = true;
+  }
+
+  private startChallengeLevel(level: ChallengeLevel): void {
+    this.hideChallengeSelect();
+    this.hideChallengeResult();
+    this.gameMode = 'challenge';
+    this.currentLevel = level;
+    this.challengeState = createChallengeState(level);
+
+    this.aiThinking = false;
+    this.aiDecision = null;
+    this.aimState = null;
+    this.cuePlacementState = null;
+    this.aimLine?.clear();
+    this.cueGraphics?.clear();
+    this.strikeLocked = false;
+    this.setSelectedSpin(SPIN_PRESETS.center);
+    this.forbiddenIcon?.setVisible(false);
+    this.handSprite?.setVisible(false);
+    this.cuePlacementValid = true;
+    this.ballPrevPositions.clear();
+    this.wasMoving = false;
+
+    this.cueBall?.destroy();
+    this.targetBalls.forEach(b => b.destroy());
+    this.targetBalls = [];
+
+    const cueBallDef = level.balls.find(b => b.id === 0)!;
+    this.cueBall = this.createBall(cueBallDef.position, 'cue-ball', 'cue');
+    const targets = level.balls.filter(b => b.id !== 0);
+    targets.forEach((def, index) => {
+      this.targetBalls.push(
+        this.createBall(def.position, `target-ball-${index}`, 'target', def.id)
+      );
+    });
+
+    this.physicsEngine.rack([
+      { id: 0, kind: 'cue', position: cueBallDef.position },
+      ...targets.map(def => ({
+        id: def.id,
+        kind: 'target' as const,
+        position: def.position,
+        label: def.id,
+      })),
+    ]);
+
+    this.updateChallengeHud();
+    this.hideVictoryScreen();
+  }
+
+  private updateChallengeHud(): void {
+    if (!this.challengeHud || !this.challengeState || !this.currentLevel) return;
+    const copy = getCopy(this.language);
+    this.challengeHud.hidden = this.gameMode !== 'challenge';
+
+    const nameEl = document.querySelector('#challenge-level-name');
+    const shotsEl = document.querySelector('#challenge-shots');
+    if (nameEl) {
+      nameEl.textContent = this.language === 'zh'
+        ? this.currentLevel.name.zh
+        : this.currentLevel.name.en;
+    }
+    if (shotsEl) {
+      shotsEl.textContent = copy.challenge.shotsUsed(
+        this.challengeState.shotsUsed,
+        this.challengeState.maxShots
+      );
+    }
+  }
+
+  private showChallengeResult(): void {
+    if (!this.challengeResultOverlay || !this.challengeState) return;
+    const copy = getCopy(this.language);
+    const result = resolveChallengeResult(this.challengeState);
+    this.challengeState = { ...this.challengeState, result };
+
+    if (result.passed) {
+      const progress = readProgress(localStorage);
+      const key = String(this.challengeState.levelId);
+      const prev = progress.levels[key];
+      const bestStars = prev ? Math.max(prev.stars, result.stars) : result.stars;
+      const bestShots = prev
+        ? Math.min(prev.bestShots, this.challengeState.shotsUsed)
+        : this.challengeState.shotsUsed;
+      progress.levels[key] = { stars: bestStars, bestShots };
+      writeProgress(localStorage, progress);
+    }
+
+    const titleEl = document.querySelector('#challenge-result-title');
+    const starsEl = document.querySelector('#challenge-stars');
+    const detailEl = document.querySelector('#challenge-result-detail');
+    const nextBtn = document.querySelector<HTMLButtonElement>('#challenge-next');
+    const retryBtn = document.querySelector<HTMLButtonElement>('#challenge-retry');
+    const selectBtn = document.querySelector<HTMLButtonElement>('#challenge-to-select');
+
+    if (titleEl) titleEl.textContent = result.passed ? copy.challenge.passed : copy.challenge.failed;
+    if (starsEl) {
+      starsEl.innerHTML = Array.from({ length: 3 }, (_, i) =>
+        `<span class="${i < result.stars ? 'star-gold' : 'star-gray'}">★</span>`
+      ).join('');
+    }
+    if (detailEl) {
+      detailEl.textContent = copy.challenge.shotsUsed(
+        this.challengeState.shotsUsed,
+        this.challengeState.maxShots
+      );
+    }
+    if (retryBtn) retryBtn.textContent = copy.challenge.retry;
+    if (selectBtn) selectBtn.textContent = copy.challenge.levelSelect;
+    if (nextBtn) {
+      nextBtn.textContent = copy.challenge.nextLevel;
+      const hasNext = this.challengeState.levelId < CHALLENGE_LEVELS.length;
+      nextBtn.hidden = !result.passed || !hasNext;
+    }
+
+    this.challengeResultOverlay.hidden = false;
+  }
+
+  private hideChallengeResult(): void {
+    if (this.challengeResultOverlay) this.challengeResultOverlay.hidden = true;
+  }
+
+  private retryChallengeLevel(): void {
+    if (this.currentLevel) {
+      this.hideChallengeResult();
+      this.startChallengeLevel(this.currentLevel);
+    }
+  }
+
+  private nextChallengeLevel(): void {
+    if (!this.challengeState) return;
+    const nextId = this.challengeState.levelId + 1;
+    const next = CHALLENGE_LEVELS.find(l => l.id === nextId);
+    if (next) {
+      this.hideChallengeResult();
+      this.startChallengeLevel(next);
+    }
   }
 
   private bindVictoryOverlay(): void {
@@ -595,6 +829,10 @@ export class PoolScene extends Phaser.Scene {
 
     const cueAngle = Math.atan2(-pull.y / dragDistance, -pull.x / dragDistance);
     this.strikeLocked = true;
+    if (this.gameMode === 'challenge' && this.challengeState) {
+      this.challengeState = recordChallengeShot(this.challengeState);
+      this.updateChallengeHud();
+    }
     this.tweens.addCounter({
       from: getCuePullback(power),
       to: 12,
@@ -779,11 +1017,23 @@ export class PoolScene extends Phaser.Scene {
         continue;
       }
       if (event.type === 'cushion') {
-        this.rules = recordEightBallCushion(this.rules);
+        if (this.gameMode !== 'challenge') {
+          this.rules = recordEightBallCushion(this.rules);
+        }
         this.audio.play('rail');
         continue;
       }
       if (event.type !== 'pocket') {
+        continue;
+      }
+      if (this.gameMode === 'challenge' && this.challengeState) {
+        if (event.ballId === 0) {
+          this.challengeState = recordChallengeCuePocket(this.challengeState);
+        } else {
+          this.challengeState = recordChallengePocket(this.challengeState);
+        }
+        this.updateChallengeHud();
+        this.audio.play('pocket');
         continue;
       }
       this.rules = recordEightBallPocket(this.rules, event.ballId);
@@ -848,6 +1098,25 @@ export class PoolScene extends Phaser.Scene {
 
     this.wasMoving = false;
 
+    if (this.gameMode === 'challenge' && this.challengeState) {
+      const cueBallSnapshot = this.physicsEngine.getBalls().find(b => b.id === 0);
+      if (cueBallSnapshot?.pocketed) {
+        const cueDef = this.currentLevel!.balls.find(b => b.id === 0)!;
+        this.physicsEngine.resetCueBall(cueDef.position);
+        this.syncBallsFromPhysics(this.physicsEngine.getBalls());
+      }
+      if (this.challengeState.targetsPocketed >= this.challengeState.totalTargets) {
+        this.showChallengeResult();
+        return;
+      }
+      if (this.challengeState.shotsUsed >= this.challengeState.maxShots) {
+        this.showChallengeResult();
+        return;
+      }
+      this.updateChallengeHud();
+      return;
+    }
+
     if (this.rules.shot.pocketedBallIds.includes(0)) {
       this.physicsEngine.resetCueBall(CUE_START);
       this.syncBallsFromPhysics(this.physicsEngine.getBalls());
@@ -886,6 +1155,10 @@ export class PoolScene extends Phaser.Scene {
       this.rules = recordEightBallTimeoutFoul(this.rules);
       this.shotClockRemaining = SHOT_CLOCK_SECONDS;
       this.updateHud();
+
+      if (!this.rules.gameOver && this.isAITurn() && !this.aiThinking) {
+        this.scheduleAITurn();
+      }
       return;
     }
 
@@ -1034,6 +1307,12 @@ export class PoolScene extends Phaser.Scene {
   }
 
   private updateHud(): void {
+    const matchPanel = document.querySelector('.match-panel') as HTMLElement | null;
+    if (matchPanel) matchPanel.hidden = this.gameMode === 'challenge';
+    if (this.gameMode === 'challenge') {
+      this.updateChallengeHud();
+      return;
+    }
     const copy = getCopy(this.language);
     const rawMessageValues =
       this.rules.messageKey === 'eightBallReady' && !this.rules.messageValues
