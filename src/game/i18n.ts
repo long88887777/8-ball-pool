@@ -28,6 +28,20 @@ export type GameCopy = {
     shooting: string;
     playerName: string;
   };
+  challenge: {
+    modeButton: string;
+    title: string;
+    back: string;
+    locked: string;
+    retry: string;
+    nextLevel: string;
+    levelSelect: string;
+    shotsUsed: (used: number, max: number) => string;
+    passed: string;
+    failed: string;
+    stars: (count: number) => string;
+    level: (id: number) => string;
+  };
   hud: {
     mode: string;
     eightBallMode: string;
@@ -94,6 +108,20 @@ const COPY: Record<Language, GameCopy> = {
       aiming: 'AI aiming...',
       shooting: 'AI shooting',
       playerName: 'AI',
+    },
+    challenge: {
+      modeButton: 'Challenge',
+      title: 'Challenge Mode',
+      back: 'Back',
+      locked: 'Locked',
+      retry: 'Retry',
+      nextLevel: 'Next Level',
+      levelSelect: 'Level Select',
+      shotsUsed: (used, max) => `Shots ${used}/${max}`,
+      passed: 'Level Complete!',
+      failed: 'Level Failed',
+      stars: (count) => `${count} Star${count !== 1 ? 's' : ''}`,
+      level: (id) => `Level ${id}`,
     },
     hud: {
       mode: 'Clear Table',
@@ -169,6 +197,20 @@ const COPY: Record<Language, GameCopy> = {
       aiming: 'AI 瞄准中...',
       shooting: 'AI 击球',
       playerName: '电脑',
+    },
+    challenge: {
+      modeButton: '挑战',
+      title: '挑战模式',
+      back: '返回',
+      locked: '未解锁',
+      retry: '重试',
+      nextLevel: '下一关',
+      levelSelect: '选关',
+      shotsUsed: (used, max) => `杆数 ${used}/${max}`,
+      passed: '过关！',
+      failed: '挑战失败',
+      stars: (count) => `${count} 星`,
+      level: (id) => `第 ${id} 关`,
     },
     hud: {
       mode: '清台练习',
