@@ -55,6 +55,7 @@ import type { PhysicsBallSnapshot, PhysicsEvent } from './proPhysics/types';
 import {
   createBallTexture,
   drawCueStick,
+  drawPocketNetDeformation,
   drawPoolHall,
   drawRefinedTable,
 } from './rendering';
@@ -152,6 +153,9 @@ export class PoolScene extends Phaser.Scene {
   private challengeResultOverlay?: HTMLElement;
   private challengeHud?: HTMLElement;
   private challengeBtnHandler = (): void => { this.showChallengeSelect(); };
+  private ballPocketMap = new Map<number, number>();
+  private pocketAnimatingBalls = new Set<number>();
+  private netDeformGraphics!: Phaser.GameObjects.Graphics;
 
   constructor() {
     super('PoolScene');
@@ -1144,6 +1148,18 @@ export class PoolScene extends Phaser.Scene {
         this.physicsEngine.resetCueBall(cueDef.position);
         this.syncBallsFromPhysics(this.physicsEngine.getBalls());
       }
+      if (this.challengeState.requiredPocketViolation) {
+        const pocketedSnapshots = this.physicsEngine.getBalls().filter(b => b.pocketed && b.id !== 0);
+        for (const snap of pocketedSnapshots) {
+          if (!this.challengeState.allPocketedBallIds.includes(snap.id)) {
+            const ballDef = this.currentLevel!.balls.find(b => b.id === snap.id);
+            if (ballDef) {
+              this.physicsEngine.resetBall(snap.id, ballDef.position);
+            }
+          }
+        }
+        this.syncBallsFromPhysics(this.physicsEngine.getBalls());
+      }
       if (this.currentLevel?.requireKickChain) {
         const satisfied = checkKickChain(this.challengeState, this.currentLevel.requireKickChain);
         this.challengeState = { ...this.challengeState, kickChainSatisfied: satisfied };
@@ -1436,9 +1452,6 @@ export class PoolScene extends Phaser.Scene {
     if (this.gameMode === 'ai') {
       if (playerTwoName) playerTwoName.textContent = copy.ai.playerName;
       if (mode) mode.textContent = copy.hud.modeAi;
-    }
-    if (this.modeToggleButton) {
-      this.modeToggleButton.textContent = this.gameMode === 'ai' ? copy.hud.modePvp : copy.hud.modeAi;
     }
     if (this.aiThinking && message) {
       message.textContent = this.aiDecision ? copy.ai.aiming : copy.ai.thinking;
