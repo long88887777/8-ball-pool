@@ -8,23 +8,100 @@
   <body>
     <main class="game-shell">
       <section class="game-header" aria-label="Game status">
-        <div>
-          <p class="eyebrow">Single Player Practice</p>
-          <h1>Pool Hall</h1>
+        <div class="game-title">
+          <p id="eyebrow" class="eyebrow">Local Two-Player</p>
+          <h1 id="title">Pool Hall</h1>
         </div>
         <div class="hud" aria-live="polite">
-          <span id="mode">Clear Table</span>
-          <span id="score">Score 0</span>
+          <span id="mode">Local 8-Ball</span>
+          <span id="remaining">Balls 15</span>
           <span id="strokes">Strokes 0</span>
-          <span id="best">Best --</span>
-          <span id="remaining">Balls 0</span>
+          <span id="group-status">Open</span>
+          <span id="best">Open</span>
+          <span id="aim-label">Aim Line</span>
+          <span id="aim-state">On</span>
+          <span id="language-label">Language</span>
+          <button id="language" type="button">中文</button>
           <button id="restart" type="button">New Rack</button>
+          <button id="mode-toggle" type="button">VS AI</button>
         </div>
       </section>
-      <section class="table-frame" aria-label="Playable pool table">
-        <div id="game"></div>
+
+      <section class="match-panel" aria-label="Player matchup">
+        <article id="player-one-card" class="player-card player-one is-active-turn">
+          <div class="player-avatar" aria-hidden="true"></div>
+          <div class="player-info">
+            <div class="player-row">
+              <strong id="player-one-name">Player One</strong>
+              <span id="player-one-turn" class="turn-state">Shooting</span>
+            </div>
+            <div id="player-one-group" class="group-pill">Open</div>
+            <div>
+              <div id="player-one-target-label" class="list-label">Targets</div>
+              <div id="player-one-targets" class="ball-list target-list" aria-label="Player one target balls"></div>
+            </div>
+          </div>
+        </article>
+
+        <div class="round-card" aria-label="Current turn">
+          <span id="player-label">Player 1</span>
+          <strong id="shot-clock">20</strong>
+          <small id="opponent-label">Player 2</small>
+        </div>
+
+        <article id="player-two-card" class="player-card player-two">
+          <div class="player-info">
+            <div class="player-row">
+              <strong id="player-two-name">Player Two</strong>
+              <span id="player-two-turn" class="turn-state">Waiting</span>
+            </div>
+            <div id="player-two-group" class="group-pill">Open</div>
+            <div>
+              <div id="player-two-target-label" class="list-label">Targets</div>
+              <div id="player-two-targets" class="ball-list target-list" aria-label="Player two target balls"></div>
+            </div>
+          </div>
+          <div class="player-avatar" aria-hidden="true"></div>
+        </article>
       </section>
+
+      <section class="play-layout">
+        <section class="table-frame" aria-label="Playable pool table">
+          <div id="game"></div>
+        </section>
+        <aside class="pocket-rail" aria-label="Pocketed balls">
+          <div id="pocketed-ball-label" class="list-label">Pocketed Balls</div>
+          <div id="pocketed-ball-strip" class="ball-list pocketed-list"></div>
+        </aside>
+      </section>
+
+      <section class="spin-panel" aria-label="Cue controls">
+        <div class="spin-status">
+          <span id="spin-label">Cue Spin</span>
+          <strong id="spin-state">Center</strong>
+        </div>
+        <button id="spin-pad" class="spin-pad" type="button" aria-label="Cue Spin: Center">
+          <span id="spin-marker" class="spin-marker" aria-hidden="true"></span>
+        </button>
+        <div class="spin-presets">
+          <button type="button" data-spin-preset="center">Center</button>
+          <button type="button" data-spin-preset="high">High</button>
+          <button type="button" data-spin-preset="low">Low</button>
+          <button type="button" data-spin-preset="left">Left</button>
+          <button type="button" data-spin-preset="right">Right</button>
+        </div>
+      </section>
+
       <p id="message" class="message">Drag from the cue ball to aim. Release to shoot.</p>
+
+      <section id="victory-overlay" class="victory-overlay" hidden>
+        <div class="victory-dialog">
+          <p class="eyebrow">Match Complete</p>
+          <h2 id="victory-title">Player 1 Wins!</h2>
+          <p id="victory-detail">Congratulations Player 1, you won the match.</p>
+          <button id="victory-restart" type="button">New Rack</button>
+        </div>
+      </section>
     </main>
     <script type="module" src="/src/main.ts"></script>
   </body>

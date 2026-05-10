@@ -1,11 +1,12 @@
 import Phaser from 'phaser';
+import { AIController } from './ai/aiController';
+import type { AIDecision } from './ai/types';
 import { PoolAudio } from './audio';
 import {
   BALLS,
   BALL_RADIUS,
   CUE,
   CUE_START,
-  CUSHION_NOSE_INSET,
   PLAY_AREA,
   POCKETS,
   RACK_CENTER,
@@ -19,6 +20,7 @@ import {
   getCuePullback,
   isOnTableSurface,
   predictCollisionDirections,
+  projectRayToPlayArea,
   rayCircleIntersection,
 } from './geometry';
 import { formatMessage, getCopy, getInitialLanguage, type Language } from './i18n';
@@ -40,8 +42,9 @@ import {
   clearEightBallBallInHand,
   createEightBallState,
   getPocketedDisplayBallIds,
-  getPlayerRemainingBallIds,
+  getPlayerTargetDisplayBallIds,
   getRemainingEightBallCount,
+  recordEightBallCushion,
   recordEightBallFirstContact,
   recordEightBallPocket,
   recordEightBallTimeoutFoul,
@@ -118,6 +121,14 @@ export class PoolScene extends Phaser.Scene {
     this.language = this.language === 'en' ? 'zh' : 'en';
     this.updateHud();
   };
+  private gameMode: 'pvp' | 'ai' = 'ai';
+  private aiController = new AIController();
+  private aiThinking = false;
+  private aiDecision: AIDecision | null = null;
+  private modeToggleButton?: HTMLButtonElement;
+  private modeToggleHandler = (): void => {
+    this.toggleGameMode();
+  };
 
   constructor() {
     super('PoolScene');
@@ -142,6 +153,7 @@ export class PoolScene extends Phaser.Scene {
     this.bindInput();
     this.bindRestart();
     this.bindLanguage();
+    this.bindModeToggle();
     this.bindSpinControl();
     this.updateHud();
 
@@ -150,6 +162,7 @@ export class PoolScene extends Phaser.Scene {
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       this.restartButton?.removeEventListener('click', this.restartHandler);
       this.languageButton?.removeEventListener('click', this.languageHandler);
+      this.modeToggleButton?.removeEventListener('click', this.modeToggleHandler);
       this.victoryRestartButton?.removeEventListener('click', this.victoryRestartHandler);
       this.unbindSpinControl();
     });
@@ -162,7 +175,10 @@ export class PoolScene extends Phaser.Scene {
       this.syncBallsFromPhysics(step.balls);
       this.handleSettledTable(step.settled);
     } catch {
-      // Physics engine hit unresolvable state — keep UI responsive
+      const rescuedEvents = this.physicsEngine.drainEvents();
+      if (rescuedEvents.length > 0) {
+        this.handlePhysicsEvents(rescuedEvents);
+      }
     }
     this.updateShotClock(this.game.loop.delta / 1000);
     this.updateForbiddenIcon();
@@ -171,7 +187,7 @@ export class PoolScene extends Phaser.Scene {
   }
 
   private createTextures(): void {
-    createBallTexture(this, { key: 'cue-ball', fill: '#f8f0dd' });
+    createBallTexture(this, { key: 'cue-ball', fill: '#f8f0dd', cueSpot: true });
     BALLS.forEach((ball, index) => {
       createBallTexture(this, { key: `target-ball-${index}`, fill: ball.color, label: String(ball.id), stripe: ball.id >= 9 });
     });
@@ -181,7 +197,8 @@ export class PoolScene extends Phaser.Scene {
     const rawTex = this.textures.get('hand-raw');
     const source = rawTex.getSourceImage() as HTMLImageElement;
     const canvas = this.textures.createCanvas('hand', source.width, source.height);
-    const ctx = canvas.getContext();
+    const ctx = canvas?.getContext();
+    if (!ctx) return;
     ctx.drawImage(source, 0, 0);
     const imageData = ctx.getImageData(0, 0, source.width, source.height);
     const data = imageData.data;
@@ -194,7 +211,7 @@ export class PoolScene extends Phaser.Scene {
       }
     }
     ctx.putImageData(imageData, 0, 0);
-    canvas.refresh();
+    canvas?.refresh();
   }
 
   private drawRoom(): void {
@@ -310,7 +327,13 @@ export class PoolScene extends Phaser.Scene {
         return;
       }
 
-      this.aimState.current = { x: pointer.worldX, y: pointer.worldY };
+      const raw = { x: pointer.worldX, y: pointer.worldY };
+      const prev = this.aimState.current;
+      const smoothing = 0.35;
+      this.aimState.current = {
+        x: prev.x + (raw.x - prev.x) * smoothing,
+        y: prev.y + (raw.y - prev.y) * smoothing,
+      };
     });
 
     this.input.on('pointerup', (pointer: Phaser.Input.Pointer) => {
@@ -347,6 +370,16 @@ export class PoolScene extends Phaser.Scene {
   private bindLanguage(): void {
     this.languageButton = document.querySelector<HTMLButtonElement>('#language') ?? undefined;
     this.languageButton?.addEventListener('click', this.languageHandler);
+  }
+
+  private bindModeToggle(): void {
+    this.modeToggleButton = document.querySelector<HTMLButtonElement>('#mode-toggle') ?? undefined;
+    this.modeToggleButton?.addEventListener('click', this.modeToggleHandler);
+  }
+
+  private toggleGameMode(): void {
+    this.gameMode = this.gameMode === 'ai' ? 'pvp' : 'ai';
+    this.restartRack();
   }
 
   private bindVictoryOverlay(): void {
@@ -454,6 +487,8 @@ export class PoolScene extends Phaser.Scene {
       !this.cuePlacementState &&
       !this.rules.cueBallInHand &&
       !this.rules.gameOver &&
+      !this.aiThinking &&
+      !this.isAITurn() &&
       this.physicsEngine.isSettled()
     );
   }
@@ -464,12 +499,13 @@ export class PoolScene extends Phaser.Scene {
       this.state.strokes === 0 &&
       !this.rules.cueBallInHand &&
       !this.rules.gameOver &&
+      !this.isAITurn() &&
       this.physicsEngine.isSettled()
     );
   }
 
   private canPlaceBallInHandCueBall(): boolean {
-    return !this.strikeLocked && this.rules.cueBallInHand && !this.rules.gameOver && this.physicsEngine.isSettled();
+    return !this.strikeLocked && this.rules.cueBallInHand && !this.rules.gameOver && !this.isAITurn() && this.physicsEngine.isSettled();
   }
 
   private isCuePlacementStart(point: Vector): boolean {
@@ -482,7 +518,7 @@ export class PoolScene extends Phaser.Scene {
     this.physicsEngine.resetCueBall(next);
   }
 
-  private static readonly BALL_CUSHION_MARGIN = BALL_RADIUS + CUSHION_NOSE_INSET + 6;
+  private static readonly BALL_CUSHION_MARGIN = BALL_RADIUS;
   private static readonly POCKET_SAFE_DIST = TABLE.pocketRadius + BALL_RADIUS * 2 + 6;
 
   private placeBallInHandCueBall(point: Vector): void {
@@ -612,48 +648,98 @@ export class PoolScene extends Phaser.Scene {
       y: -pull.y / dragDistance,
     };
     const cueAngle = Math.atan2(direction.y, direction.x);
-    const guideLength = 120 + power * 190;
     const cueBack = getCuePullback(power);
-
-    this.aimLine.lineStyle(3, 0xf6e7b4, 0.9);
-    this.aimLine.beginPath();
-    this.aimLine.moveTo(cue.x + direction.x * BALL_RADIUS, cue.y + direction.y * BALL_RADIUS);
-    this.aimLine.lineTo(cue.x + direction.x * guideLength, cue.y + direction.y * guideLength);
-    this.aimLine.strokePath();
 
     const nearestHit = this.raycastNearestTargetBall(cue, direction);
     if (nearestHit) {
       const prediction = predictCollisionDirections(cue, direction, nearestHit.ballPos);
       if (prediction) {
-        const predLength = 45 + power * 80;
-        const hitPoint = prediction.hitPoint;
-
-        this.aimLine.fillStyle(0xffffff, 0.85);
-        this.aimLine.fillCircle(hitPoint.x, hitPoint.y, 3.5);
-
-        this.aimLine.lineStyle(2, 0xffffff, 0.75);
-        this.aimLine.beginPath();
-        this.aimLine.moveTo(hitPoint.x, hitPoint.y);
-        this.aimLine.lineTo(
-          hitPoint.x + prediction.targetBallDir.x * predLength,
-          hitPoint.y + prediction.targetBallDir.y * predLength,
-        );
-        this.aimLine.strokePath();
-
-        this.aimLine.beginPath();
-        this.aimLine.moveTo(hitPoint.x, hitPoint.y);
-        this.aimLine.lineTo(
-          hitPoint.x + prediction.cueBallDeflectDir.x * predLength * 0.55,
-          hitPoint.y + prediction.cueBallDeflectDir.y * predLength * 0.55,
-        );
-        this.aimLine.strokePath();
+        this.drawPredictedCollisionRoutes(cue, prediction, power);
       }
+    } else {
+      const missEnd = projectRayToPlayArea(cue, direction);
+      this.aimLine.lineStyle(3, 0xf6e7b4, 0.42);
+      this.aimLine.beginPath();
+      this.aimLine.moveTo(cue.x + direction.x * BALL_RADIUS, cue.y + direction.y * BALL_RADIUS);
+      this.aimLine.lineTo(missEnd.x, missEnd.y);
+      this.aimLine.strokePath();
     }
 
     this.aimLine.fillStyle(0xd9a441, 0.95);
     this.aimLine.fillRoundedRect(PLAY_AREA.left, PLAY_AREA.bottom + 24, power * 220, 10, 5);
     this.drawSpinAimFeedback(cue);
     drawCueStick(this.cueGraphics, cue.x, cue.y, cueAngle, cueBack);
+  }
+
+  private drawPredictedCollisionRoutes(
+    cue: Vector,
+    prediction: {
+      targetBallDir: Vector;
+      cueBallDeflectDir: Vector | null;
+      hitPoint: Vector;
+      cueBallImpactCenter: Vector;
+      targetBallCenter: Vector;
+    },
+    power: number,
+  ): void {
+    const impactDistance = Math.hypot(prediction.cueBallImpactCenter.x - cue.x, prediction.cueBallImpactCenter.y - cue.y);
+    const inboundStart =
+      impactDistance < 0.001
+        ? cue
+        : {
+            x: cue.x + ((prediction.cueBallImpactCenter.x - cue.x) / impactDistance) * BALL_RADIUS,
+            y: cue.y + ((prediction.cueBallImpactCenter.y - cue.y) / impactDistance) * BALL_RADIUS,
+          };
+    const targetEnd = this.scaleRouteEnd(
+      prediction.targetBallCenter,
+      projectRayToPlayArea(prediction.targetBallCenter, prediction.targetBallDir),
+      0.52 + power * 0.36,
+    );
+    const cueDeflectEnd = prediction.cueBallDeflectDir
+      ? this.scaleRouteEnd(
+          prediction.cueBallImpactCenter,
+          projectRayToPlayArea(prediction.cueBallImpactCenter, prediction.cueBallDeflectDir),
+          0.32 + power * 0.3,
+        )
+      : null;
+
+    this.aimLine.lineStyle(5, 0x10100e, 0.45);
+    this.strokeLine(inboundStart, prediction.cueBallImpactCenter);
+    this.strokeLine(prediction.targetBallCenter, targetEnd);
+    if (cueDeflectEnd) this.strokeLine(prediction.cueBallImpactCenter, cueDeflectEnd);
+
+    this.aimLine.lineStyle(3, 0xf6e7b4, 0.92);
+    this.strokeLine(inboundStart, prediction.cueBallImpactCenter);
+
+    this.aimLine.lineStyle(3, 0xffffff, 0.88);
+    this.strokeLine(prediction.targetBallCenter, targetEnd);
+
+    if (cueDeflectEnd) {
+      this.aimLine.lineStyle(3, 0xffffff, 0.82);
+      this.strokeLine(prediction.cueBallImpactCenter, cueDeflectEnd);
+    }
+
+    this.aimLine.lineStyle(2, 0x10100e, 0.58);
+    this.aimLine.strokeCircle(prediction.cueBallImpactCenter.x, prediction.cueBallImpactCenter.y, BALL_RADIUS + 1);
+    this.aimLine.lineStyle(2, 0xffffff, 0.9);
+    this.aimLine.strokeCircle(prediction.cueBallImpactCenter.x, prediction.cueBallImpactCenter.y, BALL_RADIUS);
+
+    this.aimLine.fillStyle(0xffffff, 0.9);
+    this.aimLine.fillCircle(prediction.hitPoint.x, prediction.hitPoint.y, 4);
+  }
+
+  private strokeLine(start: Vector, end: Vector): void {
+    this.aimLine.beginPath();
+    this.aimLine.moveTo(start.x, start.y);
+    this.aimLine.lineTo(end.x, end.y);
+    this.aimLine.strokePath();
+  }
+
+  private scaleRouteEnd(start: Vector, edgeEnd: Vector, ratio: number): Vector {
+    return {
+      x: start.x + (edgeEnd.x - start.x) * ratio,
+      y: start.y + (edgeEnd.y - start.y) * ratio,
+    };
   }
 
   private raycastNearestTargetBall(
@@ -665,7 +751,7 @@ export class PoolScene extends Phaser.Scene {
     for (const target of this.targetBalls) {
       if (target.pocketed) continue;
       const center = { x: target.x, y: target.y };
-      const hit = rayCircleIntersection(origin, direction, center, BALL_RADIUS);
+      const hit = rayCircleIntersection(origin, direction, center, BALL_RADIUS * 2);
       if (hit && (!nearest || hit.distance < nearest.distance)) {
         nearest = { ballPos: center, distance: hit.distance };
       }
@@ -693,6 +779,7 @@ export class PoolScene extends Phaser.Scene {
         continue;
       }
       if (event.type === 'cushion') {
+        this.rules = recordEightBallCushion(this.rules);
         this.audio.play('rail');
         continue;
       }
@@ -778,6 +865,10 @@ export class PoolScene extends Phaser.Scene {
       this.shotClockRemaining = SHOT_CLOCK_SECONDS;
     }
     this.updateHud();
+
+    if (!this.rules.gameOver && this.isAITurn() && !this.aiThinking) {
+      this.scheduleAITurn();
+    }
   }
 
   private updateShotClock(deltaSeconds: number): void {
@@ -805,8 +896,115 @@ export class PoolScene extends Phaser.Scene {
     return (
       !this.rules.gameOver &&
       !this.strikeLocked &&
+      !this.isAITurn() &&
       this.physicsEngine.isSettled()
     );
+  }
+
+  private isAITurn(): boolean {
+    return this.gameMode === 'ai' && this.rules.currentPlayer === 1;
+  }
+
+  private scheduleAITurn(): void {
+    if (this.aiThinking || this.rules.gameOver) return;
+    this.aiThinking = true;
+    this.updateHud();
+    setTimeout(() => {
+      this.executeAITurn();
+    }, 500);
+  }
+
+  private executeAITurn(): void {
+    const ballPositions = this.getTableBallPositions();
+    const decision = this.aiController.computeDecision(ballPositions, this.rules);
+
+    if (!decision) {
+      this.aiThinking = false;
+      this.updateHud();
+      return;
+    }
+
+    this.aiDecision = decision;
+
+    if (decision.placementPosition) {
+      this.physicsEngine.resetCueBall(decision.placementPosition);
+      this.syncBallsFromPhysics(this.physicsEngine.getBalls());
+      this.rules = clearEightBallBallInHand(this.rules);
+    }
+
+    this.showAIAimLine(decision);
+    this.updateHud();
+    setTimeout(() => this.executeAIShot(decision), 800);
+  }
+
+  private executeAIShot(decision: AIDecision): void {
+    this.aimLine.clear();
+    const shot = decision.shot;
+    const cue = this.cuePosition();
+    const cueAngle = Math.atan2(shot.direction.y, shot.direction.x);
+
+    this.strikeLocked = true;
+    this.tweens.addCounter({
+      from: getCuePullback(shot.power),
+      to: 12,
+      duration: CUE.strikeDurationMs,
+      ease: 'Cubic.easeIn',
+      onUpdate: (tween) => {
+        drawCueStick(this.cueGraphics, cue.x, cue.y, cueAngle, tween.getValue() ?? 12);
+      },
+      onComplete: () => {
+        this.cueGraphics.clear();
+        this.physicsEngine.strikeCueBall({
+          direction: shot.direction,
+          power: shot.power,
+          contactOffset: shot.spin,
+        });
+        this.wasMoving = true;
+        this.audio.play('cue');
+        this.strikeLocked = false;
+        this.aiThinking = false;
+        this.aiDecision = null;
+      },
+    });
+
+    this.state = recordStroke(this.state);
+    this.rules = startEightBallShot(this.rules);
+    this.shotClockRemaining = SHOT_CLOCK_SECONDS;
+    this.updateHud();
+  }
+
+  private showAIAimLine(decision: AIDecision): void {
+    const cue = this.cuePosition();
+    const shot = decision.shot;
+
+    const nearestHit = this.raycastNearestTargetBall(cue, shot.direction);
+    if (nearestHit) {
+      const prediction = predictCollisionDirections(cue, shot.direction, nearestHit.ballPos);
+      if (prediction) {
+        this.drawPredictedCollisionRoutes(cue, prediction, shot.power);
+      }
+    } else {
+      const missEnd = projectRayToPlayArea(cue, shot.direction);
+      this.aimLine.lineStyle(3, 0xf6e7b4, 0.42);
+      this.aimLine.beginPath();
+      this.aimLine.moveTo(cue.x + shot.direction.x * BALL_RADIUS, cue.y + shot.direction.y * BALL_RADIUS);
+      this.aimLine.lineTo(missEnd.x, missEnd.y);
+      this.aimLine.strokePath();
+    }
+
+    const cueAngle = Math.atan2(shot.direction.y, shot.direction.x);
+    drawCueStick(this.cueGraphics, cue.x, cue.y, cueAngle, getCuePullback(shot.power));
+  }
+
+  private getTableBallPositions(): Map<number, Vector> {
+    const positions = new Map<number, Vector>();
+    positions.set(0, { x: this.cueBall.x, y: this.cueBall.y });
+    for (const ball of this.targetBalls) {
+      if (!ball.pocketed) {
+        positions.set(ball.ballId, { x: ball.x, y: ball.y });
+      }
+    }
+    return positions;
   }
 
   private allBalls(): PoolBall[] {
@@ -814,6 +1012,8 @@ export class PoolScene extends Phaser.Scene {
   }
 
   private restartRack(): void {
+    this.aiThinking = false;
+    this.aiDecision = null;
     this.aimState = null;
     this.cuePlacementState = null;
     this.aimLine?.clear();
@@ -845,6 +1045,13 @@ export class PoolScene extends Phaser.Scene {
         rawMessageValues.group === 'solids' || rawMessageValues.group === 'stripes'
           ? copy.hud.playerGroup(rawMessageValues.group)
           : rawMessageValues.group,
+      reason:
+        rawMessageValues.reason === 'cueBallPocketed' ||
+        rawMessageValues.reason === 'noFirstContact' ||
+        rawMessageValues.reason === 'wrongFirstContact' ||
+        rawMessageValues.reason === 'shotClockExpired'
+          ? copy.foulReason[rawMessageValues.reason]
+          : rawMessageValues.reason,
     };
     const messageText = formatMessage(copy.message[this.rules.messageKey], messageValues);
     const currentPlayer = this.rules.players[this.rules.currentPlayer];
@@ -857,6 +1064,15 @@ export class PoolScene extends Phaser.Scene {
     const title = document.querySelector('#title');
     const playerLabel = document.querySelector('#player-label');
     const opponentLabel = document.querySelector('#opponent-label');
+    const playerOneName = document.querySelector('#player-one-name');
+    const playerTwoName = document.querySelector('#player-two-name');
+    const playerOneTurn = document.querySelector('#player-one-turn');
+    const playerTwoTurn = document.querySelector('#player-two-turn');
+    const playerOneGroup = document.querySelector('#player-one-group');
+    const playerTwoGroup = document.querySelector('#player-two-group');
+    const playerOneTargetLabel = document.querySelector('#player-one-target-label');
+    const playerTwoTargetLabel = document.querySelector('#player-two-target-label');
+    const pocketedBallLabel = document.querySelector('#pocketed-ball-label');
     const languageLabel = document.querySelector('#language-label');
     const mode = document.querySelector('#mode');
     const groupStatus = document.querySelector('#group-status');
@@ -872,6 +1088,15 @@ export class PoolScene extends Phaser.Scene {
     if (title) title.textContent = copy.title;
     if (playerLabel) playerLabel.textContent = copy.hud.currentPlayer(this.rules.currentPlayer + 1);
     if (opponentLabel) opponentLabel.textContent = copy.hud.currentPlayer(this.rules.currentPlayer === 0 ? 2 : 1);
+    if (playerOneName) playerOneName.textContent = copy.hud.playerName(1);
+    if (playerTwoName) playerTwoName.textContent = copy.hud.playerName(2);
+    if (playerOneTurn) playerOneTurn.textContent = this.rules.currentPlayer === 0 ? copy.hud.activeTurn : copy.hud.waitingTurn;
+    if (playerTwoTurn) playerTwoTurn.textContent = this.rules.currentPlayer === 1 ? copy.hud.activeTurn : copy.hud.waitingTurn;
+    if (playerOneGroup) playerOneGroup.textContent = copy.hud.playerGroup(this.rules.players[0].group);
+    if (playerTwoGroup) playerTwoGroup.textContent = copy.hud.playerGroup(this.rules.players[1].group);
+    if (playerOneTargetLabel) playerOneTargetLabel.textContent = copy.hud.targetBalls;
+    if (playerTwoTargetLabel) playerTwoTargetLabel.textContent = copy.hud.targetBalls;
+    if (pocketedBallLabel) pocketedBallLabel.textContent = copy.hud.pocketedBalls;
     if (languageLabel) languageLabel.textContent = copy.languageLabel;
     if (this.languageButton) this.languageButton.textContent = copy.languageToggle;
     if (this.restartButton) this.restartButton.textContent = copy.hud.restart;
@@ -884,10 +1109,22 @@ export class PoolScene extends Phaser.Scene {
     if (aimState) aimState.textContent = copy.aimOn;
     if (spinLabel) spinLabel.textContent = copy.spin.label;
     if (message) message.textContent = messageText;
+
+    if (this.gameMode === 'ai') {
+      if (playerTwoName) playerTwoName.textContent = copy.ai.playerName;
+      if (mode) mode.textContent = copy.hud.modeAi;
+    }
+    if (this.modeToggleButton) {
+      this.modeToggleButton.textContent = this.gameMode === 'ai' ? copy.hud.modePvp : copy.hud.modeAi;
+    }
+    if (this.aiThinking && message) {
+      message.textContent = this.aiDecision ? copy.ai.aiming : copy.ai.thinking;
+    }
+
     this.updateSpinControl();
-    this.renderDomBallList('#pocketed-ball-strip', getPocketedDisplayBallIds(this.rules), '已进球');
-    this.renderDomBallList('#player-one-targets', getPlayerRemainingBallIds(this.rules, 0), '');
-    this.renderDomBallList('#player-two-targets', getPlayerRemainingBallIds(this.rules, 1), '');
+    this.renderDomBallList('#pocketed-ball-strip', getPocketedDisplayBallIds(this.rules), copy.hud.noPocketedBalls);
+    this.renderDomBallList('#player-one-targets', getPlayerTargetDisplayBallIds(this.rules, 0), copy.hud.openTargets);
+    this.renderDomBallList('#player-two-targets', getPlayerTargetDisplayBallIds(this.rules, 1), copy.hud.openTargets);
     this.updateShotClockHud();
     if (this.rules.gameOver) {
       this.showVictoryScreen();
@@ -896,9 +1133,11 @@ export class PoolScene extends Phaser.Scene {
 
   private updateShotClockHud(): void {
     const progress = Math.max(0, Math.min(this.shotClockRemaining / SHOT_CLOCK_SECONDS, 1));
+    const shotClock = document.querySelector('#shot-clock');
     const playerOneCard = document.querySelector<HTMLElement>('#player-one-card');
     const playerTwoCard = document.querySelector<HTMLElement>('#player-two-card');
 
+    if (shotClock) shotClock.textContent = String(Math.ceil(this.shotClockRemaining));
     this.updatePlayerClockCard(playerOneCard, this.rules.currentPlayer === 0 && !this.rules.gameOver, progress);
     this.updatePlayerClockCard(playerTwoCard, this.rules.currentPlayer === 1 && !this.rules.gameOver, progress);
   }
