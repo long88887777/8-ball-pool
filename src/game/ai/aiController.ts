@@ -140,11 +140,21 @@ export class AIController {
         if (simResult.pocketedBalls.length === 0) continue;
         if (simResult.cueBallPocketed) continue;
 
-        const baseScore = evaluateState(state, simResult, aiPlayer, aiGroup);
         const posScore = scorePositionPlay(simResult, idealZone, zoneRadius);
-        const powerPenalty = candidate.power * 0.05;
+        const cueEnd = simResult.ballPositions.get(0);
+        let safetyScore = 1.0;
+        if (cueEnd) {
+          let minPocketDist = Infinity;
+          for (const pocket of POCKETS) {
+            const d = Math.hypot(cueEnd.x - pocket.x, cueEnd.y - pocket.y);
+            if (d < minPocketDist) minPocketDist = d;
+          }
+          safetyScore = minPocketDist > BALL_RADIUS * 4 ? 1 : minPocketDist / (BALL_RADIUS * 4);
+        }
+        const powerPenalty = candidate.power * 0.03;
 
-        const score = baseScore * 0.6 + posScore * 0.35 - powerPenalty;
+        // Position play is the primary objective once pot is confirmed
+        const score = posScore * 0.55 + safetyScore * 0.15 + 0.3 - powerPenalty;
 
         if (score > bestScore) {
           bestScore = score;
