@@ -6,6 +6,32 @@
     <title>Realistic 2D Pool</title>
   </head>
   <body>
+    <section id="auth-page" class="auth-page">
+      <div class="auth-container">
+        <div class="auth-header">
+          <span class="auth-eyebrow">8-BALL</span>
+          <h1 class="auth-heading">Pool Hall</h1>
+        </div>
+        <div class="auth-tabs">
+          <button class="auth-tab is-active" data-tab="login">登录</button>
+          <button class="auth-tab" data-tab="register">注册</button>
+        </div>
+        <form id="login-form" class="auth-form">
+          <input type="email" id="login-email" placeholder="邮箱" required autocomplete="email" />
+          <input type="password" id="login-password" placeholder="密码" required autocomplete="current-password" />
+          <button type="submit" class="auth-submit">登录</button>
+          <p id="login-error" class="auth-error" hidden></p>
+        </form>
+        <form id="register-form" class="auth-form" hidden>
+          <input type="email" id="register-email" placeholder="邮箱" required autocomplete="email" />
+          <input type="text" id="register-nickname" placeholder="昵称" required minlength="2" maxlength="16" />
+          <input type="password" id="register-password" placeholder="密码 (至少6位)" required minlength="6" autocomplete="new-password" />
+          <button type="submit" class="auth-submit">注册</button>
+          <p id="register-error" class="auth-error" hidden></p>
+        </form>
+      </div>
+    </section>
+
     <section id="main-menu" class="main-menu" aria-label="Game mode selection">
       <div class="menu-ball menu-ball-1" aria-hidden="true"></div>
       <div class="menu-ball menu-ball-2" aria-hidden="true"></div>
@@ -50,6 +76,17 @@
 
     <main class="game-shell" hidden>
       <section class="game-header" aria-label="Game status">
+        <nav class="game-toolbar" aria-label="Game controls">
+          <button id="btn-back" class="toolbar-btn" type="button" aria-label="Back to menu">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5"/><path d="m12 19-7-7 7-7"/></svg>
+          </button>
+          <button id="btn-pause" class="toolbar-btn" type="button" aria-label="Pause game">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+          </button>
+          <button id="btn-aim" class="toolbar-btn is-active" type="button" aria-label="Toggle aim line">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="2" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="2" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="22" y2="12"/></svg>
+          </button>
+        </nav>
         <div class="game-title">
           <p id="eyebrow" class="eyebrow">Local Two-Player</p>
           <h1 id="title">Pool Hall</h1>
@@ -58,11 +95,6 @@
           <span id="mode">Local 8-Ball</span>
           <span id="remaining">Balls 15</span>
           <span id="strokes">Strokes 0</span>
-          <span id="group-status">Open</span>
-          <span id="best">Open</span>
-          <span id="aim-label">Aim Line</span>
-          <span id="aim-state">On</span>
-          <span id="language-label">Language</span>
           <button id="language" type="button">中文</button>
           <button id="restart" type="button">New Rack</button>
         </div>
@@ -167,6 +199,14 @@
             <button id="challenge-next" type="button">Next Level</button>
             <button id="challenge-to-select" type="button">Level Select</button>
           </div>
+        </div>
+      </section>
+
+      <section id="pause-overlay" class="pause-overlay" hidden>
+        <div class="pause-dialog">
+          <h2>游戏暂停</h2>
+          <p>Game Paused</p>
+          <button id="pause-resume" type="button">继续游戏</button>
         </div>
       </section>
     </main>
