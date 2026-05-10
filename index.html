@@ -6,7 +6,49 @@
     <title>Realistic 2D Pool</title>
   </head>
   <body>
-    <main class="game-shell">
+    <section id="main-menu" class="main-menu" aria-label="Game mode selection">
+      <div class="menu-ball menu-ball-1" aria-hidden="true"></div>
+      <div class="menu-ball menu-ball-2" aria-hidden="true"></div>
+      <div class="menu-ball menu-ball-3" aria-hidden="true"></div>
+      <div class="menu-ball menu-ball-4" aria-hidden="true"></div>
+      <div class="menu-ball menu-ball-5" aria-hidden="true"></div>
+      <div class="menu-ball menu-ball-6" aria-hidden="true"></div>
+
+      <div class="menu-content">
+        <div class="menu-title">
+          <span class="menu-eyebrow">8-BALL</span>
+          <h1 class="menu-heading">Pool Hall</h1>
+        </div>
+        <div class="menu-buttons">
+          <button class="menu-btn" data-mode="ai" aria-label="Player versus AI mode">
+            <span class="menu-btn-icon">🎯</span>
+            <span class="menu-btn-text">
+              <strong>人机对战</strong>
+              <small>Player vs AI</small>
+            </span>
+            <span class="menu-btn-chevron" aria-hidden="true">›</span>
+          </button>
+          <button class="menu-btn" data-mode="pvp" aria-label="Two player local mode">
+            <span class="menu-btn-icon">👥</span>
+            <span class="menu-btn-text">
+              <strong>双人对战</strong>
+              <small>Two Players</small>
+            </span>
+            <span class="menu-btn-chevron" aria-hidden="true">›</span>
+          </button>
+          <button class="menu-btn" data-mode="challenge" aria-label="Challenge mode">
+            <span class="menu-btn-icon">⭐</span>
+            <span class="menu-btn-text">
+              <strong>台球闯关</strong>
+              <small>Challenge Mode</small>
+            </span>
+            <span class="menu-btn-chevron" aria-hidden="true">›</span>
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <main class="game-shell" hidden>
       <section class="game-header" aria-label="Game status">
         <div class="game-title">
           <p id="eyebrow" class="eyebrow">Local Two-Player</p>
@@ -28,6 +70,7 @@
         </div>
         <div id="challenge-hud" class="challenge-hud" hidden>
           <span id="challenge-level-name"></span>
+          <span id="challenge-hint"></span>
           <span id="challenge-shots"></span>
         </div>
       </section>
