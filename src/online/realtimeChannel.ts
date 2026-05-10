@@ -1,5 +1,12 @@
 import { supabase } from '../lib/supabase';
-import type { OnlineMessage } from './types';
+import type { OnlineMessage, ShotMessage, ResultMessage, TurnEndMessage, HeartbeatMessage, GameOverMessage } from './types';
+
+type MessageWithoutTs =
+  | Omit<ShotMessage, 'ts'>
+  | Omit<ResultMessage, 'ts'>
+  | Omit<TurnEndMessage, 'ts'>
+  | Omit<HeartbeatMessage, 'ts'>
+  | Omit<GameOverMessage, 'ts'>;
 
 export interface ChannelCallbacks {
   onMessage: (msg: OnlineMessage) => void;
@@ -53,7 +60,7 @@ export class GameChannel {
     this.startHeartbeat();
   }
 
-  send(msg: Omit<OnlineMessage, 'ts'>): void {
+  send(msg: MessageWithoutTs): void {
     if (!this.channel) return;
     const fullMsg = { ...msg, ts: Date.now() } as OnlineMessage;
     this.channel.send({

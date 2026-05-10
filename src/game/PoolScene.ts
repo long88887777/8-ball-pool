@@ -1774,7 +1774,7 @@ export class PoolScene extends Phaser.Scene {
       this.syncBallsFromPhysics(this.physicsEngine.getBalls());
     }
     for (const ballId of msg.pocketedBallIds) {
-      this.rules = recordEightBallPocket(this.rules, ballId, ballId === 0 ? 'cue' : (ballId <= 7 ? 'solid' : (ballId === 8 ? 'eight' : 'stripe')), 0);
+      this.rules = recordEightBallPocket(this.rules, ballId);
     }
     if (msg.gameOver) {
       const myIndex = this.roomInfo!.isHost ? 0 : 1;
