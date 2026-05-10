@@ -9,9 +9,12 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "phaser": "^3.90.0"
+    "@supabase/supabase-js": "^2.105.4",
+    "phaser": "^3.90.0",
+    "three": "^0.184.0"
   },
   "devDependencies": {
+    "@types/three": "^0.184.1",
     "typescript": "^5.9.3",
     "vite": "^7.1.12",
     "vitest": "^3.2.4"
