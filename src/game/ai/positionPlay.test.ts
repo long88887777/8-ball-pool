@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { computeNextTarget, deriveSpin } from './positionPlay';
+import { computeNextTarget, deriveSpin, generatePositionAwareShots } from './positionPlay';
 import { POCKETS, BALL_RADIUS } from '../constants';
 import type { Vector } from '../constants';
 
@@ -86,6 +86,61 @@ describe('positionPlay', () => {
       expect(spin.x).toBeLessThanOrEqual(1);
       expect(spin.y).toBeGreaterThanOrEqual(-1);
       expect(spin.y).toBeLessThanOrEqual(1);
+    });
+  });
+
+  describe('generatePositionAwareShots', () => {
+    it('generates candidates with derived spin for a pottable ball', () => {
+      const pocket = POCKETS[1];
+      const targetPos = { x: pocket.x, y: pocket.y + 100 };
+      const ballPositions = new Map<number, Vector>([
+        [0, { x: 300, y: 320 }],
+        [1, targetPos],
+        [2, { x: 700, y: 200 }],
+      ]);
+
+      const candidates = generatePositionAwareShots(
+        ballPositions, 1, 1, [1, 2], [],
+      );
+
+      expect(candidates.length).toBeGreaterThan(0);
+      expect(candidates.length).toBeLessThanOrEqual(80);
+      const uniqueSpinY = new Set(candidates.map((c) => c.spin.y.toFixed(2)));
+      expect(uniqueSpinY.size).toBeGreaterThan(2);
+    });
+
+    it('includes baseline no-spin candidate', () => {
+      const pocket = POCKETS[1];
+      const targetPos = { x: pocket.x, y: pocket.y + 100 };
+      const ballPositions = new Map<number, Vector>([
+        [0, { x: 300, y: 320 }],
+        [1, targetPos],
+        [2, { x: 700, y: 200 }],
+      ]);
+
+      const candidates = generatePositionAwareShots(
+        ballPositions, 1, 1, [1, 2], [],
+      );
+
+      const noSpin = candidates.filter(
+        (c) => Math.abs(c.spin.x) < 0.01 && Math.abs(c.spin.y) < 0.01,
+      );
+      expect(noSpin.length).toBeGreaterThan(0);
+    });
+
+    it('uses fallback spins when no next target exists', () => {
+      const pocket = POCKETS[1];
+      const targetPos = { x: pocket.x, y: pocket.y + 100 };
+      const ballPositions = new Map<number, Vector>([
+        [0, { x: 300, y: 320 }],
+        [1, targetPos],
+      ]);
+
+      const candidates = generatePositionAwareShots(
+        ballPositions, 1, 1, [1], [],
+      );
+
+      expect(candidates.length).toBeGreaterThan(0);
     });
   });
 });

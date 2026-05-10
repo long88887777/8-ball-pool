@@ -1,5 +1,5 @@
 import { BALL_RADIUS, POCKETS, type Vector } from '../constants';
-import type { PositionTarget } from './types';
+import type { PositionTarget, ShotCandidate } from './types';
 import { isPathClear, isOnTable } from './shotGenerator';
 
 const IDEAL_DISTANCE = 150;
@@ -74,6 +74,94 @@ export function computeNextTarget(
   }
 
   return best;
+}
+
+const FALLBACK_SPINS: Vector[] = [
+  { x: 0, y: 0 },
+  { x: 0, y: 0.7 },
+  { x: 0, y: -0.7 },
+  { x: -0.5, y: 0 },
+  { x: 0.5, y: 0 },
+];
+
+export function generatePositionAwareShots(
+  ballPositions: Map<number, Vector>,
+  targetBallId: number,
+  pocketIndex: number,
+  legalTargets: number[],
+  pocketedBallIds: number[],
+): ShotCandidate[] {
+  const cuePos = ballPositions.get(0);
+  const targetPos = ballPositions.get(targetBallId);
+  if (!cuePos || !targetPos) return [];
+
+  const pocket = POCKETS[pocketIndex];
+  const toPocketX = pocket.x - targetPos.x;
+  const toPocketY = pocket.y - targetPos.y;
+  const toPocketLen = Math.hypot(toPocketX, toPocketY);
+  if (toPocketLen < 1) return [];
+
+  const toPocketDir = { x: toPocketX / toPocketLen, y: toPocketY / toPocketLen };
+  const ghostBallPos = {
+    x: targetPos.x - toPocketDir.x * BALL_RADIUS * 2,
+    y: targetPos.y - toPocketDir.y * BALL_RADIUS * 2,
+  };
+
+  const toGhostX = ghostBallPos.x - cuePos.x;
+  const toGhostY = ghostBallPos.y - cuePos.y;
+  const toGhostLen = Math.hypot(toGhostX, toGhostY);
+  if (toGhostLen < 1) return [];
+
+  const direction = { x: toGhostX / toGhostLen, y: toGhostY / toGhostLen };
+
+  const nextTarget = computeNextTarget(
+    ballPositions, targetBallId, legalTargets, pocketedBallIds,
+  );
+
+  let spinVariants: Vector[];
+  if (nextTarget) {
+    const baseSpin = deriveSpin(cuePos, ghostBallPos, direction, nextTarget.idealZone);
+    spinVariants = [
+      baseSpin,
+      { x: baseSpin.x * 0.5, y: baseSpin.y * 0.5 },
+      { x: clampSpin(baseSpin.x * 1.3), y: clampSpin(baseSpin.y * 1.3) },
+      { x: baseSpin.x, y: baseSpin.y * 0.7 },
+      { x: baseSpin.x * 0.7, y: baseSpin.y },
+      { x: 0, y: 0 },
+    ];
+  } else {
+    spinVariants = FALLBACK_SPINS;
+  }
+
+  const totalDist = toGhostLen + toPocketLen;
+  const powerMin = Math.max(0.2, totalDist / 1200);
+  const powerMax = Math.min(0.85, totalDist / 500);
+  const powerSteps = 8;
+  const powers: number[] = [];
+  for (let i = 0; i < powerSteps; i++) {
+    powers.push(powerMin + (powerMax - powerMin) * (i / (powerSteps - 1)));
+  }
+
+  const candidates: ShotCandidate[] = [];
+  for (const spin of spinVariants) {
+    for (const power of powers) {
+      candidates.push({
+        targetBallId,
+        pocketIndex,
+        direction,
+        power,
+        spin: { x: spin.x, y: spin.y },
+        type: 'pot',
+        ghostBallPos,
+      });
+    }
+  }
+
+  return candidates;
+}
+
+function clampSpin(v: number): number {
+  return Math.max(-1, Math.min(1, v));
 }
 
 export function deriveSpin(
