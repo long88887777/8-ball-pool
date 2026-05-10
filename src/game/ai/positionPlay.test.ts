@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { computeNextTarget } from './positionPlay';
+import { computeNextTarget, deriveSpin } from './positionPlay';
 import { POCKETS, BALL_RADIUS } from '../constants';
 import type { Vector } from '../constants';
 
@@ -41,6 +41,51 @@ describe('positionPlay', () => {
       ]);
       const result = computeNextTarget(ballPositions, 1, [1, 2], [2]);
       expect(result).toBeNull();
+    });
+  });
+
+  describe('deriveSpin', () => {
+    it('returns follow spin when ideal zone is ahead along shot direction', () => {
+      const cuePos = { x: 200, y: 320 };
+      const ghostBallPos = { x: 400, y: 320 };
+      const shotDirection = { x: 1, y: 0 };
+      const idealZone = { x: 600, y: 320 };
+
+      const spin = deriveSpin(cuePos, ghostBallPos, shotDirection, idealZone);
+      expect(spin.y).toBeGreaterThan(0);
+    });
+
+    it('returns draw spin when ideal zone is behind collision point', () => {
+      const cuePos = { x: 200, y: 320 };
+      const ghostBallPos = { x: 400, y: 320 };
+      const shotDirection = { x: 1, y: 0 };
+      const idealZone = { x: 250, y: 320 };
+
+      const spin = deriveSpin(cuePos, ghostBallPos, shotDirection, idealZone);
+      expect(spin.y).toBeLessThan(0);
+    });
+
+    it('returns side spin when ideal zone is perpendicular', () => {
+      const cuePos = { x: 200, y: 320 };
+      const ghostBallPos = { x: 400, y: 320 };
+      const shotDirection = { x: 1, y: 0 };
+      const idealZone = { x: 400, y: 150 };
+
+      const spin = deriveSpin(cuePos, ghostBallPos, shotDirection, idealZone);
+      expect(Math.abs(spin.x)).toBeGreaterThan(0.1);
+    });
+
+    it('clamps spin values to [-1, 1]', () => {
+      const cuePos = { x: 200, y: 320 };
+      const ghostBallPos = { x: 400, y: 320 };
+      const shotDirection = { x: 1, y: 0 };
+      const idealZone = { x: 100, y: 100 };
+
+      const spin = deriveSpin(cuePos, ghostBallPos, shotDirection, idealZone);
+      expect(spin.x).toBeGreaterThanOrEqual(-1);
+      expect(spin.x).toBeLessThanOrEqual(1);
+      expect(spin.y).toBeGreaterThanOrEqual(-1);
+      expect(spin.y).toBeLessThanOrEqual(1);
     });
   });
 });

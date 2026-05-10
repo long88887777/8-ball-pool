@@ -4,6 +4,7 @@ import { isPathClear, isOnTable } from './shotGenerator';
 
 const IDEAL_DISTANCE = 150;
 const ZONE_RADIUS = 50;
+const MAX_CORRECTION = 1.5;
 
 export function computeNextTarget(
   ballPositions: Map<number, Vector>,
@@ -73,4 +74,54 @@ export function computeNextTarget(
   }
 
   return best;
+}
+
+export function deriveSpin(
+  cuePos: Vector,
+  ghostBallPos: Vector,
+  shotDirection: Vector,
+  idealZone: Vector,
+): Vector {
+  const dx = ghostBallPos.x - cuePos.x;
+  const dy = ghostBallPos.y - cuePos.y;
+  const len = Math.hypot(dx, dy);
+  if (len < 1) return { x: 0, y: 0 };
+
+  const collisionNormal = { x: dx / len, y: dy / len };
+
+  // Natural post-collision direction (tangent component)
+  const dot = shotDirection.x * collisionNormal.x + shotDirection.y * collisionNormal.y;
+  const tangentX = shotDirection.x - dot * collisionNormal.x;
+  const tangentY = shotDirection.y - dot * collisionNormal.y;
+  const tangentLen = Math.hypot(tangentX, tangentY);
+
+  let naturalDir: Vector;
+  if (tangentLen < 0.001) {
+    naturalDir = { x: 0, y: 0 };
+  } else {
+    naturalDir = { x: tangentX / tangentLen, y: tangentY / tangentLen };
+  }
+
+  // Desired direction: from ghost ball to ideal zone
+  const toIdealX = idealZone.x - ghostBallPos.x;
+  const toIdealY = idealZone.y - ghostBallPos.y;
+  const toIdealLen = Math.hypot(toIdealX, toIdealY);
+  if (toIdealLen < 1) return { x: 0, y: 0 };
+
+  const idealDir = { x: toIdealX / toIdealLen, y: toIdealY / toIdealLen };
+
+  // Correction needed
+  const correctionX = idealDir.x - naturalDir.x;
+  const correctionY = idealDir.y - naturalDir.y;
+
+  // Decompose into follow/draw and side
+  const followComponent = correctionX * shotDirection.x + correctionY * shotDirection.y;
+  const perpX = -shotDirection.y;
+  const perpY = shotDirection.x;
+  const sideComponent = correctionX * perpX + correctionY * perpY;
+
+  const spinY = Math.max(-1, Math.min(1, followComponent / MAX_CORRECTION));
+  const spinX = Math.max(-1, Math.min(1, sideComponent / MAX_CORRECTION));
+
+  return { x: spinX, y: spinY };
 }
