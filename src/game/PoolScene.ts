@@ -7,7 +7,13 @@ import {
   createChallengeState,
   recordChallengeShot,
   recordChallengePocket,
+  recordChallengeOrderedPocket,
   recordChallengeCuePocket,
+  recordChallengeCollision,
+  recordChallengePocketWithRequired,
+  checkKickChain,
+  resetChallengeShot,
+  revertCuePocketShot,
   resolveChallengeResult,
   type ChallengeState,
 } from './challenge/challengeState';
@@ -139,10 +145,6 @@ export class PoolScene extends Phaser.Scene {
   private aiController = new AIController();
   private aiThinking = false;
   private aiDecision: AIDecision | null = null;
-  private modeToggleButton?: HTMLButtonElement;
-  private modeToggleHandler = (): void => {
-    this.toggleGameMode();
-  };
   private challengeState: ChallengeState | null = null;
   private currentLevel: ChallengeLevel | null = null;
   private challengeBtn?: HTMLButtonElement;
@@ -160,6 +162,10 @@ export class PoolScene extends Phaser.Scene {
   }
 
   create(): void {
+    const registryMode = this.game.registry.get('initialMode') as 'pvp' | 'ai' | 'challenge' | undefined;
+    if (registryMode) {
+      this.gameMode = registryMode;
+    }
     this.createTextures();
     this.state = createGameState(BALLS.length, null);
     this.rules = createEightBallState();
@@ -174,17 +180,19 @@ export class PoolScene extends Phaser.Scene {
     this.bindInput();
     this.bindRestart();
     this.bindLanguage();
-    this.bindModeToggle();
     this.bindSpinControl();
     this.bindChallengeUI();
     this.updateHud();
 
     this.bindVictoryOverlay();
 
+    if (this.gameMode === 'challenge') {
+      this.showChallengeSelect();
+    }
+
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       this.restartButton?.removeEventListener('click', this.restartHandler);
       this.languageButton?.removeEventListener('click', this.languageHandler);
-      this.modeToggleButton?.removeEventListener('click', this.modeToggleHandler);
       this.victoryRestartButton?.removeEventListener('click', this.victoryRestartHandler);
       this.challengeBtn?.removeEventListener('click', this.challengeBtnHandler);
       this.unbindSpinControl();
@@ -397,16 +405,6 @@ export class PoolScene extends Phaser.Scene {
     this.languageButton?.addEventListener('click', this.languageHandler);
   }
 
-  private bindModeToggle(): void {
-    this.modeToggleButton = document.querySelector<HTMLButtonElement>('#mode-toggle') ?? undefined;
-    this.modeToggleButton?.addEventListener('click', this.modeToggleHandler);
-  }
-
-  private toggleGameMode(): void {
-    this.gameMode = this.gameMode === 'ai' ? 'pvp' : 'ai';
-    this.restartRack();
-  }
-
   private bindChallengeUI(): void {
     this.challengeBtn = document.querySelector<HTMLButtonElement>('#challenge-btn') ?? undefined;
     this.challengeBtn?.addEventListener('click', this.challengeBtnHandler);
@@ -534,10 +532,17 @@ export class PoolScene extends Phaser.Scene {
 
     const nameEl = document.querySelector('#challenge-level-name');
     const shotsEl = document.querySelector('#challenge-shots');
+    const hintEl = document.querySelector('#challenge-hint');
     if (nameEl) {
       nameEl.textContent = this.language === 'zh'
         ? this.currentLevel.name.zh
         : this.currentLevel.name.en;
+    }
+    if (hintEl) {
+      const hint = this.currentLevel.hint;
+      hintEl.textContent = hint
+        ? (this.language === 'zh' ? hint.zh : hint.en)
+        : '';
     }
     if (shotsEl) {
       shotsEl.textContent = copy.challenge.shotsUsed(
@@ -920,6 +925,7 @@ export class PoolScene extends Phaser.Scene {
     },
     power: number,
   ): void {
+    const hideTarget = this.gameMode === 'challenge' && !!this.currentLevel?.hideTargetRoute;
     const impactDistance = Math.hypot(prediction.cueBallImpactCenter.x - cue.x, prediction.cueBallImpactCenter.y - cue.y);
     const inboundStart =
       impactDistance < 0.001
@@ -928,7 +934,7 @@ export class PoolScene extends Phaser.Scene {
             x: cue.x + ((prediction.cueBallImpactCenter.x - cue.x) / impactDistance) * BALL_RADIUS,
             y: cue.y + ((prediction.cueBallImpactCenter.y - cue.y) / impactDistance) * BALL_RADIUS,
           };
-    const targetEnd = this.scaleRouteEnd(
+    const targetEnd = hideTarget ? null : this.scaleRouteEnd(
       prediction.targetBallCenter,
       projectRayToPlayArea(prediction.targetBallCenter, prediction.targetBallDir),
       0.52 + power * 0.36,
@@ -943,14 +949,16 @@ export class PoolScene extends Phaser.Scene {
 
     this.aimLine.lineStyle(5, 0x10100e, 0.45);
     this.strokeLine(inboundStart, prediction.cueBallImpactCenter);
-    this.strokeLine(prediction.targetBallCenter, targetEnd);
+    if (targetEnd) this.strokeLine(prediction.targetBallCenter, targetEnd);
     if (cueDeflectEnd) this.strokeLine(prediction.cueBallImpactCenter, cueDeflectEnd);
 
     this.aimLine.lineStyle(3, 0xf6e7b4, 0.92);
     this.strokeLine(inboundStart, prediction.cueBallImpactCenter);
 
-    this.aimLine.lineStyle(3, 0xffffff, 0.88);
-    this.strokeLine(prediction.targetBallCenter, targetEnd);
+    if (targetEnd) {
+      this.aimLine.lineStyle(3, 0xffffff, 0.88);
+      this.strokeLine(prediction.targetBallCenter, targetEnd);
+    }
 
     if (cueDeflectEnd) {
       this.aimLine.lineStyle(3, 0xffffff, 0.82);
@@ -1013,6 +1021,9 @@ export class PoolScene extends Phaser.Scene {
     for (const event of events) {
       if (event.type === 'collision') {
         this.recordFirstCueContact(event.ballId, event.otherBallId);
+        if (this.gameMode === 'challenge' && this.challengeState && event.otherBallId !== undefined) {
+          this.challengeState = recordChallengeCollision(this.challengeState, event.ballId, event.otherBallId);
+        }
         this.audio.play('collision');
         continue;
       }
@@ -1029,8 +1040,23 @@ export class PoolScene extends Phaser.Scene {
       if (this.gameMode === 'challenge' && this.challengeState) {
         if (event.ballId === 0) {
           this.challengeState = recordChallengeCuePocket(this.challengeState);
+        } else if (this.currentLevel?.requiredPocket !== undefined) {
+          this.challengeState = recordChallengePocketWithRequired(
+            this.challengeState, event.ballId, event.pocketIndex, this.currentLevel.requiredPocket,
+          );
+        } else if (this.currentLevel?.orderedPocket) {
+          const sortedIds = this.currentLevel.balls.filter(b => b.id !== 0).map(b => b.id).sort((a, b) => a - b);
+          this.challengeState = recordChallengeOrderedPocket(this.challengeState, event.ballId, sortedIds);
+        } else if (this.currentLevel?.requireKickChain) {
+          const [, kickedBall] = this.currentLevel.requireKickChain;
+          const kickedBallSnapshot = this.physicsEngine.getBalls().find(b => b.id === kickedBall);
+          const kickedAlreadyPocketed = kickedBallSnapshot?.pocketed ?? false;
+          const satisfied = kickedAlreadyPocketed || checkKickChain(this.challengeState, this.currentLevel.requireKickChain);
+          if (satisfied) {
+            this.challengeState = recordChallengePocket(this.challengeState, event.ballId);
+          }
         } else {
-          this.challengeState = recordChallengePocket(this.challengeState);
+          this.challengeState = recordChallengePocket(this.challengeState, event.ballId);
         }
         this.updateChallengeHud();
         this.audio.play('pocket');
@@ -1099,12 +1125,30 @@ export class PoolScene extends Phaser.Scene {
     this.wasMoving = false;
 
     if (this.gameMode === 'challenge' && this.challengeState) {
+      if (this.challengeState.orderViolation) {
+        this.challengeState = { ...this.challengeState, result: { passed: false, stars: 0 } };
+        this.showChallengeResult();
+        return;
+      }
       const cueBallSnapshot = this.physicsEngine.getBalls().find(b => b.id === 0);
-      if (cueBallSnapshot?.pocketed) {
+      if (cueBallSnapshot?.pocketed || this.challengeState.cuePocketed) {
+        const sortedIds = this.currentLevel!.balls.filter(b => b.id !== 0).map(b => b.id).sort((a, b) => a - b);
+        for (const ballId of this.challengeState.ballsPocketedThisShot) {
+          const ballDef = this.currentLevel!.balls.find(b => b.id === ballId);
+          if (ballDef) {
+            this.physicsEngine.resetBall(ballId, ballDef.position);
+          }
+        }
+        this.challengeState = revertCuePocketShot(this.challengeState, sortedIds, !!this.currentLevel!.orderedPocket);
         const cueDef = this.currentLevel!.balls.find(b => b.id === 0)!;
         this.physicsEngine.resetCueBall(cueDef.position);
         this.syncBallsFromPhysics(this.physicsEngine.getBalls());
       }
+      if (this.currentLevel?.requireKickChain) {
+        const satisfied = checkKickChain(this.challengeState, this.currentLevel.requireKickChain);
+        this.challengeState = { ...this.challengeState, kickChainSatisfied: satisfied };
+      }
+      this.challengeState = resetChallengeShot(this.challengeState);
       if (this.challengeState.targetsPocketed >= this.challengeState.totalTargets) {
         this.showChallengeResult();
         return;
