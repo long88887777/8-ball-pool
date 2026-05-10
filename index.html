@@ -7,28 +7,70 @@
   </head>
   <body>
     <section id="auth-page" class="auth-page">
-      <div class="auth-container">
-        <div class="auth-header">
-          <span class="auth-eyebrow">8-BALL</span>
-          <h1 class="auth-heading">Pool Hall</h1>
+      <div class="auth-bg-orbs" aria-hidden="true">
+        <div class="auth-orb auth-orb-1"></div>
+        <div class="auth-orb auth-orb-2"></div>
+        <div class="auth-orb auth-orb-3"></div>
+      </div>
+
+      <div class="auth-card" id="auth-login-card">
+        <div class="auth-logo">
+          <div class="auth-logo-ball" aria-hidden="true">8</div>
         </div>
-        <div class="auth-tabs">
-          <button class="auth-tab is-active" data-tab="login">登录</button>
-          <button class="auth-tab" data-tab="register">注册</button>
-        </div>
+        <h1 class="auth-title">欢迎回来</h1>
+        <p class="auth-subtitle">登录以继续</p>
         <form id="login-form" class="auth-form">
-          <input type="email" id="login-email" placeholder="邮箱" required autocomplete="email" />
-          <input type="password" id="login-password" placeholder="密码" required autocomplete="current-password" />
-          <button type="submit" class="auth-submit">登录</button>
+          <div class="auth-field">
+            <label for="login-email">邮箱</label>
+            <input type="email" id="login-email" required autocomplete="email" placeholder="your@email.com" />
+          </div>
+          <div class="auth-field">
+            <label for="login-password">密码</label>
+            <input type="password" id="login-password" required autocomplete="current-password" placeholder="输入密码" />
+          </div>
+          <div class="auth-field auth-captcha-field">
+            <label for="login-captcha">验证码</label>
+            <div class="auth-captcha-row">
+              <input type="text" id="login-captcha" required maxlength="4" placeholder="输入验证码" autocomplete="off" />
+              <canvas id="login-captcha-canvas" class="auth-captcha-canvas" width="120" height="44"></canvas>
+            </div>
+          </div>
           <p id="login-error" class="auth-error" hidden></p>
+          <button type="submit" class="auth-btn">登录</button>
         </form>
-        <form id="register-form" class="auth-form" hidden>
-          <input type="email" id="register-email" placeholder="邮箱" required autocomplete="email" />
-          <input type="text" id="register-nickname" placeholder="昵称" required minlength="2" maxlength="16" />
-          <input type="password" id="register-password" placeholder="密码 (至少6位)" required minlength="6" autocomplete="new-password" />
-          <button type="submit" class="auth-submit">注册</button>
+        <p class="auth-switch">还没有账号？<button type="button" id="goto-register" class="auth-switch-link">立即注册</button></p>
+      </div>
+
+      <div class="auth-card" id="auth-register-card" hidden>
+        <div class="auth-logo">
+          <div class="auth-logo-ball" aria-hidden="true">8</div>
+        </div>
+        <h1 class="auth-title">创建账号</h1>
+        <p class="auth-subtitle">加入 Pool Hall 开始对战</p>
+        <form id="register-form" class="auth-form">
+          <div class="auth-field">
+            <label for="register-email">邮箱</label>
+            <input type="email" id="register-email" required autocomplete="email" placeholder="your@email.com" />
+          </div>
+          <div class="auth-field">
+            <label for="register-nickname">昵称</label>
+            <input type="text" id="register-nickname" required minlength="2" maxlength="16" placeholder="游戏中显示的名字" />
+          </div>
+          <div class="auth-field">
+            <label for="register-password">密码</label>
+            <input type="password" id="register-password" required minlength="6" autocomplete="new-password" placeholder="至少6位字符" />
+          </div>
+          <div class="auth-field auth-captcha-field">
+            <label for="register-captcha">验证码</label>
+            <div class="auth-captcha-row">
+              <input type="text" id="register-captcha" required maxlength="4" placeholder="输入验证码" autocomplete="off" />
+              <canvas id="register-captcha-canvas" class="auth-captcha-canvas" width="120" height="44"></canvas>
+            </div>
+          </div>
           <p id="register-error" class="auth-error" hidden></p>
+          <button type="submit" class="auth-btn">注册</button>
         </form>
+        <p class="auth-switch">已有账号？<button type="button" id="goto-login" class="auth-switch-link">返回登录</button></p>
       </div>
     </section>
 
