@@ -78,6 +78,7 @@ import {
 } from './eightBallRules';
 import { createGameState, recordStroke, restartGame, type GameState } from './state';
 import { GameChannel } from '../online/realtimeChannel';
+import { createLeaveReporter, type LeaveReporter } from '../online/leaveReporter';
 import {
   createOnlineState,
   transitionToMyTurn,
@@ -198,6 +199,7 @@ export class PoolScene extends Phaser.Scene {
   private onlineState: OnlineState | null = null;
   private roomInfo: RoomInfo | null = null;
   private matchStartedAt: number | null = null;
+  private leaveReporter: LeaveReporter | null = null;
   private pendingResult: ResultMessage | null = null;
   private pendingTurnEnd: TurnEndMessage | null = null;
   private rematchPhase: 'idle' | 'awaiting_response' | 'prompted' | 'countdown' = 'idle';
@@ -264,6 +266,7 @@ export class PoolScene extends Phaser.Scene {
     }
 
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      this.reportOnlineLeave();
       this.restartButton?.removeEventListener('click', this.restartHandler);
       this.languageButton?.removeEventListener('click', this.languageHandler);
       this.victoryRestartButton?.removeEventListener('click', this.victoryRestartHandler);
@@ -1765,6 +1768,9 @@ export class PoolScene extends Phaser.Scene {
         onPresence: (event) => this.handleOnlinePresence(event),
       },
     });
+    this.leaveReporter = createLeaveReporter({
+      onLeave: () => this.reportOnlineLeave(),
+    });
   }
 
   private handleOnlinePresence(event: 'join' | 'leave'): void {
@@ -2325,6 +2331,10 @@ export class PoolScene extends Phaser.Scene {
     if (this.onlineChannel) {
       this.onlineChannel.leave();
       this.onlineChannel = null;
+    }
+    if (this.leaveReporter) {
+      this.leaveReporter.dispose();
+      this.leaveReporter = null;
     }
     this.onlineState = null;
     this.matchStartedAt = null;
