@@ -1803,6 +1803,7 @@ export class PoolScene extends Phaser.Scene {
       const iWin = msg.winner === myIndex;
       this.onlineState = transitionToGameOver(this.onlineState, msg.winner, msg.reason);
       this.showOnlineGameOver(iWin, msg.reason);
+      void this.updateOnlineStats(iWin, msg.reason);
       return;
     }
     if (msg.type === 'rematch_request') {
@@ -1968,7 +1969,7 @@ export class PoolScene extends Phaser.Scene {
     if (gameOver) {
       this.onlineState = transitionToGameOver(this.onlineState, winner!, 'normal');
       this.showOnlineGameOver(winner === myIndex, 'normal');
-      this.updateOnlineStats(winner === myIndex);
+      void this.updateOnlineStats(winner === myIndex, 'normal');
     } else if (nextPlayer === myIndex) {
       this.onlineState = transitionToMyTurn(this.onlineState);
       this.shotClockRemaining = 30;
@@ -2022,6 +2023,7 @@ export class PoolScene extends Phaser.Scene {
         const iWin = msg.winner === myIndex;
         this.onlineState = transitionToGameOver(this.onlineState, msg.winner ?? 0, 'normal');
         this.showOnlineGameOver(iWin, 'normal');
+        void this.updateOnlineStats(iWin, 'normal');
         return;
       }
       const myIndex = this.roomInfo!.isHost ? 0 : 1;
@@ -2075,7 +2077,7 @@ export class PoolScene extends Phaser.Scene {
     this.onlineChannel?.send({ type: 'game_over', reason: 'surrender', winner });
     this.onlineState = transitionToGameOver(this.onlineState, winner, 'surrender');
     this.showOnlineGameOver(false, 'surrender');
-    void this.updateOnlineStats(false);
+    void this.updateOnlineStats(false, 'surrender');
   }
 
   private handleOpponentDisconnect(): void {
@@ -2084,7 +2086,7 @@ export class PoolScene extends Phaser.Scene {
     this.onlineChannel.send({ type: 'game_over', reason: 'disconnect', winner: myIndex });
     this.onlineState = transitionToGameOver(this.onlineState, myIndex, 'disconnect');
     this.showOnlineGameOver(true, 'disconnect');
-    this.updateOnlineStats(true);
+    void this.updateOnlineStats(true, 'disconnect');
   }
 
   private updateOnlineTick(deltaSeconds: number): void {
@@ -2265,12 +2267,38 @@ export class PoolScene extends Phaser.Scene {
     window.location.reload();
   }
 
-  private async updateOnlineStats(won: boolean): Promise<void> {
+  private async updateOnlineStats(
+    won: boolean,
+    reason: 'normal' | 'disconnect' | 'surrender',
+  ): Promise<void> {
     const stat = won ? 'wins' : 'losses';
     await supabase.rpc('increment_profile_stat', { stat_name: stat });
-    if (this.roomInfo) {
-      await supabase.from('rooms').update({ status: 'finished' }).eq('id', this.roomInfo.roomId);
+
+    if (!this.roomInfo) return;
+
+    if (this.matchStartedAt !== null) {
+      const myUserId = this.roomInfo.myUserId;
+      const opponentId = this.roomInfo.opponentId;
+      const hostId = this.roomInfo.isHost ? myUserId : opponentId;
+      const guestId = this.roomInfo.isHost ? opponentId : myUserId;
+      const winnerId = won ? myUserId : opponentId;
+
+      await supabase.from('matches').upsert(
+        {
+          room_id: this.roomInfo.roomId,
+          player1_id: hostId,
+          player2_id: guestId,
+          winner_id: winnerId,
+          reason,
+          started_at: new Date(this.matchStartedAt).toISOString(),
+        },
+        { onConflict: 'room_id', ignoreDuplicates: true },
+      );
+    } else {
+      console.warn('updateOnlineStats: matchStartedAt is null; skipping matches insert');
     }
+
+    await supabase.from('rooms').update({ status: 'finished' }).eq('id', this.roomInfo.roomId);
   }
 
   private cleanupOnlineMode(): void {
