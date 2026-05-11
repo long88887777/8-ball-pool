@@ -2080,6 +2080,26 @@ export class PoolScene extends Phaser.Scene {
     void this.updateOnlineStats(false, 'surrender');
   }
 
+  private reportOnlineLeave(): void {
+    if (!this.roomInfo) return;
+    if (!this.onlineChannel) return;
+    if (!this.onlineState || this.onlineState.phase === 'game_over') return;
+
+    const myIndex: 0 | 1 = this.roomInfo.isHost ? 0 : 1;
+    const opponentIndex: 0 | 1 = myIndex === 0 ? 1 : 0;
+
+    try {
+      this.onlineChannel.send({
+        type: 'game_over',
+        reason: 'disconnect',
+        winner: opponentIndex,
+      });
+    } catch {
+      // unloading; WS may be torn down. 30s heartbeat timeout is the fallback.
+    }
+    this.onlineState = transitionToGameOver(this.onlineState, opponentIndex, 'disconnect');
+  }
+
   private handleOpponentDisconnect(): void {
     if (!this.onlineState || !this.onlineChannel) return;
     const myIndex: 0 | 1 = this.roomInfo!.isHost ? 0 : 1;
