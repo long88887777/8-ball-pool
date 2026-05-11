@@ -197,6 +197,7 @@ No automated test for `updateOnlineStats`. The function is pure I/O against Supa
 - No `timeout` reason (no code path produces it today).
 - No FK constraint between `matches.room_id` and `rooms.id` (rooms may be pruned later; matches survive).
 - No write-side aggregation (win-rate, streaks, etc.) — derivable from the table when a UI is added.
+- **Rematch games are not recorded.** Only the first game of each room is written to `matches`. The schema's `UNIQUE(room_id)` plus `ON CONFLICT DO NOTHING` means every subsequent rematch within the same room is silently deduplicated. Recording rematches requires a separate per-game identifier (e.g. `(room_id, match_seq)` or a synthetic `game_id`) and is out of scope for Phase 4.
 
 ## Out-of-Scope Risks Acknowledged
 
