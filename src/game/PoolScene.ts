@@ -197,6 +197,7 @@ export class PoolScene extends Phaser.Scene {
   private onlineChannel: GameChannel | null = null;
   private onlineState: OnlineState | null = null;
   private roomInfo: RoomInfo | null = null;
+  private matchStartedAt: number | null = null;
   private pendingResult: ResultMessage | null = null;
   private pendingTurnEnd: TurnEndMessage | null = null;
   private rematchPhase: 'idle' | 'awaiting_response' | 'prompted' | 'countdown' = 'idle';
@@ -1747,6 +1748,7 @@ export class PoolScene extends Phaser.Scene {
 
   private initOnlineMode(): void {
     if (!this.roomInfo) return;
+    this.matchStartedAt = Date.now();
     this.onlineState = createOnlineState({
       isHost: this.roomInfo.isHost,
       turnTimeLimit: 30,
@@ -2277,6 +2279,7 @@ export class PoolScene extends Phaser.Scene {
       this.onlineChannel = null;
     }
     this.onlineState = null;
+    this.matchStartedAt = null;
     this.pendingResult = null;
     this.pendingTurnEnd = null;
     this.chatTriggerP1.hidden = true;
