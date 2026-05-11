@@ -8,6 +8,15 @@ let roomTimeout: ReturnType<typeof setTimeout> | null = null;
 let pollInterval: ReturnType<typeof setInterval> | null = null;
 let matchResolved = false;
 
+async function fetchNickname(userId: string): Promise<string> {
+  const { data } = await supabase
+    .from('profiles')
+    .select('nickname')
+    .eq('id', userId)
+    .single();
+  return data?.nickname ?? '未知玩家';
+}
+
 function showPanel(panelId: string): void {
   const panels = document.querySelectorAll<HTMLElement>('.mm-panel');
   panels.forEach((p) => (p.hidden = true));
@@ -54,6 +63,8 @@ async function startQuickMatch(onMatch: MatchCallback): Promise<void> {
   const { data: { session } } = await supabase.auth.getSession();
   if (!session) return;
 
+  const myUserId = session.user.id;
+
   const res = await supabase.functions.invoke('match-players', {
     headers: { Authorization: `Bearer ${session.access_token}` },
   });
@@ -63,21 +74,21 @@ async function startQuickMatch(onMatch: MatchCallback): Promise<void> {
   const data = res.data as MatchResponse;
 
   if (data.status === 'matched') {
-    onMatchSuccess(onMatch, {
+    onMatchSuccess(onMatch, myUserId, {
       roomId: data.roomId,
       opponentId: data.opponentId,
       isHost: false,
+      myUserId,
     });
     return;
   }
 
-  const userId = session.user.id;
-
   const handleQueueMatch = (roomId: string, opponentId: string) => {
-    onMatchSuccess(onMatch, {
+    onMatchSuccess(onMatch, myUserId, {
       roomId,
       opponentId,
       isHost: true,
+      myUserId,
     });
   };
 
@@ -85,7 +96,7 @@ async function startQuickMatch(onMatch: MatchCallback): Promise<void> {
     const { data } = await supabase
       .from('matchmaking_queue')
       .select('status, room_id, matched_with')
-      .eq('user_id', userId)
+      .eq('user_id', myUserId)
       .single();
     if (data && data.status === 'matched' && data.room_id && data.matched_with) {
       handleQueueMatch(data.room_id, data.matched_with);
@@ -100,7 +111,7 @@ async function startQuickMatch(onMatch: MatchCallback): Promise<void> {
         event: 'UPDATE',
         schema: 'public',
         table: 'matchmaking_queue',
-        filter: `user_id=eq.${userId}`,
+        filter: `user_id=eq.${myUserId}`,
       },
       (payload) => {
         const record = payload.new;
@@ -119,6 +130,7 @@ async function startCreateRoom(onMatch: MatchCallback): Promise<void> {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return;
 
+  const myUserId = user.id;
   let roomId = '';
   let attempts = 0;
 
@@ -126,7 +138,7 @@ async function startCreateRoom(onMatch: MatchCallback): Promise<void> {
     const code = generateRoomCode();
     const { error } = await supabase.from('rooms').insert({
       id: code,
-      host_id: user.id,
+      host_id: myUserId,
       status: 'waiting',
     });
     if (!error) {
@@ -147,10 +159,11 @@ async function startCreateRoom(onMatch: MatchCallback): Promise<void> {
   }, 10 * 60 * 1000);
 
   const handleGuestJoined = (guestId: string) => {
-    onMatchSuccess(onMatch, {
+    onMatchSuccess(onMatch, myUserId, {
       roomId,
       opponentId: guestId,
       isHost: true,
+      myUserId,
     });
   };
 
@@ -199,6 +212,8 @@ async function startJoinRoom(code: string, onMatch: MatchCallback): Promise<void
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return;
 
+  const myUserId = user.id;
+
   const { data: room } = await supabase
     .from('rooms')
     .select('*')
@@ -212,33 +227,48 @@ async function startJoinRoom(code: string, onMatch: MatchCallback): Promise<void
     return;
   }
 
-  const { error } = await supabase
-    .from('rooms')
-    .update({ guest_id: user.id, status: 'playing' })
-    .eq('id', code)
-    .is('guest_id', null);
-
-  if (error) {
-    errorEl.textContent = '房间已满';
+  if (room.host_id === myUserId) {
+    errorEl.textContent = '不能加入自己创建的房间';
     errorEl.hidden = false;
     return;
   }
 
-  onMatchSuccess(onMatch, {
+  const { data: updated, error } = await supabase
+    .from('rooms')
+    .update({ guest_id: myUserId, status: 'playing' })
+    .eq('id', code)
+    .is('guest_id', null)
+    .select()
+    .single();
+
+  if (error || !updated) {
+    errorEl.textContent = '加入房间失败，请重试';
+    errorEl.hidden = false;
+    return;
+  }
+
+  onMatchSuccess(onMatch, myUserId, {
     roomId: code,
     opponentId: room.host_id,
     isHost: false,
+    myUserId,
   });
 }
 
-function onMatchSuccess(callback: MatchCallback, info: RoomInfo): void {
+async function onMatchSuccess(callback: MatchCallback, myUserId: string, info: Omit<RoomInfo, 'myNickname' | 'opponentNickname'>): Promise<void> {
   if (matchResolved) return;
   matchResolved = true;
   cleanup();
   showPanel('mm-success');
+
+  const [myNickname, opponentNickname] = await Promise.all([
+    fetchNickname(myUserId),
+    fetchNickname(info.opponentId),
+  ]);
+
   setTimeout(() => {
     closeModal();
-    callback(info);
+    callback({ ...info, myNickname, opponentNickname });
   }, 500);
 }
 
