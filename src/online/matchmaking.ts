@@ -5,6 +5,8 @@ type MatchCallback = (info: RoomInfo) => void;
 
 let currentSubscription: ReturnType<typeof supabase.channel> | null = null;
 let roomTimeout: ReturnType<typeof setTimeout> | null = null;
+let pollInterval: ReturnType<typeof setInterval> | null = null;
+let matchResolved = false;
 
 function showPanel(panelId: string): void {
   const panels = document.querySelectorAll<HTMLElement>('.mm-panel');
@@ -26,6 +28,10 @@ async function cleanup(): Promise<void> {
     clearTimeout(roomTimeout);
     roomTimeout = null;
   }
+  if (pollInterval) {
+    clearInterval(pollInterval);
+    pollInterval = null;
+  }
 }
 
 async function cancelSearch(): Promise<void> {
@@ -42,6 +48,7 @@ async function cancelRoom(roomId: string): Promise<void> {
 }
 
 async function startQuickMatch(onMatch: MatchCallback): Promise<void> {
+  matchResolved = false;
   showPanel('mm-searching');
 
   const { data: { session } } = await supabase.auth.getSession();
@@ -65,6 +72,26 @@ async function startQuickMatch(onMatch: MatchCallback): Promise<void> {
   }
 
   const userId = session.user.id;
+
+  const handleQueueMatch = (roomId: string, opponentId: string) => {
+    onMatchSuccess(onMatch, {
+      roomId,
+      opponentId,
+      isHost: true,
+    });
+  };
+
+  pollInterval = setInterval(async () => {
+    const { data } = await supabase
+      .from('matchmaking_queue')
+      .select('status, room_id, matched_with')
+      .eq('user_id', userId)
+      .single();
+    if (data && data.status === 'matched' && data.room_id && data.matched_with) {
+      handleQueueMatch(data.room_id, data.matched_with);
+    }
+  }, 2000);
+
   currentSubscription = supabase
     .channel('queue-watch')
     .on<QueueRecord>(
@@ -78,11 +105,7 @@ async function startQuickMatch(onMatch: MatchCallback): Promise<void> {
       (payload) => {
         const record = payload.new;
         if (record.status === 'matched' && record.room_id && record.matched_with) {
-          onMatchSuccess(onMatch, {
-            roomId: record.room_id,
-            opponentId: record.matched_with,
-            isHost: true,
-          });
+          handleQueueMatch(record.room_id, record.matched_with);
         }
       }
     )
@@ -90,6 +113,7 @@ async function startQuickMatch(onMatch: MatchCallback): Promise<void> {
 }
 
 async function startCreateRoom(onMatch: MatchCallback): Promise<void> {
+  matchResolved = false;
   showPanel('mm-hosting');
 
   const { data: { user } } = await supabase.auth.getUser();
@@ -122,6 +146,25 @@ async function startCreateRoom(onMatch: MatchCallback): Promise<void> {
     showPanel('mm-menu');
   }, 10 * 60 * 1000);
 
+  const handleGuestJoined = (guestId: string) => {
+    onMatchSuccess(onMatch, {
+      roomId,
+      opponentId: guestId,
+      isHost: true,
+    });
+  };
+
+  pollInterval = setInterval(async () => {
+    const { data } = await supabase
+      .from('rooms')
+      .select('guest_id, status')
+      .eq('id', roomId)
+      .single();
+    if (data && data.guest_id && data.status === 'playing') {
+      handleGuestJoined(data.guest_id);
+    }
+  }, 2000);
+
   currentSubscription = supabase
     .channel(`room-${roomId}`)
     .on<RoomRecord>(
@@ -130,16 +173,11 @@ async function startCreateRoom(onMatch: MatchCallback): Promise<void> {
         event: 'UPDATE',
         schema: 'public',
         table: 'rooms',
-        filter: `id=eq.${roomId}`,
       },
       (payload) => {
         const record = payload.new;
-        if (record.guest_id && record.status === 'playing') {
-          onMatchSuccess(onMatch, {
-            roomId,
-            opponentId: record.guest_id,
-            isHost: true,
-          });
+        if (record.id === roomId && record.guest_id && record.status === 'playing') {
+          handleGuestJoined(record.guest_id);
         }
       }
     )
@@ -194,6 +232,8 @@ async function startJoinRoom(code: string, onMatch: MatchCallback): Promise<void
 }
 
 function onMatchSuccess(callback: MatchCallback, info: RoomInfo): void {
+  if (matchResolved) return;
+  matchResolved = true;
   cleanup();
   showPanel('mm-success');
   setTimeout(() => {
