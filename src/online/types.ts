@@ -15,6 +15,9 @@ export interface RoomInfo {
   roomId: string;
   opponentId: string;
   isHost: boolean;
+  myNickname: string;
+  opponentNickname: string;
+  myUserId: string;
 }
 
 export interface QueueRecord {
@@ -54,7 +57,7 @@ export type ShotMessage = MessageBase & {
 
 export type ResultMessage = MessageBase & {
   type: 'result';
-  balls: Array<{ id: number; x: number; y: number; pocketed: boolean }>;
+  balls: Array<{ id: number; x: number; y: number; pocketed: boolean; pocketIndex?: number }>;
 };
 
 export type TurnEndMessage = MessageBase & {
@@ -75,9 +78,34 @@ export type GameOverMessage = MessageBase & {
   winner: 0 | 1;
 };
 
+export type RematchRequestMessage = MessageBase & {
+  type: 'rematch_request';
+};
+
+export type RematchResponseMessage = MessageBase & {
+  type: 'rematch_response';
+  accepted: boolean;
+};
+
+export type RematchStartMessage = MessageBase & {
+  type: 'rematch_start';
+  startAt: number;
+  breaker: 0 | 1;
+};
+
+export type ChatMessage = MessageBase & {
+  type: 'chat';
+  senderNickname: string;
+  text: string;
+};
+
 export type OnlineMessage =
   | ShotMessage
   | ResultMessage
   | TurnEndMessage
   | HeartbeatMessage
-  | GameOverMessage;
+  | GameOverMessage
+  | RematchRequestMessage
+  | RematchResponseMessage
+  | RematchStartMessage
+  | ChatMessage;
