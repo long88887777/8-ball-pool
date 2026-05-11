@@ -20,7 +20,10 @@ import {
 import {
   readProgress,
   writeProgress,
+  readProgressSupabase,
+  writeProgressSupabase,
   isLevelUnlocked,
+  type ChallengeProgress,
 } from './challenge/progress';
 import {
   BALLS,
@@ -87,7 +90,7 @@ import {
   checkDisconnect,
   type OnlineState,
 } from '../online/onlineState';
-import type { RoomInfo, OnlineMessage, ShotMessage, ResultMessage, TurnEndMessage } from '../online/types';
+import type { RoomInfo, OnlineMessage, ShotMessage, ResultMessage, TurnEndMessage, ChatMessage } from '../online/types';
 import { supabase } from '../lib/supabase';
 
 type BallKind = 'cue' | 'target';
@@ -148,10 +151,29 @@ export class PoolScene extends Phaser.Scene {
   private ballPrevPositions = new Map<number, Vector>();
   private language: Language = getInitialLanguage(navigator.language);
   private restartHandler = (): void => {
+    if (this.gameMode === 'online') {
+      this.surrenderOnlineMatch();
+      return;
+    }
     this.restartRack();
   };
   private victoryRestartHandler = (): void => {
     this.restartRack();
+  };
+  private rematchRequestHandler = (): void => {
+    this.sendRematchRequest();
+  };
+  private rematchLeaveHandler = (): void => {
+    this.leaveOnlineMatch();
+  };
+  private rematchCancelHandler = (): void => {
+    this.cancelRematchRequest();
+  };
+  private rematchAcceptHandler = (): void => {
+    this.respondToRematch(true);
+  };
+  private rematchDeclineHandler = (): void => {
+    this.respondToRematch(false);
   };
   private languageHandler = (): void => {
     this.language = this.language === 'en' ? 'zh' : 'en';
@@ -163,6 +185,7 @@ export class PoolScene extends Phaser.Scene {
   private aiDecision: AIDecision | null = null;
   private challengeState: ChallengeState | null = null;
   private currentLevel: ChallengeLevel | null = null;
+  private cachedProgress: ChallengeProgress | null = null;
   private challengeBtn?: HTMLButtonElement;
   private challengeSelectOverlay?: HTMLElement;
   private challengeResultOverlay?: HTMLElement;
@@ -176,6 +199,24 @@ export class PoolScene extends Phaser.Scene {
   private roomInfo: RoomInfo | null = null;
   private pendingResult: ResultMessage | null = null;
   private pendingTurnEnd: TurnEndMessage | null = null;
+  private rematchPhase: 'idle' | 'awaiting_response' | 'prompted' | 'countdown' = 'idle';
+  private rematchCountdownTimer: ReturnType<typeof setInterval> | null = null;
+  private lastGameLoser: 0 | 1 | null = null;
+  private chatTriggerP1!: HTMLButtonElement;
+  private chatTriggerP2!: HTMLButtonElement;
+  private chatPopover!: HTMLElement;
+  private chatPopoverInput!: HTMLInputElement;
+  private chatPopoverEmojiBtn!: HTMLButtonElement;
+  private chatPopoverEmojis!: HTMLElement;
+  private chatPopoverSendBtn!: HTMLButtonElement;
+  private chatMyBubble!: HTMLElement;
+  private chatMyBubbleSender!: HTMLElement;
+  private chatMyBubbleText!: HTMLElement;
+  private chatMyBubbleTimer: ReturnType<typeof setTimeout> | null = null;
+  private chatOpponentBubble!: HTMLElement;
+  private chatOpponentBubbleSender!: HTMLElement;
+  private chatOpponentBubbleText!: HTMLElement;
+  private chatOpponentBubbleTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor() {
     super('PoolScene');
@@ -210,6 +251,7 @@ export class PoolScene extends Phaser.Scene {
     this.updateHud();
 
     this.bindVictoryOverlay();
+    this.bindChatUI();
 
     if (this.gameMode === 'challenge') {
       this.showChallengeSelect();
@@ -225,7 +267,17 @@ export class PoolScene extends Phaser.Scene {
       this.languageButton?.removeEventListener('click', this.languageHandler);
       this.victoryRestartButton?.removeEventListener('click', this.victoryRestartHandler);
       this.challengeBtn?.removeEventListener('click', this.challengeBtnHandler);
+      document.querySelector<HTMLButtonElement>('#rematch-request')?.removeEventListener('click', this.rematchRequestHandler);
+      document.querySelector<HTMLButtonElement>('#rematch-leave')?.removeEventListener('click', this.rematchLeaveHandler);
+      document.querySelector<HTMLButtonElement>('#rematch-cancel')?.removeEventListener('click', this.rematchCancelHandler);
+      document.querySelector<HTMLButtonElement>('#rematch-accept')?.removeEventListener('click', this.rematchAcceptHandler);
+      document.querySelector<HTMLButtonElement>('#rematch-decline')?.removeEventListener('click', this.rematchDeclineHandler);
+      if (this.rematchCountdownTimer) {
+        clearInterval(this.rematchCountdownTimer);
+        this.rematchCountdownTimer = null;
+      }
       this.unbindSpinControl();
+      this.unbindChatUI();
       this.cleanupOnlineMode();
     });
   }
@@ -459,10 +511,11 @@ export class PoolScene extends Phaser.Scene {
     });
   }
 
-  private showChallengeSelect(): void {
+  private async showChallengeSelect(): Promise<void> {
     if (!this.challengeSelectOverlay) return;
     const copy = getCopy(this.language);
-    const progress = readProgress(localStorage);
+    const progress = await readProgressSupabase(supabase);
+    this.cachedProgress = progress;
     const grid = document.querySelector('#challenge-grid');
     const title = document.querySelector('#challenge-title');
     if (title) title.textContent = copy.challenge.title;
@@ -584,14 +637,14 @@ export class PoolScene extends Phaser.Scene {
     }
   }
 
-  private showChallengeResult(): void {
+  private async showChallengeResult(): Promise<void> {
     if (!this.challengeResultOverlay || !this.challengeState) return;
     const copy = getCopy(this.language);
     const result = resolveChallengeResult(this.challengeState);
     this.challengeState = { ...this.challengeState, result };
 
     if (result.passed) {
-      const progress = readProgress(localStorage);
+      const progress = this.cachedProgress ?? await readProgressSupabase(supabase);
       const key = String(this.challengeState.levelId);
       const prev = progress.levels[key];
       const bestStars = prev ? Math.max(prev.stars, result.stars) : result.stars;
@@ -599,7 +652,8 @@ export class PoolScene extends Phaser.Scene {
         ? Math.min(prev.bestShots, this.challengeState.shotsUsed)
         : this.challengeState.shotsUsed;
       progress.levels[key] = { stars: bestStars, bestShots };
-      writeProgress(localStorage, progress);
+      this.cachedProgress = progress;
+      void writeProgressSupabase(supabase, progress);
     }
 
     const titleEl = document.querySelector('#challenge-result-title');
@@ -659,6 +713,12 @@ export class PoolScene extends Phaser.Scene {
     this.victoryDetail = document.querySelector<HTMLElement>('#victory-detail') ?? undefined;
     this.victoryRestartButton = document.querySelector<HTMLButtonElement>('#victory-restart') ?? undefined;
     this.victoryRestartButton?.addEventListener('click', this.victoryRestartHandler);
+
+    document.querySelector<HTMLButtonElement>('#rematch-request')?.addEventListener('click', this.rematchRequestHandler);
+    document.querySelector<HTMLButtonElement>('#rematch-leave')?.addEventListener('click', this.rematchLeaveHandler);
+    document.querySelector<HTMLButtonElement>('#rematch-cancel')?.addEventListener('click', this.rematchCancelHandler);
+    document.querySelector<HTMLButtonElement>('#rematch-accept')?.addEventListener('click', this.rematchAcceptHandler);
+    document.querySelector<HTMLButtonElement>('#rematch-decline')?.addEventListener('click', this.rematchDeclineHandler);
   }
 
   private showVictoryScreen(): void {
@@ -1078,6 +1138,9 @@ export class PoolScene extends Phaser.Scene {
       if (event.type !== 'pocket') {
         continue;
       }
+      if (this.gameMode === 'online' && this.onlineState?.phase === 'watching_opponent_shot') {
+        continue;
+      }
       this.ballPocketMap.set(event.ballId, event.pocketIndex);
       if (this.gameMode === 'challenge' && this.challengeState) {
         if (event.ballId === 0) {
@@ -1147,7 +1210,11 @@ export class PoolScene extends Phaser.Scene {
 
       if (snapshot.pocketed && !ball.pocketed) {
         ball.pocketed = true;
-        this.startPocketAnimation(ball);
+        if (this.gameMode !== 'online' || this.onlineState?.phase !== 'watching_opponent_shot') {
+          this.startPocketAnimation(ball);
+        } else {
+          ball.setVisible(false);
+        }
       } else if (!snapshot.pocketed) {
         ball.pocketed = false;
         ball.setVisible(true);
@@ -1480,25 +1547,7 @@ export class PoolScene extends Phaser.Scene {
       return;
     }
     const copy = getCopy(this.language);
-    const rawMessageValues =
-      this.rules.messageKey === 'eightBallReady' && !this.rules.messageValues
-        ? { player: this.rules.currentPlayer + 1 }
-        : (this.rules.messageValues ?? {});
-    const messageValues = {
-      ...rawMessageValues,
-      group:
-        rawMessageValues.group === 'solids' || rawMessageValues.group === 'stripes'
-          ? copy.hud.playerGroup(rawMessageValues.group)
-          : rawMessageValues.group,
-      reason:
-        rawMessageValues.reason === 'cueBallPocketed' ||
-        rawMessageValues.reason === 'noFirstContact' ||
-        rawMessageValues.reason === 'wrongFirstContact' ||
-        rawMessageValues.reason === 'shotClockExpired'
-          ? copy.foulReason[rawMessageValues.reason]
-          : rawMessageValues.reason,
-    };
-    const messageText = formatMessage(copy.message[this.rules.messageKey], messageValues);
+    const messageText = this.formatCurrentMessageText();
     const currentPlayer = this.rules.players[this.rules.currentPlayer];
     const opponentPlayer = this.rules.players[this.rules.currentPlayer === 0 ? 1 : 0];
     const remainingObjectBalls = getRemainingEightBallCount(this.rules);
@@ -1544,7 +1593,7 @@ export class PoolScene extends Phaser.Scene {
     if (pocketedBallLabel) pocketedBallLabel.textContent = copy.hud.pocketedBalls;
     if (languageLabel) languageLabel.textContent = copy.languageLabel;
     if (this.languageButton) this.languageButton.textContent = copy.languageToggle;
-    if (this.restartButton) this.restartButton.textContent = copy.hud.restart;
+    if (this.restartButton) this.restartButton.textContent = this.gameMode === 'online' ? '认输' : copy.hud.restart;
     if (mode) mode.textContent = copy.hud.eightBallMode;
     if (groupStatus) groupStatus.textContent = copy.hud.playerGroup(currentPlayer.group);
     if (strokes) strokes.textContent = copy.hud.strokes(this.state.strokes);
@@ -1558,6 +1607,12 @@ export class PoolScene extends Phaser.Scene {
     if (this.gameMode === 'ai') {
       if (playerTwoName) playerTwoName.textContent = copy.ai.playerName;
       if (mode) mode.textContent = copy.hud.modeAi;
+    }
+    if (this.gameMode === 'online' && this.roomInfo) {
+      const hostName = this.roomInfo.isHost ? this.roomInfo.myNickname : this.roomInfo.opponentNickname;
+      const guestName = this.roomInfo.isHost ? this.roomInfo.opponentNickname : this.roomInfo.myNickname;
+      if (playerOneName) playerOneName.textContent = hostName;
+      if (playerTwoName) playerTwoName.textContent = guestName;
     }
     if (this.aiThinking && message) {
       message.textContent = this.aiDecision ? copy.ai.aiming : copy.ai.thinking;
@@ -1574,7 +1629,8 @@ export class PoolScene extends Phaser.Scene {
   }
 
   private updateShotClockHud(): void {
-    const progress = Math.max(0, Math.min(this.shotClockRemaining / SHOT_CLOCK_SECONDS, 1));
+    const maxTime = this.onlineState ? this.onlineState.turnTimeLimit : SHOT_CLOCK_SECONDS;
+    const progress = Math.max(0, Math.min(this.shotClockRemaining / maxTime, 1));
     const shotClock = document.querySelector('#shot-clock');
     const playerOneCard = document.querySelector<HTMLElement>('#player-one-card');
     const playerTwoCard = document.querySelector<HTMLElement>('#player-two-card');
@@ -1696,6 +1752,8 @@ export class PoolScene extends Phaser.Scene {
       turnTimeLimit: 30,
       disconnectTimeout: 30,
     });
+    this.chatTriggerP1.hidden = !this.roomInfo.isHost;
+    this.chatTriggerP2.hidden = this.roomInfo.isHost;
     this.onlineChannel = new GameChannel();
     this.onlineChannel.join({
       roomId: this.roomInfo.roomId,
@@ -1743,6 +1801,21 @@ export class PoolScene extends Phaser.Scene {
       const iWin = msg.winner === myIndex;
       this.onlineState = transitionToGameOver(this.onlineState, msg.winner, msg.reason);
       this.showOnlineGameOver(iWin, msg.reason);
+      return;
+    }
+    if (msg.type === 'rematch_request') {
+      this.handleRematchRequest();
+      return;
+    }
+    if (msg.type === 'rematch_response') {
+      this.handleRematchResponse(msg.accepted);
+      return;
+    }
+    if (msg.type === 'rematch_start') {
+      this.beginRematchCountdown(msg.startAt, msg.breaker);
+    }
+    if (msg.type === 'chat') {
+      this.showOpponentBubble(msg.senderNickname, msg.text);
     }
   }
 
@@ -1757,6 +1830,7 @@ export class PoolScene extends Phaser.Scene {
       contactOffset: msg.contactOffset,
     });
     this.wasMoving = true;
+    this.state = recordStroke(this.state);
     this.rules = startEightBallShot(this.rules);
     this.audio.play('cue');
   }
@@ -1773,6 +1847,53 @@ export class PoolScene extends Phaser.Scene {
     if (this.physicsEngine.isSettled() && !this.wasMoving) {
       this.applyPendingOpponentResult();
     }
+  }
+
+  private formatCurrentMessageText(): string {
+    const copy = getCopy(this.language);
+    const rawMessageValues =
+      this.rules.messageKey === 'eightBallReady' && !this.rules.messageValues
+        ? { player: this.rules.currentPlayer + 1 }
+        : (this.rules.messageValues ?? {});
+    const messageValues = {
+      ...rawMessageValues,
+      player: this.formatPlayerMessageValue(rawMessageValues.player) ?? '',
+      winner: this.formatPlayerMessageValue(rawMessageValues.winner) ?? '',
+      loser: this.formatPlayerMessageValue(rawMessageValues.loser) ?? '',
+      group:
+        rawMessageValues.group === 'solids' || rawMessageValues.group === 'stripes'
+          ? copy.hud.playerGroup(rawMessageValues.group)
+          : rawMessageValues.group ?? '',
+      reason:
+        rawMessageValues.reason === 'cueBallPocketed' ||
+        rawMessageValues.reason === 'noFirstContact' ||
+        rawMessageValues.reason === 'wrongFirstContact' ||
+        rawMessageValues.reason === 'shotClockExpired'
+          ? copy.foulReason[rawMessageValues.reason]
+          : rawMessageValues.reason ?? '',
+    };
+    return formatMessage(copy.message[this.rules.messageKey], messageValues);
+  }
+
+  private formatPlayerMessageValue(value: string | number | undefined): string | number | undefined {
+    if (value !== 1 && value !== 2) {
+      return value;
+    }
+
+    return this.playerDisplayName(value);
+  }
+
+  private playerDisplayName(player: number): string {
+    if (this.gameMode === 'online' && this.roomInfo) {
+      if (player === 1) {
+        return this.roomInfo.isHost ? this.roomInfo.myNickname : this.roomInfo.opponentNickname;
+      }
+      if (player === 2) {
+        return this.roomInfo.isHost ? this.roomInfo.opponentNickname : this.roomInfo.myNickname;
+      }
+    }
+
+    return getCopy(this.language).hud.currentPlayer(player);
   }
 
   private sendOnlineShot(direction: Vector, power: number, contactOffset: Vector, cueBallPos: Vector): void {
@@ -1794,6 +1915,7 @@ export class PoolScene extends Phaser.Scene {
       x: b.position.x,
       y: b.position.y,
       pocketed: b.pocketed,
+      pocketIndex: b.pocketed ? this.ballPocketMap.get(b.id) : undefined,
     }));
     this.onlineChannel.send({ type: 'result', balls });
   }
@@ -1856,8 +1978,24 @@ export class PoolScene extends Phaser.Scene {
 
   private applyPendingOpponentResult(): void {
     if (this.pendingResult) {
+      for (const ballId of this.pocketAnimatingBalls) {
+        const ball = this.allBalls().find((b) => b.ballId === ballId);
+        if (ball && this.tweens) {
+          this.tweens.killTweensOf(ball);
+          ball.setVisible(false);
+          ball.setScale(1);
+          ball.setAlpha(1);
+          ball.setDepth(DEPTH.ball);
+        }
+      }
+      this.pocketAnimatingBalls.clear();
+      this.netDeformGraphics?.clear();
+
       for (const ball of this.pendingResult.balls) {
-        if (!ball.pocketed) {
+        if (ball.pocketed) {
+          this.ballPocketMap.set(ball.id, ball.pocketIndex ?? this.nearestPocketIndex({ x: ball.x, y: ball.y }));
+          this.physicsEngine.pocketBall(ball.id);
+        } else {
           this.physicsEngine.resetBall(ball.id, { x: ball.x, y: ball.y });
         }
       }
@@ -1876,6 +2014,7 @@ export class PoolScene extends Phaser.Scene {
       for (const ballId of msg.pocketedBallIds) {
         this.rules = recordEightBallPocket(this.rules, ballId);
       }
+      this.rules = resolveEightBallShot(this.rules);
       if (msg.gameOver) {
         const myIndex = this.roomInfo!.isHost ? 0 : 1;
         const iWin = msg.winner === myIndex;
@@ -1895,6 +2034,19 @@ export class PoolScene extends Phaser.Scene {
     }
   }
 
+  private nearestPocketIndex(point: Vector): number {
+    let nearest = 0;
+    let nearestDistance = Infinity;
+    POCKETS.forEach((pocket, index) => {
+      const distance = Phaser.Math.Distance.Between(point.x, point.y, pocket.x, pocket.y);
+      if (distance < nearestDistance) {
+        nearest = index;
+        nearestDistance = distance;
+      }
+    });
+    return nearest;
+  }
+
   private handleOnlineTimeout(): void {
     if (!this.onlineState || !this.onlineChannel) return;
     this.aimState = null;
@@ -1910,6 +2062,20 @@ export class PoolScene extends Phaser.Scene {
     this.updateHud();
   }
 
+  private surrenderOnlineMatch(): void {
+    if (!this.onlineState || this.onlineState.phase === 'game_over' || !this.roomInfo) return;
+    this.aimState = null;
+    this.cuePlacementState = null;
+    this.aimLine?.clear();
+    this.cueGraphics?.clear();
+    const myIndex: 0 | 1 = this.roomInfo.isHost ? 0 : 1;
+    const winner: 0 | 1 = myIndex === 0 ? 1 : 0;
+    this.onlineChannel?.send({ type: 'game_over', reason: 'surrender', winner });
+    this.onlineState = transitionToGameOver(this.onlineState, winner, 'surrender');
+    this.showOnlineGameOver(false, 'surrender');
+    void this.updateOnlineStats(false);
+  }
+
   private handleOpponentDisconnect(): void {
     if (!this.onlineState || !this.onlineChannel) return;
     const myIndex: 0 | 1 = this.roomInfo!.isHost ? 0 : 1;
@@ -1923,6 +2089,8 @@ export class PoolScene extends Phaser.Scene {
     if (!this.onlineState || this.onlineState.phase === 'game_over') return;
     if (this.onlineState.phase === 'my_turn') {
       this.onlineState = tickTurnTimer(this.onlineState, deltaSeconds);
+      this.shotClockRemaining = this.onlineState.turnTimer;
+      this.updateShotClockHud();
       if (this.onlineState.turnTimer <= 0) {
         this.handleOnlineTimeout();
         return;
@@ -1934,6 +2102,10 @@ export class PoolScene extends Phaser.Scene {
   }
 
   private showOnlineGameOver(iWin: boolean, reason: string): void {
+    const myIndex: 0 | 1 = this.roomInfo!.isHost ? 0 : 1;
+    const opponentIndex: 0 | 1 = this.roomInfo!.isHost ? 1 : 0;
+    this.lastGameLoser = iWin ? opponentIndex : myIndex;
+
     if (this.victoryTitle) {
       this.victoryTitle.textContent = iWin ? 'You Win!' : 'You Lose';
     }
@@ -1943,6 +2115,152 @@ export class PoolScene extends Phaser.Scene {
     if (this.victoryOverlay) {
       this.victoryOverlay.hidden = false;
     }
+
+    this.rematchPhase = 'idle';
+    this.setElementHidden('#victory-actions', true);
+    if (reason === 'disconnect') {
+      this.setElementHidden('#rematch-actions', true);
+      this.setElementHidden('#rematch-waiting', true);
+      this.setElementHidden('#rematch-prompt', true);
+      this.setElementHidden('#rematch-countdown', true);
+      this.setElementHidden('#victory-actions', false);
+    } else {
+      this.setElementHidden('#rematch-actions', false);
+      this.setElementHidden('#rematch-waiting', true);
+      this.setElementHidden('#rematch-prompt', true);
+      this.setElementHidden('#rematch-countdown', true);
+    }
+  }
+
+  private setElementHidden(selector: string, hidden: boolean): void {
+    const el = document.querySelector<HTMLElement>(selector);
+    if (el) el.hidden = hidden;
+  }
+
+  private sendRematchRequest(): void {
+    if (!this.onlineChannel || this.rematchPhase !== 'idle') return;
+    this.onlineChannel.send({ type: 'rematch_request' });
+    this.rematchPhase = 'awaiting_response';
+    this.setElementHidden('#rematch-actions', true);
+    this.setElementHidden('#rematch-waiting', false);
+  }
+
+  private cancelRematchRequest(): void {
+    if (this.rematchPhase !== 'awaiting_response') return;
+    if (this.onlineChannel) {
+      this.onlineChannel.send({ type: 'rematch_response', accepted: false });
+    }
+    this.rematchPhase = 'idle';
+    this.setElementHidden('#rematch-waiting', true);
+    this.setElementHidden('#rematch-actions', false);
+  }
+
+  private respondToRematch(accepted: boolean): void {
+    if (!this.onlineChannel || this.rematchPhase !== 'prompted') return;
+    this.onlineChannel.send({ type: 'rematch_response', accepted });
+    this.setElementHidden('#rematch-prompt', true);
+    if (accepted) {
+      if (this.roomInfo!.isHost) {
+        this.startRematchCountdown();
+      }
+    } else {
+      this.rematchPhase = 'idle';
+      this.setElementHidden('#rematch-actions', false);
+    }
+  }
+
+  private handleRematchRequest(): void {
+    if (this.rematchPhase === 'awaiting_response') {
+      this.onlineChannel?.send({ type: 'rematch_response', accepted: true });
+      if (this.roomInfo!.isHost) {
+        this.startRematchCountdown();
+      }
+      this.setElementHidden('#rematch-waiting', true);
+      return;
+    }
+    if (this.rematchPhase === 'countdown') return;
+    this.rematchPhase = 'prompted';
+    this.setElementHidden('#rematch-actions', true);
+    this.setElementHidden('#rematch-waiting', true);
+    this.setElementHidden('#rematch-prompt', false);
+  }
+
+  private handleRematchResponse(accepted: boolean): void {
+    if (accepted) {
+      if (this.rematchPhase === 'awaiting_response' && this.roomInfo!.isHost) {
+        this.startRematchCountdown();
+      }
+    } else {
+      this.rematchPhase = 'idle';
+      this.setElementHidden('#rematch-waiting', true);
+      this.setElementHidden('#rematch-prompt', true);
+      this.setElementHidden('#rematch-actions', false);
+      if (this.victoryDetail) {
+        this.victoryDetail.textContent = '对手已拒绝';
+      }
+    }
+  }
+
+  private startRematchCountdown(): void {
+    if (!this.onlineChannel) return;
+    const breaker: 0 | 1 = this.lastGameLoser ?? 0;
+    const startAt = Date.now() + 3500;
+    this.onlineChannel.send({ type: 'rematch_start', startAt, breaker });
+    this.beginRematchCountdown(startAt, breaker);
+  }
+
+  private beginRematchCountdown(startAt: number, breaker: 0 | 1): void {
+    this.rematchPhase = 'countdown';
+    this.setElementHidden('#rematch-actions', true);
+    this.setElementHidden('#rematch-waiting', true);
+    this.setElementHidden('#rematch-prompt', true);
+    this.setElementHidden('#rematch-countdown', false);
+    const countdownEl = document.querySelector<HTMLElement>('#rematch-countdown');
+    const tick = () => {
+      const remaining = Math.max(0, Math.ceil((startAt - Date.now()) / 1000));
+      if (countdownEl) countdownEl.textContent = String(remaining);
+      if (remaining <= 0) {
+        if (this.rematchCountdownTimer) {
+          clearInterval(this.rematchCountdownTimer);
+          this.rematchCountdownTimer = null;
+        }
+        this.performRematch(breaker);
+      }
+    };
+    tick();
+    this.rematchCountdownTimer = setInterval(tick, 200);
+  }
+
+  private performRematch(breaker: 0 | 1): void {
+    if (this.rematchCountdownTimer) {
+      clearInterval(this.rematchCountdownTimer);
+      this.rematchCountdownTimer = null;
+    }
+    this.rematchPhase = 'idle';
+    this.setElementHidden('#rematch-countdown', true);
+    this.restartRack();
+
+    if (this.gameMode === 'online' && this.onlineState && this.roomInfo) {
+      const myIndex: 0 | 1 = this.roomInfo.isHost ? 0 : 1;
+      this.onlineState = createOnlineState({
+        isHost: this.roomInfo.isHost,
+        turnTimeLimit: 30,
+        disconnectTimeout: 30,
+      });
+      if (breaker === myIndex) {
+        this.onlineState = transitionToMyTurn(this.onlineState);
+      } else {
+        this.onlineState = transitionToOpponentTurn(this.onlineState);
+      }
+      this.shotClockRemaining = 30;
+      this.updateHud();
+    }
+  }
+
+  private leaveOnlineMatch(): void {
+    this.cleanupOnlineMode();
+    this.hideVictoryScreen();
+    window.location.reload();
   }
 
   private async updateOnlineStats(won: boolean): Promise<void> {
@@ -1961,5 +2279,157 @@ export class PoolScene extends Phaser.Scene {
     this.onlineState = null;
     this.pendingResult = null;
     this.pendingTurnEnd = null;
+    this.chatTriggerP1.hidden = true;
+    this.chatTriggerP2.hidden = true;
+    this.chatPopover.hidden = true;
+    this.chatPopoverEmojis.hidden = true;
+    this.chatMyBubble.hidden = true;
+    this.chatOpponentBubble.hidden = true;
+    if (this.chatMyBubbleTimer) {
+      clearTimeout(this.chatMyBubbleTimer);
+      this.chatMyBubbleTimer = null;
+    }
+    if (this.chatOpponentBubbleTimer) {
+      clearTimeout(this.chatOpponentBubbleTimer);
+      this.chatOpponentBubbleTimer = null;
+    }
+  }
+
+  // --- Chat ---
+
+  private static readonly CHAT_EMOJIS = ['😀','😂','🤣','😊','😎','😍','🤩','😤','😢','😡','👍','👎','🎱','🔥','💯','👏','🥇','🏆','🤝','🎉','💪','🙏','😅','🤔','👋','❤️','✨','⚡','🎯'];
+
+  private bindChatUI(): void {
+    this.chatTriggerP1 = document.querySelector<HTMLButtonElement>('#chat-trigger-p1')!;
+    this.chatTriggerP2 = document.querySelector<HTMLButtonElement>('#chat-trigger-p2')!;
+    this.chatPopover = document.querySelector<HTMLElement>('#chat-popover')!;
+    this.chatPopoverInput = document.querySelector<HTMLInputElement>('#chat-popover-input')!;
+    this.chatPopoverEmojiBtn = document.querySelector<HTMLButtonElement>('#chat-popover-emoji')!;
+    this.chatPopoverEmojis = document.querySelector<HTMLElement>('#chat-popover-emojis')!;
+    this.chatPopoverSendBtn = document.querySelector<HTMLButtonElement>('#chat-popover-send')!;
+    this.chatMyBubble = document.querySelector<HTMLElement>('#chat-my-bubble')!;
+    this.chatMyBubbleSender = this.chatMyBubble.querySelector<HTMLElement>('.chat-msg-sender-inline')!;
+    this.chatMyBubbleText = this.chatMyBubble.querySelector<HTMLElement>('.chat-msg-text-inline')!;
+    this.chatOpponentBubble = document.querySelector<HTMLElement>('#chat-opponent-bubble')!;
+    this.chatOpponentBubbleSender = this.chatOpponentBubble.querySelector<HTMLElement>('.chat-msg-sender-inline')!;
+    this.chatOpponentBubbleText = this.chatOpponentBubble.querySelector<HTMLElement>('.chat-msg-text-inline')!;
+
+    this.chatTriggerP1.addEventListener('click', () => this.toggleChatPopover(this.chatTriggerP1));
+    this.chatTriggerP2.addEventListener('click', () => this.toggleChatPopover(this.chatTriggerP2));
+    this.chatPopoverSendBtn.addEventListener('click', () => this.sendChatMessage());
+    this.chatPopoverInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        this.sendChatMessage();
+      }
+    });
+    this.chatPopoverEmojiBtn.addEventListener('click', () => {
+      this.chatPopoverEmojis.hidden = !this.chatPopoverEmojis.hidden;
+    });
+
+    for (const emoji of PoolScene.CHAT_EMOJIS) {
+      const btn = document.createElement('button');
+      btn.className = 'chat-emoji-item';
+      btn.textContent = emoji;
+      btn.type = 'button';
+      btn.addEventListener('click', () => {
+        this.chatPopoverInput.value += emoji;
+        this.chatPopoverInput.focus();
+        this.chatPopoverEmojis.hidden = true;
+      });
+      this.chatPopoverEmojis.appendChild(btn);
+    }
+  }
+
+  private unbindChatUI(): void {
+    const clone = (el: HTMLElement) => {
+      const cloned = el.cloneNode(true);
+      el.parentNode?.replaceChild(cloned, el);
+      return cloned;
+    };
+    clone(this.chatTriggerP1);
+    clone(this.chatTriggerP2);
+    clone(this.chatPopoverSendBtn);
+    clone(this.chatPopoverEmojiBtn);
+    this.chatPopoverEmojis.innerHTML = '';
+    const inputClone = this.chatPopoverInput.cloneNode(true);
+    this.chatPopoverInput.parentNode?.replaceChild(inputClone, this.chatPopoverInput);
+  }
+
+  private toggleChatPopover(anchor?: HTMLElement): void {
+    const show = this.chatPopover.hidden;
+    this.chatPopover.hidden = !show;
+    this.chatPopoverEmojis.hidden = true;
+    if (show) {
+      if (anchor) this.anchorElementTo(this.chatPopover, anchor);
+      this.chatPopoverInput.value = '';
+      this.chatPopoverInput.focus();
+    }
+  }
+
+  private anchorElementTo(el: HTMLElement, anchor: HTMLElement): void {
+    const shell = el.offsetParent as HTMLElement | null;
+    if (!shell) return;
+    const iconRect = anchor.getBoundingClientRect();
+    const shellRect = shell.getBoundingClientRect();
+    el.style.top = `${iconRect.bottom - shellRect.top + 4}px`;
+    el.style.left = `${iconRect.left - shellRect.left}px`;
+  }
+
+  private sendChatMessage(): void {
+    const text = this.chatPopoverInput.value.trim();
+    if (!text || !this.onlineChannel || !this.roomInfo) return;
+
+    const msg: ChatMessage = {
+      type: 'chat',
+      ts: Date.now(),
+      senderNickname: this.roomInfo.myNickname,
+      text,
+    };
+    this.onlineChannel.send({ type: 'chat', senderNickname: msg.senderNickname, text: msg.text });
+    this.showMyBubble(msg.text);
+    this.chatPopover.hidden = true;
+    this.chatPopoverEmojis.hidden = true;
+    this.chatPopoverInput.value = '';
+  }
+
+  private myChatTrigger(): HTMLElement {
+    if (!this.roomInfo) return this.chatTriggerP1;
+    return this.roomInfo.isHost ? this.chatTriggerP1 : this.chatTriggerP2;
+  }
+
+  private opponentNameEl(): HTMLElement {
+    if (!this.roomInfo) return document.querySelector<HTMLElement>('#player-two-name')!;
+    return document.querySelector<HTMLElement>(
+      this.roomInfo.isHost ? '#player-two-name' : '#player-one-name'
+    )!;
+  }
+
+  private showMyBubble(text: string): void {
+    if (this.chatMyBubbleTimer) {
+      clearTimeout(this.chatMyBubbleTimer);
+    }
+    this.chatMyBubbleSender.textContent = '我:';
+    this.chatMyBubbleText.textContent = text;
+    this.chatMyBubble.hidden = false;
+    this.anchorElementTo(this.chatMyBubble, this.myChatTrigger());
+    this.chatMyBubbleTimer = setTimeout(() => {
+      this.chatMyBubble.hidden = true;
+      this.chatMyBubbleTimer = null;
+    }, 8000);
+  }
+
+  private showOpponentBubble(sender: string, text: string): void {
+    if (this.chatOpponentBubbleTimer) {
+      clearTimeout(this.chatOpponentBubbleTimer);
+    }
+    this.chatOpponentBubbleSender.textContent = sender + ':';
+    this.chatOpponentBubbleText.textContent = text;
+    this.chatOpponentBubble.hidden = false;
+    this.anchorElementTo(this.chatOpponentBubble, this.opponentNameEl());
+    this.chatOpponentBubbleTimer = setTimeout(() => {
+      this.chatOpponentBubble.hidden = true;
+      this.chatOpponentBubbleTimer = null;
+    }, 8000);
   }
 }
