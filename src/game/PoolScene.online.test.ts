@@ -14,7 +14,7 @@ vi.mock('phaser', () => ({
 
 import { CUE_START } from './constants';
 import { PoolScene } from './PoolScene';
-import { createEightBallState } from './eightBallRules';
+import { createEightBallState, resolveEightBallShot, startEightBallShot } from './eightBallRules';
 import { createGameState } from './state';
 import { transitionToMyTurn, transitionToOpponentTurn, type OnlineState } from '../online/onlineState';
 import type { RoomInfo } from '../online/types';
@@ -27,9 +27,34 @@ type ShotHandlerHarness = {
     power: number;
     contactOffset: { x: number; y: number };
     cueBallPos: { x: number; y: number };
+    ballsSnapshot?: Array<{ id: number; x: number; y: number; vx: number; vy: number; pocketed: boolean }>;
   }) => void;
+  handleOpponentSnapshot: (msg: {
+    type: 'snapshot';
+    ts: number;
+    balls: Array<{ id: number; x: number; y: number; vx: number; vy: number; pocketed: boolean }>;
+  }) => void;
+  handleOpponentResult: (msg: {
+    type: 'result';
+    ts: number;
+    balls: Array<{ id: number; x: number; y: number; pocketed: boolean; pocketIndex?: number }>;
+  }) => void;
+  handleOpponentTurnEnd: (msg: {
+    type: 'turn_end';
+    ts: number;
+    foul: boolean;
+    cueBallInHand: boolean;
+    nextPlayer: 0 | 1;
+    pocketedBallIds: number[];
+    gameOver: boolean;
+    winner: 0 | 1 | null;
+  }) => void;
+  handlePhysicsEvents: (events: Array<{ type: 'collision' | 'cushion'; ballId: number; otherBallId?: number; speed: number }>) => void;
+  handleOnlineSettled: () => void;
   applyPendingOpponentResult: () => void;
   formatCurrentMessageText: () => string;
+  updateShotClockHud: () => void;
+  canAim: () => boolean;
   restartHandler: () => void;
   reportOnlineLeave: () => void;
   sendOnlineResult: () => void;
@@ -42,6 +67,8 @@ type ShotHandlerHarness = {
   roomInfo: RoomInfo | null;
   onlineChannel: { send: ReturnType<typeof vi.fn> } | null;
   onlineState: OnlineState;
+  cueBall: FakeBall;
+  targetBalls: FakeBall[];
   state: ReturnType<typeof createGameState>;
   rules: ReturnType<typeof createEightBallState>;
   pendingResult: {
@@ -49,20 +76,88 @@ type ShotHandlerHarness = {
     ts: number;
     balls: Array<{ id: number; x: number; y: number; pocketed: boolean; pocketIndex?: number }>;
   } | null;
-  pendingTurnEnd: null;
+  pendingTurnEnd: {
+    type: 'turn_end';
+    ts: number;
+    foul: boolean;
+    cueBallInHand: boolean;
+    nextPlayer: 0 | 1;
+    pocketedBallIds: number[];
+    gameOver: boolean;
+    winner: 0 | 1 | null;
+  } | null;
   ballPocketMap: Map<number, number>;
+  wasMoving: boolean;
   physicsEngine: {
     resetCueBall: ReturnType<typeof vi.fn>;
     resetBall: ReturnType<typeof vi.fn>;
     pocketBall: ReturnType<typeof vi.fn>;
     getBalls: ReturnType<typeof vi.fn>;
     strikeCueBall: ReturnType<typeof vi.fn>;
+    applyNetworkSnapshot: ReturnType<typeof vi.fn>;
+    getNetworkSnapshot: ReturnType<typeof vi.fn>;
+    isSettled: ReturnType<typeof vi.fn>;
   };
-  syncBallsFromPhysics: ReturnType<typeof vi.fn>;
+  syncBallsFromPhysics: ((snapshots: Array<{ id: number; kind: 'cue' | 'target'; position: { x: number; y: number }; state: string; pocketed: boolean }>) => void) & ReturnType<typeof vi.fn>;
+  startPocketAnimation: ReturnType<typeof vi.fn>;
   audio: { play: ReturnType<typeof vi.fn> };
 };
 
-function createOnlineSceneHarness(): ShotHandlerHarness {
+type FakeBall = {
+  ballId: number;
+  pocketed: boolean;
+  x: number;
+  y: number;
+  rotation: number;
+  setPosition: ReturnType<typeof vi.fn>;
+  setVisible: ReturnType<typeof vi.fn>;
+  setScale: ReturnType<typeof vi.fn>;
+  setAlpha: ReturnType<typeof vi.fn>;
+  setDepth: ReturnType<typeof vi.fn>;
+};
+
+function createFakeBall(ballId: number): FakeBall {
+  const ball: FakeBall = {
+    ballId,
+    pocketed: false,
+    x: 0,
+    y: 0,
+    rotation: 0,
+    setPosition: vi.fn((x: number, y: number) => {
+      ball.x = x;
+      ball.y = y;
+      return ball;
+    }),
+    setVisible: vi.fn(() => ball),
+    setScale: vi.fn(() => ball),
+    setAlpha: vi.fn(() => ball),
+    setDepth: vi.fn(() => ball),
+  };
+  return ball;
+}
+
+function createFakeCard(): {
+  active: boolean;
+  classList: { toggle: (className: string, active: boolean) => void };
+  style: { setProperty: ReturnType<typeof vi.fn> };
+} {
+  const card = {
+    active: false,
+    classList: {
+      toggle: (className: string, active: boolean) => {
+        if (className === 'is-active-turn') {
+          card.active = active;
+        }
+      },
+    },
+    style: {
+      setProperty: vi.fn(),
+    },
+  };
+  return card;
+}
+
+function createOnlineSceneHarness(options: { useRealSync?: boolean } = {}): ShotHandlerHarness {
   const scene = new PoolScene() as unknown as ShotHandlerHarness;
 
   scene.gameMode = 'online';
@@ -86,19 +181,28 @@ function createOnlineSceneHarness(): ShotHandlerHarness {
     winner: null,
     gameOverReason: null,
   });
+  scene.cueBall = createFakeBall(0);
+  scene.targetBalls = Array.from({ length: 15 }, (_, index) => createFakeBall(index + 1));
   scene.state = createGameState(15);
   scene.rules = createEightBallState();
   scene.pendingResult = null;
   scene.pendingTurnEnd = null;
   scene.ballPocketMap = new Map();
+  scene.wasMoving = false;
   scene.physicsEngine = {
     resetCueBall: vi.fn(),
     resetBall: vi.fn(),
     pocketBall: vi.fn(),
     getBalls: vi.fn(() => []),
     strikeCueBall: vi.fn(),
+    applyNetworkSnapshot: vi.fn(),
+    getNetworkSnapshot: vi.fn(() => []),
+    isSettled: vi.fn(() => false),
   };
-  scene.syncBallsFromPhysics = vi.fn();
+  if (!options.useRealSync) {
+    scene.syncBallsFromPhysics = vi.fn() as ShotHandlerHarness['syncBallsFromPhysics'];
+  }
+  scene.startPocketAnimation = vi.fn();
   scene.audio = { play: vi.fn() };
   scene.restartRack = vi.fn();
   scene.showOnlineGameOver = vi.fn();
@@ -109,6 +213,21 @@ function createOnlineSceneHarness(): ShotHandlerHarness {
 }
 
 describe('PoolScene online turn state', () => {
+  it('keeps a target-ball cushion event that arrives before first-contact in the same physics batch', () => {
+    const scene = createOnlineSceneHarness();
+    scene.gameMode = 'pvp';
+    scene.rules = startEightBallShot({ ...createEightBallState(), shotCount: 1 });
+
+    scene.handlePhysicsEvents([
+      { type: 'cushion', ballId: 3, speed: 0.5 },
+      { type: 'collision', ballId: 0, otherBallId: 3, speed: 1 },
+    ]);
+    scene.rules = resolveEightBallShot(scene.rules);
+
+    expect(scene.rules.lastFoul).not.toBe('noCushionAfterContact');
+    expect(scene.rules.cueBallInHand).toBe(false);
+  });
+
   it('records opponent shots so the observer does not stay in break placement mode', () => {
     const scene = createOnlineSceneHarness();
 
@@ -123,6 +242,30 @@ describe('PoolScene online turn state', () => {
 
     expect(scene.state.strokes).toBe(1);
     expect(scene.rules.shotCount).toBe(1);
+  });
+
+  it('keeps already-pocketed balls pocketed when applying the shot-start snapshot', () => {
+    const scene = createOnlineSceneHarness();
+    scene.rules = {
+      ...createEightBallState(),
+      pocketedBallIds: [5],
+    };
+
+    scene.handleOpponentShot({
+      type: 'shot',
+      ts: Date.now(),
+      direction: { x: 1, y: 0 },
+      power: 0.8,
+      contactOffset: { x: 0, y: 0 },
+      cueBallPos: CUE_START,
+      ballsSnapshot: [
+        { id: 5, x: 500, y: 300, vx: 80, vy: 0, pocketed: false },
+      ],
+    });
+
+    expect(scene.physicsEngine.applyNetworkSnapshot).toHaveBeenCalledWith([
+      { id: 5, x: 500, y: 300, vx: 0, vy: 0, pocketed: true },
+    ]);
   });
 
   it('formats online turn prompts with nicknames instead of player numbers', () => {
@@ -172,6 +315,356 @@ describe('PoolScene online turn state', () => {
     expect(scene.ballPocketMap.get(5)).toBe(3);
   });
 
+  it('applies late opponent results without replaying pocket animations', () => {
+    const scene = createOnlineSceneHarness({ useRealSync: true });
+    scene.onlineState = { ...scene.onlineState, phase: 'my_turn' };
+    scene.pendingResult = {
+      type: 'result',
+      ts: Date.now(),
+      balls: [{ id: 5, x: 920, y: 520, pocketed: true, pocketIndex: 3 }],
+    };
+    scene.physicsEngine.getBalls.mockReturnValue([
+      { id: 5, kind: 'target', position: { x: 920, y: 520 }, state: 'in-pocket', pocketed: true },
+    ]);
+
+    scene.applyPendingOpponentResult();
+
+    expect(scene.startPocketAnimation).not.toHaveBeenCalled();
+    expect(scene.targetBalls[4].pocketed).toBe(true);
+    expect(scene.targetBalls[4].setVisible).toHaveBeenCalledWith(false);
+  });
+
+  it('does not show a rules-pocketed ball again from a stale non-pocketed snapshot', () => {
+    const scene = createOnlineSceneHarness({ useRealSync: true });
+    const ball = scene.targetBalls[4];
+    ball.pocketed = true;
+    scene.rules = {
+      ...createEightBallState(),
+      pocketedBallIds: [5],
+    };
+
+    scene.syncBallsFromPhysics([
+      { id: 5, kind: 'target', position: { x: 500, y: 300 }, state: 'stationary', pocketed: false },
+    ]);
+
+    expect(ball.pocketed).toBe(true);
+    expect(ball.setVisible).not.toHaveBeenCalledWith(true);
+    expect(scene.physicsEngine.pocketBall).toHaveBeenCalledWith(5);
+  });
+
+  it('keeps a locally pocketed opponent ball pocketed when a stale snapshot says it is still on the table', () => {
+    const scene = createOnlineSceneHarness({ useRealSync: true });
+    scene.onlineState = { ...scene.onlineState, phase: 'watching_opponent_shot' };
+    scene.wasMoving = true;
+    scene.syncBallsFromPhysics([
+      { id: 5, kind: 'target', position: { x: 920, y: 520 }, state: 'in-pocket', pocketed: true },
+    ]);
+
+    scene.handleOpponentSnapshot({
+      type: 'snapshot',
+      ts: Date.now(),
+      balls: [
+        { id: 5, x: 500, y: 300, vx: 120, vy: -60, pocketed: false },
+      ],
+    });
+
+    expect(scene.physicsEngine.applyNetworkSnapshot).toHaveBeenCalledWith([
+      { id: 5, x: 500, y: 300, vx: 0, vy: 0, pocketed: true },
+    ]);
+  });
+
+  it('ignores cue collisions with balls that are already pocketed in rules', () => {
+    const scene = createOnlineSceneHarness();
+    scene.gameMode = 'pvp';
+    scene.rules = startEightBallShot({
+      ...createEightBallState(),
+      shotCount: 1,
+      players: [
+        { id: 0, group: 'solids' },
+        { id: 1, group: 'stripes' },
+      ],
+      pocketedBallIds: [9],
+    });
+
+    scene.handlePhysicsEvents([
+      { type: 'collision', ballId: 0, otherBallId: 9, speed: 1 },
+      { type: 'collision', ballId: 0, otherBallId: 1, speed: 1 },
+      { type: 'cushion', ballId: 1, speed: 0.5 },
+    ]);
+
+    expect(scene.rules.shot.firstContactBallId).toBe(1);
+    expect(resolveEightBallShot(scene.rules).lastFoul).toBeNull();
+  });
+
+  it('keeps rules-pocketed balls pocketed when applying opponent snapshots', () => {
+    const scene = createOnlineSceneHarness();
+    scene.onlineState = { ...scene.onlineState, phase: 'watching_opponent_shot' };
+    scene.wasMoving = true;
+    scene.rules = {
+      ...createEightBallState(),
+      pocketedBallIds: [5],
+    };
+
+    scene.handleOpponentSnapshot({
+      type: 'snapshot',
+      ts: Date.now(),
+      balls: [
+        { id: 5, x: 500, y: 300, vx: 120, vy: -60, pocketed: false },
+      ],
+    });
+
+    expect(scene.physicsEngine.applyNetworkSnapshot).toHaveBeenCalledWith([
+      { id: 5, x: 500, y: 300, vx: 0, vy: 0, pocketed: true },
+    ]);
+  });
+
+  it('does not reset a rules-pocketed ball from a stale opponent result', () => {
+    const scene = createOnlineSceneHarness({ useRealSync: true });
+    scene.rules = {
+      ...createEightBallState(),
+      pocketedBallIds: [5],
+    };
+    scene.pendingResult = {
+      type: 'result',
+      ts: Date.now(),
+      balls: [{ id: 5, x: 500, y: 300, pocketed: false }],
+    };
+    scene.physicsEngine.getBalls.mockReturnValue([
+      { id: 5, kind: 'target', position: { x: 500, y: 300 }, state: 'in-pocket', pocketed: true },
+    ]);
+
+    scene.applyPendingOpponentResult();
+
+    expect(scene.physicsEngine.resetBall).not.toHaveBeenCalledWith(5, { x: 500, y: 300 });
+    expect(scene.physicsEngine.pocketBall).toHaveBeenCalledWith(5);
+  });
+
+  it('uses turn_end.nextPlayer as the observer rules current player after opponent results', () => {
+    const scene = createOnlineSceneHarness();
+    scene.roomInfo = { ...scene.roomInfo!, isHost: false };
+    scene.onlineState = { ...scene.onlineState, phase: 'watching_opponent_shot' };
+    scene.rules = {
+      ...createEightBallState(),
+      currentPlayer: 0,
+      players: [
+        { id: 0, group: 'solids' },
+        { id: 1, group: 'stripes' },
+      ],
+      shot: {
+        firstContactBallId: 1,
+        pocketedBallIds: [1],
+        cushionAfterContact: true,
+      },
+    };
+    scene.pendingTurnEnd = {
+      type: 'turn_end',
+      ts: Date.now(),
+      foul: false,
+      cueBallInHand: false,
+      nextPlayer: 1,
+      pocketedBallIds: [],
+      gameOver: false,
+      winner: null,
+    };
+
+    scene.applyPendingOpponentResult();
+
+    expect(scene.rules.currentPlayer).toBe(1);
+    expect(scene.onlineState.phase).toBe('my_turn');
+  });
+
+  it('pockets balls from authoritative turn_end immediately when result has not arrived yet', () => {
+    const scene = createOnlineSceneHarness();
+    scene.roomInfo = { ...scene.roomInfo!, isHost: false };
+    scene.onlineState = { ...scene.onlineState, phase: 'watching_opponent_shot' };
+    scene.pendingTurnEnd = {
+      type: 'turn_end',
+      ts: Date.now(),
+      foul: false,
+      cueBallInHand: false,
+      nextPlayer: 0,
+      pocketedBallIds: [5],
+      gameOver: false,
+      winner: null,
+    };
+
+    scene.applyPendingOpponentResult();
+
+    expect(scene.physicsEngine.pocketBall).toHaveBeenCalledWith(5);
+  });
+
+  it('accepts turn_end after an already-applied opponent result so the incoming player gets control', () => {
+    const scene = createOnlineSceneHarness();
+    scene.roomInfo = { ...scene.roomInfo!, isHost: false };
+    scene.onlineState = { ...scene.onlineState, phase: 'watching_opponent_shot' };
+    scene.wasMoving = false;
+    scene.physicsEngine.isSettled.mockReturnValue(true);
+    scene.physicsEngine.getBalls.mockReturnValue([
+      { id: 0, kind: 'cue', position: { x: 240, y: 300 }, state: 'stationary', pocketed: false },
+    ]);
+
+    scene.handleOpponentResult({
+      type: 'result',
+      ts: Date.now(),
+      balls: [{ id: 0, x: 240, y: 300, pocketed: false }],
+    });
+    scene.handleOpponentTurnEnd({
+      type: 'turn_end',
+      ts: Date.now(),
+      foul: false,
+      cueBallInHand: false,
+      nextPlayer: 1,
+      pocketedBallIds: [],
+      gameOver: false,
+      winner: null,
+    });
+
+    expect(scene.rules.currentPlayer).toBe(1);
+    expect(scene.onlineState.phase).toBe('my_turn');
+    expect(scene.canAim()).toBe(true);
+  });
+
+  it('accepts a late opponent result after turn_end to correct local drift without pocket animation', () => {
+    const scene = createOnlineSceneHarness({ useRealSync: true });
+    scene.roomInfo = { ...scene.roomInfo!, isHost: false };
+    scene.onlineState = { ...scene.onlineState, phase: 'watching_opponent_shot' };
+    scene.wasMoving = false;
+    scene.physicsEngine.isSettled.mockReturnValue(true);
+    scene.physicsEngine.getBalls.mockReturnValue([
+      { id: 5, kind: 'target', position: { x: 920, y: 520 }, state: 'in-pocket', pocketed: true },
+      { id: 7, kind: 'target', position: { x: 510, y: 300 }, state: 'stationary', pocketed: false },
+    ]);
+
+    scene.handleOpponentTurnEnd({
+      type: 'turn_end',
+      ts: Date.now(),
+      foul: false,
+      cueBallInHand: false,
+      nextPlayer: 0,
+      pocketedBallIds: [5],
+      gameOver: false,
+      winner: null,
+    });
+    scene.handleOpponentResult({
+      type: 'result',
+      ts: Date.now(),
+      balls: [
+        { id: 5, x: 920, y: 520, pocketed: true, pocketIndex: 3 },
+        { id: 7, x: 510, y: 300, pocketed: false },
+      ],
+    });
+
+    expect(scene.physicsEngine.pocketBall).toHaveBeenCalledWith(5);
+    expect(scene.physicsEngine.resetBall).toHaveBeenCalledWith(7, { x: 510, y: 300 });
+    expect(scene.startPocketAnimation).not.toHaveBeenCalled();
+    expect(scene.targetBalls[4].pocketed).toBe(true);
+    expect(scene.targetBalls[6].pocketed).toBe(false);
+    expect(scene.onlineState.phase).toBe('opponent_turn');
+  });
+
+  it('trusts a non-foul turn_end instead of keeping an observer-local foul', () => {
+    const scene = createOnlineSceneHarness();
+    scene.roomInfo = { ...scene.roomInfo!, isHost: false };
+    scene.onlineState = { ...scene.onlineState, phase: 'watching_opponent_shot' };
+    scene.rules = {
+      ...createEightBallState(),
+      currentPlayer: 0,
+      players: [
+        { id: 0, group: 'solids' },
+        { id: 1, group: 'stripes' },
+      ],
+      shot: {
+        firstContactBallId: 9,
+        pocketedBallIds: [],
+        cushionAfterContact: false,
+      },
+    };
+    scene.pendingTurnEnd = {
+      type: 'turn_end',
+      ts: Date.now(),
+      foul: false,
+      cueBallInHand: false,
+      nextPlayer: 1,
+      pocketedBallIds: [],
+      gameOver: false,
+      winner: null,
+    };
+
+    scene.applyPendingOpponentResult();
+
+    expect(scene.rules.lastFoul).toBeNull();
+    expect(scene.rules.cueBallInHand).toBe(false);
+    expect(scene.rules.currentPlayer).toBe(1);
+  });
+
+  it('highlights the local player card from online turn state even when rules currentPlayer is stale', () => {
+    const scene = createOnlineSceneHarness();
+    scene.roomInfo = { ...scene.roomInfo!, isHost: false };
+    scene.onlineState = transitionToMyTurn(scene.onlineState);
+    scene.rules = {
+      ...createEightBallState(),
+      currentPlayer: 0,
+    };
+    const playerOneCard = createFakeCard();
+    const playerTwoCard = createFakeCard();
+    const previousDocument = globalThis.document;
+    globalThis.document = {
+      querySelector: vi.fn((selector: string) => {
+        if (selector === '#player-one-card') return playerOneCard;
+        if (selector === '#player-two-card') return playerTwoCard;
+        if (selector === '#shot-clock') return { textContent: '' };
+        return null;
+      }),
+    } as unknown as Document;
+
+    try {
+      scene.updateShotClockHud();
+
+      expect(playerOneCard.active).toBe(false);
+      expect(playerTwoCard.active).toBe(true);
+    } finally {
+      globalThis.document = previousDocument;
+    }
+  });
+
+  it('allows aiming on my online turn even if rules currentPlayer is stale', () => {
+    const scene = createOnlineSceneHarness();
+    scene.roomInfo = { ...scene.roomInfo!, isHost: false };
+    scene.onlineState = transitionToMyTurn(scene.onlineState);
+    scene.rules = {
+      ...createEightBallState(),
+      currentPlayer: 0,
+    };
+    scene.physicsEngine.isSettled.mockReturnValue(true);
+
+    expect(scene.canAim()).toBe(true);
+  });
+
+  it('assigns a break-pocketed group to the guest shooter even when rules currentPlayer is stale', () => {
+    const scene = createOnlineSceneHarness();
+    const send = vi.fn();
+    scene.onlineChannel = { send };
+    scene.roomInfo = { ...scene.roomInfo!, isHost: false };
+    scene.onlineState = { ...scene.onlineState, phase: 'watching_my_shot', isMyTurn: false };
+    scene.physicsEngine.getBalls.mockReturnValue([]);
+    scene.rules = {
+      ...createEightBallState(),
+      currentPlayer: 0,
+      shotCount: 1,
+      shot: {
+        firstContactBallId: 1,
+        pocketedBallIds: [9],
+        cushionAfterContact: false,
+      },
+    };
+
+    scene.handleOnlineSettled();
+
+    expect(scene.rules.players[1].group).toBe('stripes');
+    expect(scene.rules.players[0].group).toBe('solids');
+    expect(scene.rules.currentPlayer).toBe(1);
+  });
+
   it('turns the online primary button into surrender instead of restarting the rack', () => {
     const scene = createOnlineSceneHarness();
     const send = vi.fn();
@@ -184,6 +677,117 @@ describe('PoolScene online turn state', () => {
     expect(scene.onlineState.phase).toBe('game_over');
     expect(scene.showOnlineGameOver).toHaveBeenCalledWith(false, 'surrender');
     expect(scene.restartRack).not.toHaveBeenCalled();
+  });
+
+  it('applies snapshot when watching opponent shot and balls still in motion', () => {
+    const scene = createOnlineSceneHarness();
+    scene.onlineState = { ...scene.onlineState, phase: 'watching_opponent_shot' };
+    scene.wasMoving = true;
+    scene.physicsEngine.isSettled.mockReturnValue(false);
+    const balls = [
+      { id: 0, x: 250, y: 300, vx: 1, vy: 0, pocketed: false },
+    ];
+
+    scene.handleOpponentSnapshot({
+      type: 'snapshot',
+      ts: Date.now(),
+      balls,
+    });
+
+    expect(scene.physicsEngine.applyNetworkSnapshot).toHaveBeenCalledWith(balls);
+  });
+
+  it('ignores late snapshot arriving after observer physics already settled', () => {
+    const scene = createOnlineSceneHarness();
+    scene.onlineState = { ...scene.onlineState, phase: 'watching_opponent_shot' };
+    scene.wasMoving = false;
+    scene.physicsEngine.isSettled.mockReturnValue(true);
+    const balls = [
+      { id: 0, x: 250, y: 300, vx: 50, vy: 0, pocketed: false },
+    ];
+
+    scene.handleOpponentSnapshot({
+      type: 'snapshot',
+      ts: Date.now(),
+      balls,
+    });
+
+    expect(scene.physicsEngine.applyNetworkSnapshot).not.toHaveBeenCalled();
+  });
+
+  it('ignores late moving snapshots after the opponent result has already arrived', () => {
+    const scene = createOnlineSceneHarness();
+    scene.onlineState = { ...scene.onlineState, phase: 'watching_opponent_shot' };
+    scene.wasMoving = true;
+    scene.pendingResult = {
+      type: 'result',
+      ts: Date.now(),
+      balls: [{ id: 5, x: 920, y: 520, pocketed: true, pocketIndex: 3 }],
+    };
+    scene.physicsEngine.isSettled.mockReturnValue(false);
+
+    scene.handleOpponentSnapshot({
+      type: 'snapshot',
+      ts: Date.now(),
+      balls: [{ id: 5, x: 500, y: 300, vx: 260, vy: -140, pocketed: false }],
+    });
+
+    expect(scene.physicsEngine.applyNetworkSnapshot).not.toHaveBeenCalled();
+    expect(scene.syncBallsFromPhysics).not.toHaveBeenCalled();
+  });
+
+  it('ignores snapshots after the opponent result has already been applied', () => {
+    const scene = createOnlineSceneHarness();
+    scene.onlineState = { ...scene.onlineState, phase: 'watching_opponent_shot' };
+    scene.pendingResult = {
+      type: 'result',
+      ts: Date.now(),
+      balls: [{ id: 5, x: 920, y: 520, pocketed: true, pocketIndex: 3 }],
+    };
+    scene.applyPendingOpponentResult();
+    scene.wasMoving = true;
+    scene.physicsEngine.isSettled.mockReturnValue(false);
+
+    scene.handleOpponentSnapshot({
+      type: 'snapshot',
+      ts: Date.now(),
+      balls: [{ id: 5, x: 500, y: 300, vx: 260, vy: -140, pocketed: false }],
+    });
+
+    expect(scene.physicsEngine.applyNetworkSnapshot).not.toHaveBeenCalled();
+    expect(scene.syncBallsFromPhysics).toHaveBeenCalledTimes(1);
+  });
+
+  it('ignores late opponent result messages after the observed shot is over', () => {
+    const scene = createOnlineSceneHarness();
+    scene.onlineState = transitionToMyTurn(scene.onlineState);
+    scene.wasMoving = false;
+    scene.physicsEngine.isSettled.mockReturnValue(true);
+
+    scene.handleOpponentResult({
+      type: 'result',
+      ts: Date.now(),
+      balls: [{ id: 5, x: 920, y: 520, pocketed: true, pocketIndex: 3 }],
+    });
+
+    expect(scene.physicsEngine.pocketBall).not.toHaveBeenCalled();
+    expect(scene.pendingResult).toBeNull();
+    expect(scene.syncBallsFromPhysics).not.toHaveBeenCalled();
+  });
+
+  it('ignores snapshot when not in watching_opponent_shot phase', () => {
+    const scene = createOnlineSceneHarness();
+    scene.onlineState = { ...scene.onlineState, phase: 'my_turn' };
+    scene.wasMoving = true;
+    scene.physicsEngine.isSettled.mockReturnValue(false);
+
+    scene.handleOpponentSnapshot({
+      type: 'snapshot',
+      ts: Date.now(),
+      balls: [{ id: 0, x: 100, y: 100, vx: 0, vy: 0, pocketed: false }],
+    });
+
+    expect(scene.physicsEngine.applyNetworkSnapshot).not.toHaveBeenCalled();
   });
 
   describe('reportOnlineLeave', () => {

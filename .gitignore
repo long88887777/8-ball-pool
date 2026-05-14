@@ -7,3 +7,9 @@ npm-debug.log*
 
 .vercel
 .env.local
+
+.claude/
+artifacts/
+docs/superpowers/
+image/
+CLAUDE.md

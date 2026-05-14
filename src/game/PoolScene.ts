@@ -65,6 +65,7 @@ import {
 import {
   clearEightBallBallInHand,
   createEightBallState,
+  getBallGroup,
   getPocketedDisplayBallIds,
   getPlayerTargetDisplayBallIds,
   getRemainingEightBallCount,
@@ -74,6 +75,7 @@ import {
   recordEightBallTimeoutFoul,
   resolveEightBallShot,
   startEightBallShot,
+  type BallGroup,
   type EightBallState,
 } from './eightBallRules';
 import { createGameState, recordStroke, restartGame, type GameState } from './state';
@@ -89,9 +91,10 @@ import {
   tickTurnTimer,
   recordHeartbeat,
   checkDisconnect,
+  pickBreakerFromRoomId,
   type OnlineState,
 } from '../online/onlineState';
-import type { RoomInfo, OnlineMessage, ShotMessage, ResultMessage, TurnEndMessage, ChatMessage } from '../online/types';
+import type { RoomInfo, OnlineMessage, ShotMessage, ResultMessage, SnapshotMessage, TurnEndMessage, ChatMessage, NetworkBallSnapshot } from '../online/types';
 import { supabase } from '../lib/supabase';
 
 type BallKind = 'cue' | 'target';
@@ -120,6 +123,7 @@ const DEPTH = {
 };
 
 const SHOT_CLOCK_SECONDS = 20;
+const ONLINE_SNAPSHOT_INTERVAL_MS = 200;
 
 export class PoolScene extends Phaser.Scene {
   private cueBall!: PoolBall;
@@ -202,6 +206,10 @@ export class PoolScene extends Phaser.Scene {
   private leaveReporter: LeaveReporter | null = null;
   private pendingResult: ResultMessage | null = null;
   private pendingTurnEnd: TurnEndMessage | null = null;
+  private opponentShotResolved = false;
+  private opponentResultApplied = false;
+  private opponentTurnEndApplied = false;
+  private lastSnapshotSentAt = 0;
   private rematchPhase: 'idle' | 'awaiting_response' | 'prompted' | 'countdown' = 'idle';
   private rematchCountdownTimer: ReturnType<typeof setInterval> | null = null;
   private lastGameLoser: 0 | 1 | null = null;
@@ -930,6 +938,8 @@ export class PoolScene extends Phaser.Scene {
       return;
     }
 
+    this.alignRulesCurrentPlayerWithOnlineShooter('me');
+
     const cueAngle = Math.atan2(-pull.y / dragDistance, -pull.x / dragDistance);
     this.strikeLocked = true;
     if (this.gameMode === 'challenge' && this.challengeState) {
@@ -1134,7 +1144,7 @@ export class PoolScene extends Phaser.Scene {
       }
       if (event.type === 'cushion') {
         if (this.gameMode !== 'challenge') {
-          this.rules = recordEightBallCushion(this.rules);
+          this.rules = recordEightBallCushion(this.rules, event.ballId);
         }
         this.audio.play('rail');
         continue;
@@ -1183,13 +1193,32 @@ export class PoolScene extends Phaser.Scene {
     }
 
     if (ballId === 0 && otherBallId !== 0) {
+      if (this.shouldIgnoreObjectBallContact(otherBallId)) {
+        return;
+      }
       this.rules = recordEightBallFirstContact(this.rules, otherBallId);
     } else if (otherBallId === 0 && ballId !== 0) {
+      if (this.shouldIgnoreObjectBallContact(ballId)) {
+        return;
+      }
       this.rules = recordEightBallFirstContact(this.rules, ballId);
     }
   }
 
-  private syncBallsFromPhysics(snapshots: PhysicsBallSnapshot[]): void {
+  private shouldIgnoreObjectBallContact(ballId: number): boolean {
+    if (this.isObjectBallAlreadyPocketed(ballId) || this.pocketAnimatingBalls.has(ballId)) {
+      return true;
+    }
+
+    const ball = this.targetBalls.find((candidate) => candidate.ballId === ballId);
+    return ball?.pocketed ?? false;
+  }
+
+  private syncBallsFromPhysics(
+    snapshots: PhysicsBallSnapshot[],
+    options: { animatePocketed?: boolean } = {},
+  ): void {
+    const animatePocketed = options.animatePocketed ?? true;
     for (const snapshot of snapshots) {
       const ball = this.allBalls().find((candidate) => candidate.ballId === snapshot.id);
       if (!ball) {
@@ -1197,6 +1226,14 @@ export class PoolScene extends Phaser.Scene {
       }
 
       if (this.pocketAnimatingBalls.has(snapshot.id)) {
+        continue;
+      }
+
+      if (snapshot.id !== 0 && this.rules.pocketedBallIds.includes(snapshot.id) && !snapshot.pocketed) {
+        this.physicsEngine.pocketBall(snapshot.id);
+        ball.pocketed = true;
+        ball.setVisible(false);
+        this.ballPrevPositions.delete(snapshot.id);
         continue;
       }
 
@@ -1214,7 +1251,7 @@ export class PoolScene extends Phaser.Scene {
 
       if (snapshot.pocketed && !ball.pocketed) {
         ball.pocketed = true;
-        if (this.gameMode !== 'online' || this.onlineState?.phase !== 'watching_opponent_shot') {
+        if (animatePocketed && (this.gameMode !== 'online' || this.onlineState?.phase !== 'watching_opponent_shot')) {
           this.startPocketAnimation(ball);
         } else {
           ball.setVisible(false);
@@ -1539,6 +1576,9 @@ export class PoolScene extends Phaser.Scene {
     this.rules = createEightBallState();
     this.shotClockRemaining = SHOT_CLOCK_SECONDS;
     this.wasMoving = false;
+    this.opponentShotResolved = false;
+    this.opponentResultApplied = false;
+    this.opponentTurnEndApplied = false;
     this.hideVictoryScreen();
     this.updateHud();
   }
@@ -1640,8 +1680,29 @@ export class PoolScene extends Phaser.Scene {
     const playerTwoCard = document.querySelector<HTMLElement>('#player-two-card');
 
     if (shotClock) shotClock.textContent = String(Math.ceil(this.shotClockRemaining));
-    this.updatePlayerClockCard(playerOneCard, this.rules.currentPlayer === 0 && !this.rules.gameOver, progress);
-    this.updatePlayerClockCard(playerTwoCard, this.rules.currentPlayer === 1 && !this.rules.gameOver, progress);
+    const activePlayer = this.activeHudPlayer();
+    this.updatePlayerClockCard(playerOneCard, activePlayer === 0, progress);
+    this.updatePlayerClockCard(playerTwoCard, activePlayer === 1, progress);
+  }
+
+  private activeHudPlayer(): 0 | 1 | null {
+    if (this.rules.gameOver) {
+      return null;
+    }
+
+    if (this.gameMode === 'online' && this.onlineState && this.roomInfo) {
+      const myIndex: 0 | 1 = this.roomInfo.isHost ? 0 : 1;
+      const opponentIndex: 0 | 1 = myIndex === 0 ? 1 : 0;
+      if (this.onlineState.phase === 'my_turn' || this.onlineState.phase === 'watching_my_shot') {
+        return myIndex;
+      }
+      if (this.onlineState.phase === 'opponent_turn' || this.onlineState.phase === 'watching_opponent_shot') {
+        return opponentIndex;
+      }
+      return null;
+    }
+
+    return this.rules.currentPlayer;
   }
 
   private updatePlayerClockCard(card: HTMLElement | null, active: boolean, progress: number): void {
@@ -1776,7 +1837,9 @@ export class PoolScene extends Phaser.Scene {
   private handleOnlinePresence(event: 'join' | 'leave'): void {
     if (!this.onlineState) return;
     if (event === 'join' && this.onlineState.phase === 'waiting_opponent') {
-      if (this.roomInfo!.isHost) {
+      const breaker = pickBreakerFromRoomId(this.roomInfo!.roomId);
+      const myIndex: 0 | 1 = this.roomInfo!.isHost ? 0 : 1;
+      if (breaker === myIndex) {
         this.onlineState = transitionToMyTurn(this.onlineState);
       } else {
         this.onlineState = transitionToOpponentTurn(this.onlineState);
@@ -1790,6 +1853,10 @@ export class PoolScene extends Phaser.Scene {
     if (!this.onlineState) return;
     if (msg.type === 'heartbeat') {
       this.onlineState = recordHeartbeat(this.onlineState, Date.now());
+      return;
+    }
+    if (msg.type === 'snapshot') {
+      this.handleOpponentSnapshot(msg);
       return;
     }
     if (msg.type === 'shot') {
@@ -1830,7 +1897,16 @@ export class PoolScene extends Phaser.Scene {
 
   private handleOpponentShot(msg: ShotMessage): void {
     if (!this.onlineState) return;
+    this.opponentShotResolved = false;
+    this.opponentResultApplied = false;
+    this.opponentTurnEndApplied = false;
+    this.pendingResult = null;
+    this.pendingTurnEnd = null;
     this.onlineState = transitionToWatchingOpponentShot(this.onlineState);
+    this.alignRulesCurrentPlayerWithOnlineShooter('opponent');
+    if (msg.ballsSnapshot && msg.ballsSnapshot.length > 0) {
+      this.physicsEngine.applyNetworkSnapshot(this.protectPocketedSnapshotBalls(msg.ballsSnapshot));
+    }
     this.physicsEngine.resetCueBall(msg.cueBallPos);
     this.syncBallsFromPhysics(this.physicsEngine.getBalls());
     this.physicsEngine.strikeCueBall({
@@ -1844,7 +1920,21 @@ export class PoolScene extends Phaser.Scene {
     this.audio.play('cue');
   }
 
+  private handleOpponentSnapshot(msg: SnapshotMessage): void {
+    if (!this.onlineState) return;
+    if (this.onlineState.phase !== 'watching_opponent_shot') return;
+    if (this.opponentShotResolved) return;
+    if (this.opponentResultApplied || this.opponentTurnEndApplied) return;
+    if (this.pendingResult || this.pendingTurnEnd) return;
+    if (!msg.balls || msg.balls.length === 0) return;
+    if (!this.wasMoving && this.physicsEngine.isSettled()) return;
+    this.physicsEngine.applyNetworkSnapshot(this.protectPocketedSnapshotBalls(msg.balls));
+    this.syncBallsFromPhysics(this.physicsEngine.getBalls());
+  }
+
   private handleOpponentResult(msg: ResultMessage): void {
+    if (!this.onlineState || this.opponentResultApplied) return;
+    if (this.onlineState.phase !== 'watching_opponent_shot' && !this.opponentTurnEndApplied) return;
     this.pendingResult = msg;
     if (this.physicsEngine.isSettled() && !this.wasMoving) {
       this.applyPendingOpponentResult();
@@ -1852,6 +1942,8 @@ export class PoolScene extends Phaser.Scene {
   }
 
   private handleOpponentTurnEnd(msg: TurnEndMessage): void {
+    if (!this.onlineState || this.opponentTurnEndApplied) return;
+    if (this.onlineState.phase !== 'watching_opponent_shot' && !this.opponentResultApplied) return;
     this.pendingTurnEnd = msg;
     if (this.physicsEngine.isSettled() && !this.wasMoving) {
       this.applyPendingOpponentResult();
@@ -1907,14 +1999,23 @@ export class PoolScene extends Phaser.Scene {
 
   private sendOnlineShot(direction: Vector, power: number, contactOffset: Vector, cueBallPos: Vector): void {
     if (!this.onlineChannel || !this.onlineState) return;
+    const ballsSnapshot: NetworkBallSnapshot[] = this.physicsEngine.getNetworkSnapshot();
     this.onlineChannel.send({
       type: 'shot',
       direction,
       power,
       contactOffset,
       cueBallPos,
+      ballsSnapshot,
     });
     this.onlineState = transitionToWatchingMyShot(this.onlineState);
+    this.lastSnapshotSentAt = Date.now();
+  }
+
+  private sendOnlineSnapshot(): void {
+    if (!this.onlineChannel) return;
+    const balls = this.physicsEngine.getNetworkSnapshot();
+    this.onlineChannel.send({ type: 'snapshot', balls });
   }
 
   private sendOnlineResult(): void {
@@ -1951,6 +2052,7 @@ export class PoolScene extends Phaser.Scene {
     }
 
     if (this.onlineState.phase !== 'watching_my_shot') return;
+    this.alignRulesCurrentPlayerWithOnlineShooter('me');
     this.sendOnlineResult();
     const pocketedBallIds = this.rules.shot.pocketedBallIds.slice();
     if (pocketedBallIds.includes(0)) {
@@ -2001,20 +2103,26 @@ export class PoolScene extends Phaser.Scene {
       this.netDeformGraphics?.clear();
 
       for (const ball of this.pendingResult.balls) {
-        if (ball.pocketed) {
+        const pocketed = ball.pocketed || this.isObjectBallAlreadyPocketed(ball.id);
+        if (pocketed) {
           this.ballPocketMap.set(ball.id, ball.pocketIndex ?? this.nearestPocketIndex({ x: ball.x, y: ball.y }));
           this.physicsEngine.pocketBall(ball.id);
         } else {
           this.physicsEngine.resetBall(ball.id, { x: ball.x, y: ball.y });
         }
       }
-      this.syncBallsFromPhysics(this.physicsEngine.getBalls());
+      this.syncBallsFromPhysics(this.physicsEngine.getBalls(), { animatePocketed: false });
       this.pendingResult = null;
+      this.opponentResultApplied = true;
     }
     if (this.pendingTurnEnd) {
       const msg = this.pendingTurnEnd;
       this.pendingTurnEnd = null;
       if (!this.onlineState) return;
+      if (!this.roomInfo) return;
+      const myIndex: 0 | 1 = this.roomInfo.isHost ? 0 : 1;
+      const shooterIndex: 0 | 1 = myIndex === 0 ? 1 : 0;
+      this.rules = { ...this.rules, currentPlayer: shooterIndex };
       if (msg.foul && msg.cueBallInHand) {
         this.rules = { ...this.rules, cueBallInHand: true };
         this.physicsEngine.resetCueBall(CUE_START);
@@ -2022,17 +2130,40 @@ export class PoolScene extends Phaser.Scene {
       }
       for (const ballId of msg.pocketedBallIds) {
         this.rules = recordEightBallPocket(this.rules, ballId);
+        if (ballId !== 0) {
+          this.physicsEngine.pocketBall(ballId);
+        }
       }
+      const groupBeforeTurnEnd = this.rules.players[shooterIndex].group;
+      if (!msg.foul) {
+        this.rules = this.assignOnlineGroupsFromPocketed(this.rules, shooterIndex, msg.pocketedBallIds);
+      }
+      const groupsAssignedFromTurnEnd =
+        groupBeforeTurnEnd === null && this.rules.players[shooterIndex].group !== null;
       this.rules = resolveEightBallShot(this.rules);
+      this.rules = this.applyAuthoritativeTurnEnd(this.rules, msg, shooterIndex, groupsAssignedFromTurnEnd);
       if (msg.gameOver) {
-        const myIndex = this.roomInfo!.isHost ? 0 : 1;
+        const winner = msg.winner ?? 0;
+        const loser: 0 | 1 = winner === 0 ? 1 : 0;
+        this.rules = {
+          ...this.rules,
+          gameOver: true,
+          winner,
+          loser,
+          cueBallInHand: false,
+          shot: this.createEmptyEightBallShot(),
+          lastFoul: null,
+          messageKey: winner === shooterIndex ? 'eightBallWin' : 'eightBallLoss',
+          messageValues: { winner: winner + 1, loser: loser + 1 },
+        };
         const iWin = msg.winner === myIndex;
-        this.onlineState = transitionToGameOver(this.onlineState, msg.winner ?? 0, 'normal');
+        this.onlineState = transitionToGameOver(this.onlineState, winner, 'normal');
+        this.opponentTurnEndApplied = true;
+        this.opponentShotResolved = true;
         this.showOnlineGameOver(iWin, 'normal');
         void this.updateOnlineStats(iWin, 'normal');
         return;
       }
-      const myIndex = this.roomInfo!.isHost ? 0 : 1;
       if (msg.nextPlayer === myIndex) {
         this.onlineState = transitionToMyTurn(this.onlineState);
       } else {
@@ -2040,8 +2171,121 @@ export class PoolScene extends Phaser.Scene {
       }
       this.shotClockRemaining = 30;
       this.wasMoving = false;
+      this.opponentTurnEndApplied = true;
       this.updateHud();
     }
+    this.opponentShotResolved = this.opponentResultApplied && this.opponentTurnEndApplied;
+  }
+
+  private applyAuthoritativeTurnEnd(
+    resolvedRules: EightBallState,
+    msg: TurnEndMessage,
+    shooterIndex: 0 | 1,
+    groupsAssignedFromTurnEnd: boolean,
+  ): EightBallState {
+    if (msg.foul) {
+      const lastFoul = resolvedRules.lastFoul ?? (msg.cueBallInHand ? 'noFirstContact' : null);
+      return {
+        ...resolvedRules,
+        currentPlayer: msg.nextPlayer,
+        cueBallInHand: msg.cueBallInHand,
+        shot: this.createEmptyEightBallShot(),
+        lastFoul,
+        messageKey: msg.cueBallInHand ? 'eightBallFoul' : resolvedRules.messageKey,
+        messageValues: msg.cueBallInHand
+          ? { player: msg.nextPlayer + 1, reason: lastFoul ?? 'noFirstContact' }
+          : resolvedRules.messageValues,
+      };
+    }
+
+    const shooterKeptTurn = msg.nextPlayer === shooterIndex;
+    const shooterGroup = resolvedRules.players[shooterIndex].group;
+    return {
+      ...resolvedRules,
+      currentPlayer: msg.nextPlayer,
+      cueBallInHand: false,
+      shot: this.createEmptyEightBallShot(),
+      lastFoul: null,
+      messageKey: groupsAssignedFromTurnEnd && shooterKeptTurn ? 'eightBallGroupsAssigned' : shooterKeptTurn ? 'eightBallKeepTurn' : 'eightBallTurnPass',
+      messageValues:
+        groupsAssignedFromTurnEnd && shooterKeptTurn && shooterGroup
+          ? { player: shooterIndex + 1, group: shooterGroup }
+          : { player: (shooterKeptTurn ? shooterIndex : msg.nextPlayer) + 1 },
+    };
+  }
+
+  private assignOnlineGroupsFromPocketed(
+    state: EightBallState,
+    shooterIndex: 0 | 1,
+    pocketedBallIds: number[],
+  ): EightBallState {
+    if (state.players[0].group !== null || state.players[1].group !== null) {
+      return state;
+    }
+
+    const assignedGroup = pocketedBallIds.map(getBallGroup).find((group): group is BallGroup => group === 'solids' || group === 'stripes');
+    if (!assignedGroup) {
+      return state;
+    }
+
+    const opponentIndex: 0 | 1 = shooterIndex === 0 ? 1 : 0;
+    const opponentGroup: BallGroup = assignedGroup === 'solids' ? 'stripes' : 'solids';
+    return {
+      ...state,
+      players: state.players.map((player) => {
+        if (player.id === shooterIndex) {
+          return { ...player, group: assignedGroup };
+        }
+        if (player.id === opponentIndex) {
+          return { ...player, group: opponentGroup };
+        }
+        return player;
+      }) as EightBallState['players'],
+    };
+  }
+
+  private createEmptyEightBallShot(): EightBallState['shot'] {
+    return {
+      firstContactBallId: null,
+      pocketedBallIds: [],
+      cushionAfterContact: false,
+    };
+  }
+
+  private alignRulesCurrentPlayerWithOnlineShooter(shooter: 'me' | 'opponent'): void {
+    if (this.gameMode !== 'online' || !this.roomInfo) {
+      return;
+    }
+
+    const myIndex: 0 | 1 = this.roomInfo.isHost ? 0 : 1;
+    const shooterIndex: 0 | 1 = shooter === 'me' ? myIndex : myIndex === 0 ? 1 : 0;
+    if (this.rules.currentPlayer !== shooterIndex) {
+      this.rules = { ...this.rules, currentPlayer: shooterIndex };
+    }
+  }
+
+  private protectPocketedSnapshotBalls(balls: NetworkBallSnapshot[]): NetworkBallSnapshot[] {
+    return balls.map((ball) => {
+      if (!this.shouldProtectObjectBallFromSnapshot(ball.id) || ball.pocketed) {
+        return ball;
+      }
+      return { ...ball, vx: 0, vy: 0, pocketed: true };
+    });
+  }
+
+  private isObjectBallAlreadyPocketed(ballId: number): boolean {
+    return ballId !== 0 && this.rules.pocketedBallIds.includes(ballId);
+  }
+
+  private shouldProtectObjectBallFromSnapshot(ballId: number): boolean {
+    if (ballId === 0) {
+      return false;
+    }
+    if (this.isObjectBallAlreadyPocketed(ballId) || this.pocketAnimatingBalls.has(ballId)) {
+      return true;
+    }
+    const ball = this.targetBalls.find((candidate) => candidate.ballId === ballId);
+    return ball?.pocketed ?? false;
   }
 
   private nearestPocketIndex(point: Vector): number {
@@ -2124,6 +2368,13 @@ export class PoolScene extends Phaser.Scene {
       if (this.onlineState.turnTimer <= 0) {
         this.handleOnlineTimeout();
         return;
+      }
+    }
+    if (this.onlineState.phase === 'watching_my_shot' && !this.physicsEngine.isSettled()) {
+      const now = Date.now();
+      if (now - this.lastSnapshotSentAt >= ONLINE_SNAPSHOT_INTERVAL_MS) {
+        this.sendOnlineSnapshot();
+        this.lastSnapshotSentAt = now;
       }
     }
     if (checkDisconnect(this.onlineState, Date.now())) {
@@ -2340,6 +2591,9 @@ export class PoolScene extends Phaser.Scene {
     this.matchStartedAt = null;
     this.pendingResult = null;
     this.pendingTurnEnd = null;
+    this.opponentShotResolved = false;
+    this.opponentResultApplied = false;
+    this.opponentTurnEndApplied = false;
     this.chatTriggerP1.hidden = true;
     this.chatTriggerP2.hidden = true;
     this.chatPopover.hidden = true;

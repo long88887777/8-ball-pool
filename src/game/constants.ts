@@ -8,14 +8,23 @@ export const TABLE = {
   height: 640,
   rail: 74,
   cushion: 38,
-  pocketRadius: 32,
+  pocketRadius: 26,
   readySpeed: 0.055,
+  snapSpeed: 0.088,
   minShotPower: 0.06,
   maxDragDistance: 200,
-  maxImpulse: 0.047,
+  maxImpulse: 0.039,
 };
 
 export const BALL_RADIUS = 15;
+export const CUSHION_NOSE_INSET = 12;
+
+export const POCKET_MOUTHS = {
+  cornerVisual: 116,
+  middleVisualHalf: 16,
+  cornerCapture: TABLE.pocketRadius + BALL_RADIUS * 0.9,
+  middleCaptureHalf: TABLE.pocketRadius + 6,
+};
 
 export const PLAY_AREA = {
   left: TABLE.rail,
@@ -25,16 +34,16 @@ export const PLAY_AREA = {
 };
 
 export const POCKETS: Vector[] = [
-  { x: PLAY_AREA.left + 4, y: PLAY_AREA.top + 4 },
-  { x: TABLE.width / 2, y: PLAY_AREA.top - 4 },
-  { x: PLAY_AREA.right - 4, y: PLAY_AREA.top + 4 },
-  { x: PLAY_AREA.left + 4, y: PLAY_AREA.bottom - 4 },
-  { x: TABLE.width / 2, y: PLAY_AREA.bottom + 4 },
-  { x: PLAY_AREA.right - 4, y: PLAY_AREA.bottom - 4 },
+  { x: PLAY_AREA.left + 2, y: PLAY_AREA.top + 2 },
+  { x: TABLE.width / 2, y: PLAY_AREA.top - 2 },
+  { x: PLAY_AREA.right - 2, y: PLAY_AREA.top + 2 },
+  { x: PLAY_AREA.left + 2, y: PLAY_AREA.bottom - 2 },
+  { x: TABLE.width / 2, y: PLAY_AREA.bottom + 2 },
+  { x: PLAY_AREA.right - 2, y: PLAY_AREA.bottom - 2 },
 ];
 
 export const CUE_START: Vector = {
-  x: PLAY_AREA.left + (PLAY_AREA.right - PLAY_AREA.left) * 0.28,
+  x: PLAY_AREA.left + (PLAY_AREA.right - PLAY_AREA.left) * 0.2,
   y: TABLE.height / 2,
 };
 

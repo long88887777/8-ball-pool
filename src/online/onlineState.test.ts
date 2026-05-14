@@ -9,6 +9,7 @@ import {
   tickTurnTimer,
   recordHeartbeat,
   checkDisconnect,
+  pickBreakerFromRoomId,
 } from './onlineState';
 
 describe('onlineState', () => {
@@ -116,6 +117,39 @@ describe('onlineState', () => {
         now
       );
       expect(checkDisconnect(state, now + 31000)).toBe(true);
+    });
+  });
+
+  describe('pickBreakerFromRoomId', () => {
+    it('returns either 0 or 1', () => {
+      const result = pickBreakerFromRoomId('123456');
+      expect(result === 0 || result === 1).toBe(true);
+    });
+
+    it('returns the same value for the same roomId (deterministic)', () => {
+      const a = pickBreakerFromRoomId('123456');
+      const b = pickBreakerFromRoomId('123456');
+      expect(a).toBe(b);
+    });
+
+    it('returns different values for some pair of different roomIds (not constant)', () => {
+      const samples = ['100000', '100001', '100002', '999999', '500000', '654321', '111111'].map(
+        pickBreakerFromRoomId
+      );
+      expect(samples.some((v) => v === 0)).toBe(true);
+      expect(samples.some((v) => v === 1)).toBe(true);
+    });
+
+    it('produces a roughly balanced split across 6-digit room codes', () => {
+      let zeros = 0;
+      let ones = 0;
+      for (let i = 100000; i < 100500; i += 1) {
+        const v = pickBreakerFromRoomId(String(i));
+        if (v === 0) zeros += 1;
+        else ones += 1;
+      }
+      expect(zeros).toBeGreaterThan(150);
+      expect(ones).toBeGreaterThan(150);
     });
   });
 });

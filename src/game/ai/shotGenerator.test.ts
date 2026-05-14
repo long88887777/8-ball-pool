@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { generateShotCandidates, getAILegalTargets, isPathClear } from './shotGenerator';
+import { generateShotCandidates, getAILegalTargets, isPathClear, generateKickShots, generateClusterBreakShots } from './shotGenerator';
 import type { Vector } from '../constants';
+import { POCKETS } from '../constants';
 
 describe('shotGenerator', () => {
   describe('getAILegalTargets', () => {
@@ -80,6 +81,47 @@ describe('shotGenerator', () => {
       const candidates = generateShotCandidates(ballPositions, 'solids', []);
       const safetyCandidates = candidates.filter((c) => c.type === 'safety');
       expect(safetyCandidates.length).toBeGreaterThan(0);
+    });
+  });
+
+  describe('generateKickShots', () => {
+    it('generates kick shots via cushion reflection', () => {
+      // Cue ball on left, target near top-right pocket
+      // Direct path might be blocked, but cushion kick should work
+      const ballPositions = new Map<number, Vector>([
+        [0, { x: 200, y: 400 }],
+        [9, { x: 900, y: 150 }],
+      ]);
+      const kicks = generateKickShots(ballPositions, 'stripes', []);
+      expect(kicks.length).toBeGreaterThan(0);
+      expect(kicks.every((c) => c.type === 'kick')).toBe(true);
+      expect(kicks.every((c) => c.power >= 0.35)).toBe(true);
+    });
+  });
+
+  describe('generateClusterBreakShots', () => {
+    it('generates break shots for clustered balls', () => {
+      const ballPositions = new Map<number, Vector>([
+        [0, { x: 200, y: 320 }],
+        [9, { x: 700, y: 300 }],
+        [10, { x: 715, y: 315 }],
+        [11, { x: 685, y: 285 }],
+      ]);
+      const breaks = generateClusterBreakShots(ballPositions, 'stripes', []);
+      expect(breaks.length).toBeGreaterThan(0);
+      expect(breaks.every((c) => c.type === 'break_cluster')).toBe(true);
+      expect(breaks.every((c) => c.power >= 0.6)).toBe(true);
+    });
+
+    it('returns empty when no clusters exist', () => {
+      const ballPositions = new Map<number, Vector>([
+        [0, { x: 200, y: 320 }],
+        [9, { x: 500, y: 150 }],
+        [10, { x: 700, y: 400 }],
+        [11, { x: 300, y: 500 }],
+      ]);
+      const breaks = generateClusterBreakShots(ballPositions, 'stripes', []);
+      expect(breaks.length).toBe(0);
     });
   });
 });

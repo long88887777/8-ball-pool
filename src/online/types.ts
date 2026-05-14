@@ -47,12 +47,27 @@ export type OnlinePhase =
 
 type MessageBase = { ts: number };
 
+export type NetworkBallSnapshot = {
+  id: number;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  pocketed: boolean;
+};
+
 export type ShotMessage = MessageBase & {
   type: 'shot';
   direction: { x: number; y: number };
   power: number;
   contactOffset: { x: number; y: number };
   cueBallPos: { x: number; y: number };
+  ballsSnapshot?: NetworkBallSnapshot[];
+};
+
+export type SnapshotMessage = MessageBase & {
+  type: 'snapshot';
+  balls: NetworkBallSnapshot[];
 };
 
 export type ResultMessage = MessageBase & {
@@ -108,4 +123,5 @@ export type OnlineMessage =
   | RematchRequestMessage
   | RematchResponseMessage
   | RematchStartMessage
-  | ChatMessage;
+  | ChatMessage
+  | SnapshotMessage;

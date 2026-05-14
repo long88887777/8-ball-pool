@@ -209,7 +209,12 @@
           <div class="player-avatar" aria-hidden="true"></div>
           <div class="player-info">
             <div class="player-row">
-              <strong id="player-one-name">Player One</strong>
+              <div class="player-name-group">
+                <strong id="player-one-name">Player One</strong>
+                <button id="chat-trigger-p1" class="chat-trigger-btn" type="button" aria-label="Open chat" hidden>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                </button>
+              </div>
               <span id="player-one-turn" class="turn-state">Shooting</span>
             </div>
             <div id="player-one-group" class="group-pill">Open</div>
@@ -229,7 +234,12 @@
         <article id="player-two-card" class="player-card player-two">
           <div class="player-info">
             <div class="player-row">
-              <strong id="player-two-name">Player Two</strong>
+              <div class="player-name-group">
+                <strong id="player-two-name">Player Two</strong>
+                <button id="chat-trigger-p2" class="chat-trigger-btn" type="button" aria-label="Open chat" hidden>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                </button>
+              </div>
               <span id="player-two-turn" class="turn-state">Waiting</span>
             </div>
             <div id="player-two-group" class="group-pill">Open</div>
@@ -276,7 +286,25 @@
           <p class="eyebrow">Match Complete</p>
           <h2 id="victory-title">Player 1 Wins!</h2>
           <p id="victory-detail">Congratulations Player 1, you won the match.</p>
-          <button id="victory-restart" type="button">New Rack</button>
+          <div id="victory-actions" class="victory-actions">
+            <button id="victory-restart" type="button">New Rack</button>
+          </div>
+          <div id="rematch-actions" class="victory-actions" hidden>
+            <button id="rematch-request" type="button">新开一局</button>
+            <button id="rematch-leave" type="button" class="secondary">离开</button>
+          </div>
+          <div id="rematch-waiting" class="rematch-status" hidden>
+            <p id="rematch-waiting-text">等待对手确认...</p>
+            <button id="rematch-cancel" type="button" class="secondary">取消</button>
+          </div>
+          <div id="rematch-prompt" class="rematch-status" hidden>
+            <p id="rematch-prompt-text">对手邀请你再来一局</p>
+            <div class="victory-actions">
+              <button id="rematch-accept" type="button">接受</button>
+              <button id="rematch-decline" type="button" class="secondary">拒绝</button>
+            </div>
+          </div>
+          <p id="rematch-countdown" class="rematch-countdown" hidden></p>
         </div>
       </section>
 
@@ -300,6 +328,23 @@
           </div>
         </div>
       </section>
+
+      <div id="chat-popover" class="chat-popover" hidden>
+        <div class="chat-popover-row">
+          <input id="chat-popover-input" class="chat-popover-input" type="text" maxlength="30" placeholder="说点什么..." autocomplete="off" />
+          <button id="chat-popover-emoji" class="chat-popover-emoji" type="button">😊</button>
+          <button id="chat-popover-send" class="chat-popover-send" type="button">发送</button>
+        </div>
+        <div id="chat-popover-emojis" class="chat-popover-emojis" hidden></div>
+      </div>
+      <div id="chat-my-bubble" class="chat-msg-bubble-inline" hidden>
+        <span class="chat-msg-sender-inline"></span>
+        <span class="chat-msg-text-inline"></span>
+      </div>
+      <div id="chat-opponent-bubble" class="chat-msg-bubble-inline" hidden>
+        <span class="chat-msg-sender-inline"></span>
+        <span class="chat-msg-text-inline"></span>
+      </div>
 
       <section id="pause-overlay" class="pause-overlay" hidden>
         <div class="pause-dialog">

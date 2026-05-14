@@ -65,6 +65,12 @@ async function startQuickMatch(onMatch: MatchCallback): Promise<void> {
 
   const myUserId = session.user.id;
 
+  await supabase
+    .from('matchmaking_queue')
+    .delete()
+    .eq('user_id', myUserId)
+    .neq('status', 'waiting');
+
   const res = await supabase.functions.invoke('match-players', {
     headers: { Authorization: `Bearer ${session.access_token}` },
   });

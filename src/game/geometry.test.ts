@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { BALL_RADIUS, CUE_START, CUSHION_NOSE_INSET, PLAY_AREA, POCKETS, TABLE } from './constants';
+import { BALL_RADIUS, CUE_START, PLAY_AREA, POCKETS, TABLE } from './constants';
 import {
   clampShotPower,
   clampBreakCuePosition,
   createTriangleRack,
+  breakLineX,
   getCuePullback,
   headStringX,
   isInPocket,
@@ -11,6 +12,7 @@ import {
   isOnTableSurface,
   isTableReady,
   predictCollisionDirections,
+  projectRayToPlayArea,
   rayCircleIntersection,
   shouldSnapBallToRest,
 } from './geometry';
@@ -47,8 +49,12 @@ describe('geometry helpers', () => {
   it('allows cue ball placement only on the break side of the head string', () => {
     expect(isLegalBreakCuePosition(CUE_START)).toBe(true);
     expect(isLegalBreakCuePosition({ x: PLAY_AREA.left + BALL_RADIUS, y: PLAY_AREA.top + BALL_RADIUS })).toBe(false);
-    expect(isLegalBreakCuePosition({ x: headStringX() + BALL_RADIUS, y: TABLE.height / 2 })).toBe(false);
+    expect(isLegalBreakCuePosition({ x: breakLineX() + BALL_RADIUS, y: TABLE.height / 2 })).toBe(false);
     expect(isLegalBreakCuePosition({ x: PLAY_AREA.left + BALL_RADIUS - 1, y: TABLE.height / 2 })).toBe(false);
+  });
+
+  it('uses the break line as the visible head-string boundary', () => {
+    expect(breakLineX()).toBe(headStringX());
   });
 
   it('keeps opening cue ball placement out of corner pocket jaws', () => {
@@ -65,12 +71,20 @@ describe('geometry helpers', () => {
 
   it('clamps cue ball placement to the break side of the head string', () => {
     expect(clampBreakCuePosition({ x: PLAY_AREA.right, y: PLAY_AREA.top - 100 })).toEqual({
-      x: headStringX(),
-      y: PLAY_AREA.top + BALL_RADIUS + CUSHION_NOSE_INSET,
+      x: breakLineX(),
+      y: PLAY_AREA.top + BALL_RADIUS,
     });
     const lowerLeft = clampBreakCuePosition({ x: PLAY_AREA.left, y: PLAY_AREA.bottom + 100 });
     expect(isLegalBreakCuePosition(lowerLeft)).toBe(true);
     expect(isInPocket(lowerLeft, POCKETS)).toBe(false);
+  });
+
+  it('allows straight-rail cue ball placement to sit flush with the cushion nose', () => {
+    const centerRail = clampBreakCuePosition({ x: PLAY_AREA.left + BALL_RADIUS, y: TABLE.height / 2 });
+
+    expect(centerRail.x).toBeCloseTo(PLAY_AREA.left + BALL_RADIUS, 5);
+    expect(centerRail.y).toBeCloseTo(TABLE.height / 2, 5);
+    expect(isLegalBreakCuePosition(centerRail)).toBe(true);
   });
 
   it('creates a non-overlapping 15-ball triangle rack', () => {
@@ -132,7 +146,7 @@ describe('rayCircleIntersection', () => {
 });
 
 describe('predictCollisionDirections', () => {
-  it('target ball goes along the collision normal', () => {
+  it('target ball goes along the ghost-ball collision normal', () => {
     const cuePos = { x: 100, y: 100 };
     const shotDir = { x: 1, y: 0 };
     const targetPos = { x: 130, y: 100 };
@@ -141,11 +155,12 @@ describe('predictCollisionDirections', () => {
     expect(result).not.toBeNull();
     expect(result!.targetBallDir.x).toBeCloseTo(1, 5);
     expect(result!.targetBallDir.y).toBeCloseTo(0, 5);
-    expect(Math.abs(result!.cueBallDeflectDir.x)).toBeLessThan(0.01);
-    expect(Math.abs(result!.cueBallDeflectDir.y)).toBeCloseTo(1, 2);
+    expect(result!.cueBallImpactCenter.x).toBeCloseTo(targetPos.x - BALL_RADIUS * 2, 5);
+    expect(result!.cueBallImpactCenter.y).toBeCloseTo(targetPos.y, 5);
+    expect(result!.cueBallDeflectDir).toBeNull();
   });
 
-  it('hit point is on the target ball surface facing the cue ball', () => {
+  it('contact point is on the target ball surface facing the ghost cue ball', () => {
     const cuePos = { x: 100, y: 100 };
     const shotDir = { x: 1, y: 0 };
     const targetPos = { x: 145, y: 100 };
@@ -156,20 +171,54 @@ describe('predictCollisionDirections', () => {
     expect(result!.hitPoint.y).toBeCloseTo(targetPos.y, 5);
   });
 
-  it('angled shot produces non-trivial deflection', () => {
-    const cuePos = { x: 100, y: 100 };
+  it('cut shot uses the cue ball impact center instead of the cue-to-target center line', () => {
+    const cuePos = { x: 0, y: 0 };
     const shotDir = { x: 1, y: 0 };
-    const targetPos = { x: 130, y: 115 };
+    const targetPos = { x: 100, y: 20 };
 
     const result = predictCollisionDirections(cuePos, shotDir, targetPos);
     expect(result).not.toBeNull();
-    const n = {
-      x: (targetPos.x - cuePos.x) / Math.hypot(targetPos.x - cuePos.x, targetPos.y - cuePos.y),
-      y: (targetPos.y - cuePos.y) / Math.hypot(targetPos.x - cuePos.x, targetPos.y - cuePos.y),
-    };
-    expect(result!.targetBallDir.x).toBeCloseTo(n.x, 5);
-    expect(result!.targetBallDir.y).toBeCloseTo(n.y, 5);
-    const dot = result!.cueBallDeflectDir.x * n.x + result!.cueBallDeflectDir.y * n.y;
+
+    const cueToTargetCenterLineY = targetPos.y / Math.hypot(targetPos.x, targetPos.y);
+    expect(result!.targetBallDir.y).toBeGreaterThan(cueToTargetCenterLineY + 0.4);
+    expect(result!.cueBallImpactCenter.y).toBeCloseTo(0, 5);
+    expect(result!.cueBallDeflectDir).not.toBeNull();
+    expect(result!.cueBallDeflectDir!.y).toBeLessThan(-0.7);
+
+    const dot = result!.cueBallDeflectDir!.x * result!.targetBallDir.x + result!.cueBallDeflectDir!.y * result!.targetBallDir.y;
     expect(Math.abs(dot)).toBeLessThan(0.001);
+  });
+
+  it('returns null when the cue ball path misses the target ball collision radius', () => {
+    const cuePos = { x: 0, y: 0 };
+    const shotDir = { x: 1, y: 0 };
+    const targetPos = { x: 100, y: BALL_RADIUS * 2 + 1 };
+
+    expect(predictCollisionDirections(cuePos, shotDir, targetPos)).toBeNull();
+  });
+});
+
+describe('projectRayToPlayArea', () => {
+  it('projects a ray to the right playable edge', () => {
+    const result = projectRayToPlayArea({ x: 100, y: 200 }, { x: 1, y: 0 });
+
+    expect(result.x).toBeCloseTo(PLAY_AREA.right - BALL_RADIUS, 5);
+    expect(result.y).toBeCloseTo(200, 5);
+  });
+
+  it('projects an angled ray to the first playable edge it reaches', () => {
+    const origin = { x: 300, y: 300 };
+    const direction = { x: 1, y: 1 };
+
+    const result = projectRayToPlayArea(origin, direction);
+
+    expect(result.y).toBeCloseTo(PLAY_AREA.bottom - BALL_RADIUS, 5);
+    expect(result.x).toBeLessThan(PLAY_AREA.right - BALL_RADIUS);
+  });
+
+  it('falls back to the origin when the direction is zero length', () => {
+    const origin = { x: 300, y: 300 };
+
+    expect(projectRayToPlayArea(origin, { x: 0, y: 0 })).toEqual(origin);
   });
 });

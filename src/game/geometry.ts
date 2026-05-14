@@ -1,6 +1,6 @@
-import { BALL_RADIUS, CUE, CUSHION_NOSE_INSET, PLAY_AREA, POCKET_MOUTHS, TABLE, type Vector } from './constants';
+import { BALL_RADIUS, CUE, PLAY_AREA, POCKET_MOUTHS, TABLE, type Vector } from './constants';
 
-const BREAK_CUE_SAFE_INSET = BALL_RADIUS + CUSHION_NOSE_INSET;
+const BREAK_CUE_SAFE_INSET = BALL_RADIUS;
 const BREAK_CORNER_CLEARANCE = POCKET_MOUTHS.cornerCapture + BALL_RADIUS * 2;
 const LEGAL_EPSILON = 0.001;
 
@@ -25,10 +25,14 @@ export function headStringX(): number {
   return PLAY_AREA.left + (PLAY_AREA.right - PLAY_AREA.left) * 0.25;
 }
 
+export function breakLineX(): number {
+  return headStringX();
+}
+
 export function isLegalBreakCuePosition(point: Vector): boolean {
   return (
     point.x >= PLAY_AREA.left + BREAK_CUE_SAFE_INSET &&
-    point.x <= headStringX() &&
+    point.x <= breakLineX() &&
     point.y >= PLAY_AREA.top + BREAK_CUE_SAFE_INSET &&
     point.y <= PLAY_AREA.bottom - BREAK_CUE_SAFE_INSET &&
     isOutsideBreakCornerClearance(point)
@@ -37,7 +41,7 @@ export function isLegalBreakCuePosition(point: Vector): boolean {
 
 export function clampBreakCuePosition(point: Vector): Vector {
   return pushOutsideBreakCorners({
-    x: Math.min(Math.max(point.x, PLAY_AREA.left + BREAK_CUE_SAFE_INSET), headStringX()),
+    x: Math.min(Math.max(point.x, PLAY_AREA.left + BREAK_CUE_SAFE_INSET), breakLineX()),
     y: Math.min(Math.max(point.y, PLAY_AREA.top + BREAK_CUE_SAFE_INSET), PLAY_AREA.bottom - BREAK_CUE_SAFE_INSET),
   });
 }
@@ -73,8 +77,7 @@ function leftBreakCorners(): Vector[] {
 }
 
 export function clampShotPower(dragDistance: number): number {
-  const normalized = Math.max(0, Math.min(dragDistance / TABLE.maxDragDistance, 1));
-  return Number(normalized.toFixed(2));
+  return Math.max(0, Math.min(dragDistance / TABLE.maxDragDistance, 1));
 }
 
 export function isTableReady(speeds: number[]): boolean {
@@ -104,7 +107,7 @@ export function createTriangleRack(apex: Vector, count: number): Vector[] {
 
 export function getCuePullback(power: number): number {
   const clamped = Math.max(0, Math.min(power, 1));
-  return Math.round(CUE.minPullback + (CUE.maxPullback - CUE.minPullback) * clamped);
+  return CUE.minPullback + (CUE.maxPullback - CUE.minPullback) * clamped;
 }
 
 export function rayCircleIntersection(
@@ -140,30 +143,79 @@ export function predictCollisionDirections(
   cuePos: Vector,
   shotDirection: Vector,
   targetPos: Vector,
-): { targetBallDir: Vector; cueBallDeflectDir: Vector; hitPoint: Vector } | null {
-  const nx = targetPos.x - cuePos.x;
-  const ny = targetPos.y - cuePos.y;
+): {
+  targetBallDir: Vector;
+  cueBallDeflectDir: Vector | null;
+  hitPoint: Vector;
+  cueBallImpactCenter: Vector;
+  targetBallCenter: Vector;
+} | null {
+  const directionLength = Math.hypot(shotDirection.x, shotDirection.y);
+  if (directionLength < 0.001) return null;
+
+  const direction = {
+    x: shotDirection.x / directionLength,
+    y: shotDirection.y / directionLength,
+  };
+  const cuePathHit = rayCircleIntersection(cuePos, direction, targetPos, BALL_RADIUS * 2);
+  if (!cuePathHit) return null;
+
+  const cueBallImpactCenter = cuePathHit.point;
+  const nx = targetPos.x - cueBallImpactCenter.x;
+  const ny = targetPos.y - cueBallImpactCenter.y;
   const nLen = Math.hypot(nx, ny);
   if (nLen < 0.001) return null;
 
   const n = { x: nx / nLen, y: ny / nLen };
-
   const targetBallDir = n;
 
-  const dot = shotDirection.x * n.x + shotDirection.y * n.y;
-  const tangentX = shotDirection.x - dot * n.x;
-  const tangentY = shotDirection.y - dot * n.y;
+  const dot = direction.x * n.x + direction.y * n.y;
+  const tangentX = direction.x - dot * n.x;
+  const tangentY = direction.y - dot * n.y;
   const tangentLen = Math.hypot(tangentX, tangentY);
 
   const cueBallDeflectDir =
     tangentLen < 0.001
-      ? { x: -n.y, y: n.x }
+      ? null
       : { x: tangentX / tangentLen, y: tangentY / tangentLen };
 
   const hitPoint = {
-    x: targetPos.x - n.x * BALL_RADIUS,
-    y: targetPos.y - n.y * BALL_RADIUS,
+    x: cueBallImpactCenter.x + n.x * BALL_RADIUS,
+    y: cueBallImpactCenter.y + n.y * BALL_RADIUS,
   };
 
-  return { targetBallDir, cueBallDeflectDir, hitPoint };
+  return { targetBallDir, cueBallDeflectDir, hitPoint, cueBallImpactCenter, targetBallCenter: targetPos };
+}
+
+export function projectRayToPlayArea(origin: Vector, direction: Vector, inset = BALL_RADIUS): Vector {
+  const directionLength = Math.hypot(direction.x, direction.y);
+  if (directionLength < 0.001) return origin;
+
+  const unit = {
+    x: direction.x / directionLength,
+    y: direction.y / directionLength,
+  };
+  const bounds = {
+    left: PLAY_AREA.left + inset,
+    right: PLAY_AREA.right - inset,
+    top: PLAY_AREA.top + inset,
+    bottom: PLAY_AREA.bottom - inset,
+  };
+  const candidates: number[] = [];
+
+  if (unit.x > 0.001) candidates.push((bounds.right - origin.x) / unit.x);
+  if (unit.x < -0.001) candidates.push((bounds.left - origin.x) / unit.x);
+  if (unit.y > 0.001) candidates.push((bounds.bottom - origin.y) / unit.y);
+  if (unit.y < -0.001) candidates.push((bounds.top - origin.y) / unit.y);
+
+  const distanceToEdge = candidates
+    .filter((distanceToBound) => distanceToBound >= 0)
+    .sort((a, b) => a - b)[0];
+
+  if (distanceToEdge === undefined) return origin;
+
+  return {
+    x: origin.x + unit.x * distanceToEdge,
+    y: origin.y + unit.y * distanceToEdge,
+  };
 }

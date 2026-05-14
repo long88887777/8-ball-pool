@@ -151,7 +151,8 @@ h2 {
   align-items: center;
   padding: 12px 14px;
   border-radius: 14px;
-  transition: border-color 0.3s ease, box-shadow 0.3s ease;
+  border: 2px solid rgba(0, 0, 0, 0.06);
+  transition: border-color 0.3s ease, box-shadow 0.3s ease, background-image 0.3s ease;
 }
 
 .player-card::before {
@@ -159,20 +160,39 @@ h2 {
   inset: 0;
   width: var(--turn-progress);
   content: '';
-  background: linear-gradient(90deg, rgba(108, 92, 231, 0.08), transparent);
+  background: linear-gradient(90deg, rgba(108, 92, 231, 0.15), rgba(0, 206, 201, 0.06), transparent);
   opacity: 0;
   transition: width 0.25s ease, opacity 0.2s ease;
 }
 
 .player-card.is-active-turn {
-  border-color: rgba(108, 92, 231, 0.25);
+  border-color: transparent;
+  background-image: linear-gradient(rgba(255, 255, 255, 0.72), rgba(255, 255, 255, 0.72)),
+    linear-gradient(135deg, #6c5ce7, #00cec9, #6c5ce7);
+  background-origin: border-box;
+  background-clip: padding-box, border-box;
+  border: 2px solid transparent;
   box-shadow:
-    0 0 16px rgba(108, 92, 231, 0.08),
+    0 0 20px rgba(108, 92, 231, 0.15),
+    0 0 40px rgba(108, 92, 231, 0.06),
+    0 4px 20px rgba(0, 0, 0, 0.04);
+}
+
+.player-two.is-active-turn {
+  background-image: linear-gradient(rgba(255, 255, 255, 0.72), rgba(255, 255, 255, 0.72)),
+    linear-gradient(135deg, #e25761, #ff9a76, #e25761);
+  box-shadow:
+    0 0 20px rgba(226, 87, 97, 0.15),
+    0 0 40px rgba(226, 87, 97, 0.06),
     0 4px 20px rgba(0, 0, 0, 0.04);
 }
 
 .player-card.is-active-turn::before {
   opacity: 1;
+}
+
+.player-two.is-active-turn::before {
+  background: linear-gradient(90deg, rgba(226, 87, 97, 0.15), rgba(255, 154, 118, 0.06), transparent);
 }
 
 .player-card > * {
@@ -253,6 +273,11 @@ h2 {
 .is-active-turn .turn-state {
   background: linear-gradient(135deg, rgba(108, 92, 231, 0.12), rgba(0, 206, 201, 0.08));
   color: #5b4ccc;
+}
+
+.player-two.is-active-turn .turn-state {
+  background: linear-gradient(135deg, rgba(226, 87, 97, 0.12), rgba(255, 154, 118, 0.08));
+  color: #c0392b;
 }
 
 .group-pill {
@@ -553,6 +578,43 @@ h2 {
 
 .victory-dialog p {
   color: var(--text-muted);
+}
+
+.victory-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+
+.victory-dialog button.secondary {
+  background: rgba(0, 0, 0, 0.04);
+  color: #6a6a6a;
+}
+
+.rematch-status {
+  margin-top: 16px;
+}
+
+.rematch-status p {
+  margin-bottom: 10px;
+}
+
+.rematch-countdown {
+  margin-top: 16px;
+  font-size: 32px;
+  font-weight: 600;
+  color: #5b4ccc;
+}
+
+.rematch-countdown[hidden] {
+  display: none;
+}
+
+.victory-actions[hidden],
+.rematch-status[hidden] {
+  display: none;
 }
 
 @media (max-width: 980px) {
@@ -1725,4 +1787,195 @@ h2 {
 
 .mm-join-buttons .mm-cancel-btn {
   flex: 1;
+}
+
+/* Chat trigger in player card */
+.player-name-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  flex-shrink: 1;
+}
+
+.player-name-group strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-trigger-btn {
+  position: relative;
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.04);
+  color: #6e6e73;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  transition: background 0.15s, color 0.15s;
+}
+
+.chat-trigger-btn:hover {
+  background: rgba(108, 92, 231, 0.12);
+  color: #5b4ccc;
+}
+
+.chat-trigger-btn[hidden] {
+  display: none;
+}
+
+/* Chat popover — anchored below icon, within game-shell */
+.chat-popover {
+  position: absolute;
+  z-index: 50;
+  background: rgba(255, 255, 255, 0.96);
+  backdrop-filter: blur(14px);
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 12px;
+  padding: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  animation: popoverIn 0.18s ease;
+}
+
+@keyframes popoverIn {
+  from { opacity: 0; transform: translateY(-6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.chat-popover[hidden] {
+  display: none;
+}
+
+.chat-popover-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.chat-popover-input {
+  flex: 1;
+  min-width: 0;
+  width: 150px;
+  padding: 6px 10px;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.02);
+  color: #1d1d1f;
+  font-size: 13px;
+  font-family: inherit;
+  outline: none;
+}
+
+.chat-popover-input:focus {
+  border-color: rgba(108, 92, 231, 0.4);
+  background: #fff;
+}
+
+.chat-popover-emoji {
+  width: 30px;
+  height: 30px;
+  border: none;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.04);
+  font-size: 16px;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+}
+
+.chat-popover-emoji:hover {
+  background: rgba(0, 0, 0, 0.08);
+}
+
+.chat-popover-send {
+  padding: 5px 12px;
+  border: none;
+  border-radius: 6px;
+  background: var(--accent-1);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.chat-popover-send:hover {
+  background: #5b4ccc;
+}
+
+.chat-popover-emojis {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  padding-top: 6px;
+  margin-top: 6px;
+  border-top: 1px solid rgba(0, 0, 0, 0.05);
+}
+
+.chat-popover-emojis[hidden] {
+  display: none;
+}
+
+.chat-emoji-item {
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  font-size: 18px;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  transition: background 0.12s;
+}
+
+.chat-emoji-item:hover {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+/* Inline message bubble — anchored below sender's icon */
+.chat-msg-bubble-inline {
+  position: absolute;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  background: rgba(0, 0, 0, 0.72);
+  backdrop-filter: blur(8px);
+  border-radius: 8px;
+  color: #fff;
+  font-size: 13px;
+  max-width: 300px;
+  animation: msgBubbleIn 0.2s ease;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chat-msg-bubble-inline[hidden] {
+  display: none;
+}
+
+@keyframes msgBubbleIn {
+  from { opacity: 0; transform: translateY(-3px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.chat-msg-sender-inline {
+  font-weight: 600;
+  font-size: 11px;
+  opacity: 0.85;
+  flex-shrink: 0;
+}
+
+.chat-msg-text-inline {
+  overflow: hidden;
+  text-overflow: ellipsis;
 }

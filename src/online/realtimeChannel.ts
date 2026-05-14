@@ -1,12 +1,17 @@
 import { supabase } from '../lib/supabase';
-import type { OnlineMessage, ShotMessage, ResultMessage, TurnEndMessage, HeartbeatMessage, GameOverMessage } from './types';
+import type { OnlineMessage, ShotMessage, ResultMessage, TurnEndMessage, HeartbeatMessage, GameOverMessage, RematchRequestMessage, RematchResponseMessage, RematchStartMessage, ChatMessage, SnapshotMessage } from './types';
 
 type MessageWithoutTs =
   | Omit<ShotMessage, 'ts'>
   | Omit<ResultMessage, 'ts'>
   | Omit<TurnEndMessage, 'ts'>
   | Omit<HeartbeatMessage, 'ts'>
-  | Omit<GameOverMessage, 'ts'>;
+  | Omit<GameOverMessage, 'ts'>
+  | Omit<RematchRequestMessage, 'ts'>
+  | Omit<RematchResponseMessage, 'ts'>
+  | Omit<RematchStartMessage, 'ts'>
+  | Omit<ChatMessage, 'ts'>
+  | Omit<SnapshotMessage, 'ts'>;
 
 export interface ChannelCallbacks {
   onMessage: (msg: OnlineMessage) => void;
@@ -36,6 +41,18 @@ export class GameChannel {
       .on('broadcast', { event: 'game_msg' }, (payload) => {
         const msg = payload.payload as OnlineMessage;
         options.callbacks.onMessage(msg);
+      })
+      .on('presence', { event: 'sync' }, () => {
+        if (!this.channel) return;
+        const state = this.channel.presenceState() as Record<string, Array<{ user_id?: string }>>;
+        for (const key of Object.keys(state)) {
+          const entries = state[key];
+          for (const entry of entries) {
+            if (entry.user_id && entry.user_id !== this.userId) {
+              options.callbacks.onPresence('join', entry.user_id);
+            }
+          }
+        }
       })
       .on('presence', { event: 'join' }, ({ newPresences }) => {
         for (const presence of newPresences) {

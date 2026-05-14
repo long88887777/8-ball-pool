@@ -1,0 +1,10 @@
+.claude/
+.superpowers/
+artifacts/
+docs/superpowers/
+image/
+CLAUDE.md
+coverage/
+node_modules/
+dist/
+npm-debug.log*

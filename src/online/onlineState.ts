@@ -62,3 +62,11 @@ export function recordHeartbeat(state: OnlineState, now: number): OnlineState {
 export function checkDisconnect(state: OnlineState, now: number): boolean {
   return now - state.lastOpponentHeartbeat > state.disconnectTimeout * 1000;
 }
+
+export function pickBreakerFromRoomId(roomId: string): 0 | 1 {
+  let hash = 0;
+  for (let i = 0; i < roomId.length; i += 1) {
+    hash = (hash * 31 + roomId.charCodeAt(i)) | 0;
+  }
+  return ((hash & 1) === 0 ? 0 : 1);
+}

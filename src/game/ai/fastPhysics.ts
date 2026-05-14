@@ -1,14 +1,15 @@
-import { BALL_RADIUS, PLAY_AREA, POCKETS, type Vector } from '../constants';
+import { BALL_RADIUS, PLAY_AREA, POCKETS, TABLE, type Vector } from '../constants';
 import type { FastSimResult } from './types';
 
-const FRICTION = 0.992;
-const COLLISION_ENERGY_LOSS = 0.92;
-const CUSHION_ENERGY_LOSS = 0.78;
-const MAX_STEPS = 600;
+const FRICTION = 0.984;
+const COLLISION_ENERGY_LOSS = 0.95;
+const CUSHION_ENERGY_LOSS = 0.80;
+const MAX_STEPS = 800;
 const DT = 0.016;
-const SPEED_THRESHOLD = 0.3;
-const SHOT_SPEED = 8.0 * 60;
-const POCKET_CAPTURE_RADIUS = 26 + BALL_RADIUS * 0.5;
+const SPEED_THRESHOLD = 0.5;
+const SHOT_SPEED = 1500;
+const CORNER_POCKET_RADIUS = TABLE.pocketRadius + BALL_RADIUS * 0.6;
+const MIDDLE_POCKET_RADIUS = TABLE.pocketRadius * 0.85;
 
 type SimBall = {
   id: number;
@@ -21,7 +22,7 @@ export function simulateShot(
   balls: Map<number, Vector>,
   cueDirection: Vector,
   power: number,
-  _spin: Vector,
+  spin: Vector,
 ): FastSimResult {
   const simBalls: SimBall[] = [];
   for (const [id, pos] of balls) {
@@ -38,6 +39,7 @@ export function simulateShot(
   let cushionAfterContact = false;
   const pocketedBalls: number[] = [];
   let cueBallPocketed = false;
+  let cueHasCollided = false;
 
   for (let step = 0; step < MAX_STEPS; step++) {
     let allStopped = true;
@@ -68,6 +70,12 @@ export function simulateShot(
         if (collision && firstContact === null) {
           if (a.id === 0) firstContact = b.id;
           else if (b.id === 0) firstContact = a.id;
+        }
+        if (collision && (a.id === 0 || b.id === 0) && !cueHasCollided) {
+          cueHasCollided = true;
+          if (cueBall) {
+            applySpinEffect(cueBall, cueDirection, spin, SHOT_SPEED * power);
+          }
         }
       }
     }
@@ -104,6 +112,31 @@ export function simulateShot(
   }
 
   return { ballPositions, pocketedBalls, cueBallPocketed, firstContact, cushionAfterContact };
+}
+
+function applySpinEffect(
+  cueBall: SimBall,
+  shotDirection: Vector,
+  spin: Vector,
+  preCollisionSpeed: number,
+): void {
+  if (preCollisionSpeed < 1) return;
+
+  const spinBase = preCollisionSpeed * 0.22;
+
+  if (Math.abs(spin.y) > 0.1) {
+    const followDraw = spin.y * spinBase;
+    cueBall.vel.x += shotDirection.x * followDraw;
+    cueBall.vel.y += shotDirection.y * followDraw;
+  }
+
+  if (Math.abs(spin.x) > 0.1) {
+    const perpX = -shotDirection.y;
+    const perpY = shotDirection.x;
+    const sideEffect = spin.x * spinBase * 0.6;
+    cueBall.vel.x += perpX * sideEffect;
+    cueBall.vel.y += perpY * sideEffect;
+  }
 }
 
 function resolveCollision(a: SimBall, b: SimBall): boolean {
@@ -173,7 +206,11 @@ function resolveCushion(ball: SimBall): boolean {
 }
 
 function isInPocket(pos: Vector): boolean {
-  return POCKETS.some(
-    (pocket) => Math.hypot(pos.x - pocket.x, pos.y - pocket.y) < POCKET_CAPTURE_RADIUS,
-  );
+  for (let i = 0; i < POCKETS.length; i++) {
+    const pocket = POCKETS[i];
+    const dist = Math.hypot(pos.x - pocket.x, pos.y - pocket.y);
+    const radius = (i === 1 || i === 4) ? MIDDLE_POCKET_RADIUS : CORNER_POCKET_RADIUS;
+    if (dist < radius) return true;
+  }
+  return false;
 }

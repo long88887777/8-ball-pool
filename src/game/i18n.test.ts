@@ -28,13 +28,13 @@ describe('localized copy', () => {
     expect(copy.hud.playerGroup(null)).toBe('Open');
     expect(copy.hud.playerGroup('solids')).toBe('Solids');
     expect(copy.message.ready).toBe('Drag on the table to aim. Release to shoot.');
-    expect(formatMessage(copy.message.eightBallFoul, { player: 2, reason: copy.foulReason.cueBallPocketed })).toBe(
+    expect(formatMessage(copy.message.eightBallFoul, { player: copy.hud.currentPlayer(2), reason: copy.foulReason.cueBallPocketed })).toBe(
       'Foul: cue ball scratched. Player 2 has ball in hand.',
     );
-    expect(formatMessage(copy.message.eightBallTimeoutFoul, { player: 2 })).toBe(
+    expect(formatMessage(copy.message.eightBallTimeoutFoul, { player: copy.hud.currentPlayer(2) })).toBe(
       'Shot clock expired. Player 2 has ball in hand.',
     );
-    expect(formatMessage(copy.message.eightBallWin, { winner: 1 })).toBe('Player 1 wins.');
+    expect(formatMessage(copy.message.eightBallWin, { winner: copy.hud.currentPlayer(1) })).toBe('Player 1 wins.');
     expect(formatMessage(copy.message.rackCleared, { strokes: 7 })).toBe(
       'Rack cleared in 7 strokes. Start a new rack when ready.',
     );
@@ -66,13 +66,13 @@ describe('localized copy', () => {
     expect(copy.hud.playerGroup(null)).toBe('开放球局');
     expect(copy.hud.playerGroup('stripes')).toBe('花色');
     expect(copy.message.ready).toBe('在球桌上拖动瞄准，松开击球。');
-    expect(formatMessage(copy.message.eightBallFoul, { player: 2, reason: copy.foulReason.wrongFirstContact })).toBe(
+    expect(formatMessage(copy.message.eightBallFoul, { player: copy.hud.currentPlayer(2), reason: copy.foulReason.wrongFirstContact })).toBe(
       '犯规：先碰到错误目标球，玩家 2 获得自由球。',
     );
-    expect(formatMessage(copy.message.eightBallTimeoutFoul, { player: 2 })).toBe(
+    expect(formatMessage(copy.message.eightBallTimeoutFoul, { player: copy.hud.currentPlayer(2) })).toBe(
       '击球超时，玩家 2 获得自由球。',
     );
-    expect(formatMessage(copy.message.eightBallWin, { winner: 1 })).toBe('玩家 1 获胜。');
+    expect(formatMessage(copy.message.eightBallWin, { winner: copy.hud.currentPlayer(1) })).toBe('玩家 1 获胜。');
     expect(formatMessage(copy.message.rackCleared, { strokes: 7 })).toBe('7 杆清台。准备好后开始新一局。');
   });
 });
