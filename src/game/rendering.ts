@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { BALL_RADIUS, PLAY_AREA, POCKETS, TABLE } from './constants';
+import { getCueStyle, type CueStyle } from './economy';
 import { breakLineX } from './geometry';
 
 export type BallTextureOptions = {
@@ -913,6 +914,7 @@ export function drawCueStick(
   y: number,
   angle: number,
   pullback: number,
+  cueStyle: CueStyle = getCueStyle('classic-maple'),
 ): void {
   graphics.clear();
   graphics.setDepth(6);
@@ -934,15 +936,15 @@ export function drawCueStick(
   graphics.lineTo(tipX, 3);
   graphics.strokePath();
 
-  graphics.fillGradientStyle(0x100d0b, 0x2f2319, 0x050403, 0x18100b, 1);
+  graphics.fillGradientStyle(0x100d0b, cueStyle.wrapColor, 0x050403, 0x18100b, 1);
   graphics.fillRoundedRect(buttX, -9, 36, 18, 8);
-  graphics.lineStyle(2, 0xc79a58, 0.7);
+  graphics.lineStyle(2, cueStyle.accentColor, 0.7);
   graphics.strokeRoundedRect(buttX + 2, -7, 32, 14, 6);
-  graphics.fillStyle(0xd2a46a, 0.95);
+  graphics.fillStyle(cueStyle.accentColor, 0.95);
   graphics.fillRect(buttX + 8, -8, 3, 16);
   graphics.fillRect(buttX + 27, -8, 3, 16);
 
-  graphics.fillGradientStyle(0x11100f, 0x272321, 0x050505, 0x151313, 1);
+  graphics.fillGradientStyle(cueStyle.wrapColor, lightenNumberColor(cueStyle.wrapColor, 24), 0x050505, cueStyle.wrapColor, 1);
   graphics.fillRoundedRect(wrapStart, -8, forearmStart - wrapStart, 16, 5);
   graphics.lineStyle(1, 0xffffff, 0.06);
   for (let markX = wrapStart + 6; markX < forearmStart - 4; markX += 7) {
@@ -954,9 +956,15 @@ export function drawCueStick(
   graphics.lineStyle(2, 0x0a0908, 0.9);
   graphics.strokeRoundedRect(wrapStart, -8, forearmStart - wrapStart, 16, 5);
 
-  graphics.fillGradientStyle(0xe0a75d, 0xc07a34, 0x6b3519, 0x9e5a24, 1);
+  graphics.fillGradientStyle(
+    lightenNumberColor(cueStyle.forearmColor, 48),
+    cueStyle.forearmColor,
+    darkenNumberColor(cueStyle.forearmColor, 60),
+    cueStyle.forearmColor,
+    1,
+  );
   graphics.fillRoundedRect(forearmStart, -7, jointStart - forearmStart, 14, 4);
-  graphics.lineStyle(1, 0xf6d08d, 0.42);
+  graphics.lineStyle(1, cueStyle.accentColor, 0.42);
   graphics.beginPath();
   graphics.moveTo(forearmStart + 10, -4);
   graphics.lineTo(jointStart - 8, -4);
@@ -975,10 +983,10 @@ export function drawCueStick(
     graphics.lineTo(inlayX, 6);
     graphics.closePath();
     graphics.fillPath();
-    graphics.lineStyle(1, 0xf0c46f, 0.72);
+    graphics.lineStyle(1, cueStyle.accentColor, 0.72);
     graphics.strokePath();
 
-    graphics.fillStyle(0xe7b36d, 0.92);
+    graphics.fillStyle(cueStyle.gemColor, 0.92);
     graphics.beginPath();
     graphics.moveTo(inlayX - 14, 0);
     graphics.lineTo(inlayX, -4);
@@ -990,7 +998,7 @@ export function drawCueStick(
 
   graphics.fillStyle(0x17110c, 1);
   graphics.fillRoundedRect(jointStart, -8, shaftStart - jointStart, 16, 3);
-  graphics.fillStyle(0xc6924e, 1);
+  graphics.fillStyle(cueStyle.accentColor, 1);
   graphics.fillRect(jointStart + 3, -8, 3, 16);
   graphics.fillRect(shaftStart - 6, -8, 3, 16);
 
@@ -1003,7 +1011,13 @@ export function drawCueStick(
   graphics.closePath();
   graphics.fillPath();
 
-  graphics.fillGradientStyle(0xe8b76f, 0xc6843d, 0x9a5625, 0xc98a45, 1);
+  graphics.fillGradientStyle(
+    lightenNumberColor(cueStyle.shaftColor, 42),
+    cueStyle.shaftColor,
+    darkenNumberColor(cueStyle.shaftColor, 46),
+    cueStyle.shaftColor,
+    1,
+  );
   graphics.beginPath();
   graphics.moveTo(shaftStart, -5);
   graphics.lineTo(ferruleStart, -3);
@@ -1012,7 +1026,7 @@ export function drawCueStick(
   graphics.closePath();
   graphics.fillPath();
 
-  graphics.lineStyle(1, 0x6d3919, 0.42);
+  graphics.lineStyle(1, darkenNumberColor(cueStyle.shaftColor, 72), 0.42);
   for (let grainX = shaftStart + 12; grainX < ferruleStart - 14; grainX += 22) {
     graphics.beginPath();
     graphics.moveTo(grainX, 2.8);
@@ -1020,7 +1034,7 @@ export function drawCueStick(
     graphics.strokePath();
   }
 
-  graphics.lineStyle(1, 0xf8d99b, 0.62);
+  graphics.lineStyle(1, lightenNumberColor(cueStyle.shaftColor, 58), 0.62);
   graphics.beginPath();
   graphics.moveTo(shaftStart + 8, -2.6);
   graphics.lineTo(ferruleStart - 5, -1.4);
@@ -1028,10 +1042,10 @@ export function drawCueStick(
 
   graphics.fillStyle(0x17110d, 0.96);
   graphics.fillRect(ferruleStart - 13, -5, 10, 10);
-  graphics.fillStyle(0xd0a060, 1);
+  graphics.fillStyle(cueStyle.accentColor, 1);
   graphics.fillRect(ferruleStart - 13, -5, 2, 10);
   graphics.fillRect(ferruleStart - 5, -5, 2, 10);
-  graphics.lineStyle(1, 0xf5d49b, 0.55);
+  graphics.lineStyle(1, lightenNumberColor(cueStyle.accentColor, 42), 0.55);
   graphics.beginPath();
   graphics.moveTo(ferruleStart - 11, -3);
   graphics.lineTo(ferruleStart - 5, 3);
@@ -1041,8 +1055,23 @@ export function drawCueStick(
   graphics.fillRoundedRect(ferruleStart, -3.5, tipX - ferruleStart - 4, 7, 2);
   graphics.lineStyle(1, 0x3f3327, 0.55);
   graphics.strokeRoundedRect(ferruleStart, -3.5, tipX - ferruleStart - 4, 7, 2);
-  graphics.fillStyle(0x5aa0b7, 1);
+  graphics.fillStyle(cueStyle.gemColor, 1);
   graphics.fillRoundedRect(tipX - 4, -3, 4, 6, 2);
 
   graphics.restore();
+}
+
+function lightenNumberColor(color: number, amount: number): number {
+  return shiftNumberColor(color, amount);
+}
+
+function darkenNumberColor(color: number, amount: number): number {
+  return shiftNumberColor(color, -amount);
+}
+
+function shiftNumberColor(color: number, amount: number): number {
+  const r = Math.max(0, Math.min(255, ((color >> 16) & 0xff) + amount));
+  const g = Math.max(0, Math.min(255, ((color >> 8) & 0xff) + amount));
+  const b = Math.max(0, Math.min(255, (color & 0xff) + amount));
+  return (r << 16) | (g << 8) | b;
 }

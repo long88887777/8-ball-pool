@@ -8,7 +8,10 @@ import {
   transitionToGameOver,
   tickTurnTimer,
   recordHeartbeat,
+  recordChannelStatus,
+  markOpponentPresenceLost,
   checkDisconnect,
+  getNetworkHealth,
   pickBreakerFromRoomId,
 } from './onlineState';
 
@@ -94,6 +97,82 @@ describe('onlineState', () => {
   });
 
   describe('heartbeat and disconnect', () => {
+    it('starts in connecting network health until the realtime channel subscribes', () => {
+      const now = Date.now();
+      const state = createOnlineState({ isHost: true, turnTimeLimit: 30, disconnectTimeout: 30 });
+
+      expect(getNetworkHealth(state, now).status).toBe('connecting');
+    });
+
+    it('reports stable health after subscription and a recent heartbeat', () => {
+      const now = Date.now();
+      const state = recordHeartbeat(
+        recordChannelStatus(
+          createOnlineState({ isHost: true, turnTimeLimit: 30, disconnectTimeout: 30 }),
+          'stable',
+          now
+        ),
+        now
+      );
+
+      expect(getNetworkHealth(state, now + 4000)).toEqual({
+        status: 'stable',
+        latencyMs: 4000,
+        remainingProtectionSeconds: null,
+      });
+    });
+
+    it('reports high latency before entering the opponent protection window', () => {
+      const now = Date.now();
+      const state = recordHeartbeat(
+        recordChannelStatus(
+          createOnlineState({ isHost: true, turnTimeLimit: 30, disconnectTimeout: 30 }),
+          'stable',
+          now
+        ),
+        now
+      );
+
+      expect(getNetworkHealth(state, now + 11000).status).toBe('high_latency');
+      expect(checkDisconnect(state, now + 11000)).toBe(false);
+    });
+
+    it('reports opponent protection with a countdown before disconnect forfeit', () => {
+      const now = Date.now();
+      const state = recordHeartbeat(
+        recordChannelStatus(
+          createOnlineState({ isHost: true, turnTimeLimit: 30, disconnectTimeout: 30 }),
+          'stable',
+          now
+        ),
+        now
+      );
+
+      const health = getNetworkHealth(state, now + 18000);
+
+      expect(health.status).toBe('opponent_protected');
+      expect(health.remainingProtectionSeconds).toBe(12);
+      expect(checkDisconnect(state, now + 18000)).toBe(false);
+    });
+
+    it('enters protection immediately when presence leaves, without immediate forfeit', () => {
+      const now = Date.now();
+      const state = markOpponentPresenceLost(
+        recordChannelStatus(
+          createOnlineState({ isHost: true, turnTimeLimit: 30, disconnectTimeout: 30 }),
+          'stable',
+          now
+        ),
+        now
+      );
+
+      const health = getNetworkHealth(state, now);
+
+      expect(health.status).toBe('opponent_protected');
+      expect(health.remainingProtectionSeconds).toBe(15);
+      expect(checkDisconnect(state, now)).toBe(false);
+    });
+
     it('recordHeartbeat updates lastOpponentHeartbeat', () => {
       const state = createOnlineState({ isHost: true, turnTimeLimit: 30, disconnectTimeout: 30 });
       const now = Date.now();

@@ -84,6 +84,12 @@ describe('i18n AI keys', () => {
     expect(copy.ai.aiming).toBe('AI aiming...');
     expect(copy.ai.shooting).toBe('AI shooting');
     expect(copy.ai.playerName).toBe('AI');
+    expect(copy.ai.difficulty.easy).toBe('Rookie');
+    expect(copy.ai.difficulty.normal).toBe('Skilled');
+    expect(copy.ai.difficulty.hard).toBe('Master');
+    expect(copy.ai.playerNameWithDifficulty('Master')).toBe('AI · Master');
+    expect(copy.ai.thinkingWithDifficulty('Skilled')).toBe('AI thinking · Skilled');
+    expect(copy.ai.aimingWithDifficulty('Skilled')).toBe('AI aiming · Skilled');
     expect(copy.hud.modeLabel).toBe('Mode');
     expect(copy.hud.modePvp).toBe('PVP');
     expect(copy.hud.modeAi).toBe('VS AI');
@@ -95,6 +101,12 @@ describe('i18n AI keys', () => {
     expect(copy.ai.aiming).toBe('AI 瞄准中...');
     expect(copy.ai.shooting).toBe('AI 击球');
     expect(copy.ai.playerName).toBe('电脑');
+    expect(copy.ai.difficulty.easy).toBe('新手');
+    expect(copy.ai.difficulty.normal).toBe('熟练');
+    expect(copy.ai.difficulty.hard).toBe('大师');
+    expect(copy.ai.playerNameWithDifficulty('大师')).toBe('电脑 · 大师');
+    expect(copy.ai.thinkingWithDifficulty('熟练')).toBe('AI 思考中 · 熟练');
+    expect(copy.ai.aimingWithDifficulty('熟练')).toBe('AI 瞄准中 · 熟练');
     expect(copy.hud.modeLabel).toBe('模式');
     expect(copy.hud.modePvp).toBe('双人对战');
     expect(copy.hud.modeAi).toBe('人机对战');

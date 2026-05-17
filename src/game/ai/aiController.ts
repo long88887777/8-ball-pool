@@ -4,8 +4,15 @@ import type { AIDecision, MCTSConfig, ShotCandidate, TableState } from './types'
 import { mctsSearch } from './mcts';
 import { generateShotCandidates, generateKickShots, generateClusterBreakShots, getAILegalTargets, isPathClear, isOnTable } from './shotGenerator';
 import { simulateShot } from './fastPhysics';
-import { evaluateState, evaluateWithPowerPenalty, scorePositionPlay } from './evaluator';
+import { evaluateState, scorePositionPlay } from './evaluator';
 import { generatePositionAwareShots, computeNextTarget } from './positionPlay';
+import {
+  applyDifficultyToDecision,
+  getAIDifficultyProfile,
+  type AIDifficulty,
+  type AIDifficultyProfile,
+  type RandomSource,
+} from './difficulty';
 
 const DEFAULT_CONFIG: MCTSConfig = {
   timeBudgetMs: 200,
@@ -19,9 +26,23 @@ const PLACEMENT_MIN_POCKET_DIST = 50;
 
 export class AIController {
   private config: MCTSConfig;
+  private difficultyProfile: AIDifficultyProfile;
+  private rng: RandomSource;
 
-  constructor(config?: MCTSConfig) {
-    this.config = config ?? DEFAULT_CONFIG;
+  constructor(config?: MCTSConfig | {
+    difficulty?: AIDifficulty;
+    config?: MCTSConfig;
+    rng?: RandomSource;
+  }) {
+    if (isControllerOptions(config)) {
+      this.difficultyProfile = getAIDifficultyProfile(config.difficulty ?? 'hard');
+      this.config = config.config ?? this.difficultyProfile.mctsConfig;
+      this.rng = config.rng ?? Math.random;
+    } else {
+      this.difficultyProfile = getAIDifficultyProfile('hard');
+      this.config = config ?? DEFAULT_CONFIG;
+      this.rng = Math.random;
+    }
   }
 
   computeDecision(
@@ -50,7 +71,7 @@ export class AIController {
 
     const directShot = this.findBestConfirmedPot(state, aiPlayer, aiGroup, pocketedBallIds);
     if (directShot) {
-      return { shot: directShot, placementPosition };
+      return this.createDecision(directShot, placementPosition);
     }
 
     const kickShot = this.findBestKickShot(state, aiPlayer, aiGroup, pocketedBallIds);
@@ -58,20 +79,24 @@ export class AIController {
 
     const bestAlternative = this.pickBestAlternative(kickShot, clusterShot);
     if (bestAlternative) {
-      return { shot: bestAlternative, placementPosition };
+      return this.createDecision(bestAlternative, placementPosition);
     }
 
     const mctsShot = mctsSearch(state, aiPlayer, aiGroup, pocketedBallIds, this.config);
     if (mctsShot) {
-      return { shot: mctsShot, placementPosition };
+      return this.createDecision(mctsShot, placementPosition);
     }
 
     const fallbackShot = this.fallbackSearch(state, aiPlayer, aiGroup, pocketedBallIds);
     if (fallbackShot) {
-      return { shot: fallbackShot, placementPosition };
+      return this.createDecision(fallbackShot, placementPosition);
     }
 
     return null;
+  }
+
+  private createDecision(shot: ShotCandidate, placementPosition?: Vector): AIDecision {
+    return applyDifficultyToDecision({ shot, placementPosition }, this.difficultyProfile, this.rng);
   }
 
   private findBestConfirmedPot(
@@ -278,6 +303,21 @@ export class AIController {
 
     return bestShot;
   }
+}
+
+function isControllerOptions(value: MCTSConfig | {
+  difficulty?: AIDifficulty;
+  config?: MCTSConfig;
+  rng?: RandomSource;
+} | undefined): value is {
+  difficulty?: AIDifficulty;
+  config?: MCTSConfig;
+  rng?: RandomSource;
+} {
+  return Boolean(
+    value &&
+    ('difficulty' in value || 'config' in value || 'rng' in value)
+  );
 }
 
 export function computeBestPlacement(

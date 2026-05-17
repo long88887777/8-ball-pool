@@ -4,6 +4,7 @@ import type { Vector } from '../constants';
 import { PLAY_AREA, BALL_RADIUS, POCKETS } from '../constants';
 import { createEightBallState } from '../eightBallRules';
 import { simulateShot } from './fastPhysics';
+import { computeNextTarget } from './positionPlay';
 
 describe('aiController', () => {
   describe('computeBestPlacement', () => {
@@ -273,6 +274,51 @@ describe('aiController', () => {
 
       // At least 2 out of 3 should pot successfully
       expect(potCount).toBeGreaterThanOrEqual(2);
+    });
+
+    it('uses only moderate spin on a routine position shot', () => {
+      const controller = new AIController({ timeBudgetMs: 100, maxDepth: 2, explorationConstant: 1.41 });
+      const pocket = POCKETS[1];
+      const targetPos = { x: pocket.x, y: pocket.y + 120 };
+      const nextTarget = { x: 800, y: 200 };
+      const ballPositions = new Map<number, Vector>([
+        [0, { x: 300, y: 400 }],
+        [9, targetPos],
+        [10, nextTarget],
+      ]);
+      const rules = createEightBallState();
+      rules.currentPlayer = 1;
+      rules.players[1].group = 'stripes';
+
+      const decision = controller.computeDecision(ballPositions, rules);
+      expect(decision).not.toBeNull();
+
+      const sim = simulateShot(
+        ballPositions,
+        decision!.shot.direction,
+        decision!.shot.power,
+        decision!.shot.spin,
+      );
+      expect(sim.pocketedBalls).toContain(9);
+      expect(sim.cueBallPocketed).toBe(false);
+
+      const cueEnd = sim.ballPositions.get(0)!;
+      const next = computeNextTarget(ballPositions, 9, [9, 10], []);
+      expect(next).not.toBeNull();
+      const idealZone = next!.idealZone;
+      const distToIdeal = Math.hypot(cueEnd.x - idealZone.x, cueEnd.y - idealZone.y);
+      const spinMagnitude = Math.hypot(decision!.shot.spin.x, decision!.shot.spin.y);
+      const noSpinSim = simulateShot(
+        ballPositions,
+        decision!.shot.direction,
+        decision!.shot.power,
+        { x: 0, y: 0 },
+      );
+      const noSpinCueEnd = noSpinSim.ballPositions.get(0)!;
+      const noSpinDist = Math.hypot(noSpinCueEnd.x - idealZone.x, noSpinCueEnd.y - idealZone.y);
+
+      expect(spinMagnitude).toBeLessThanOrEqual(0.85);
+      expect(distToIdeal).toBeLessThan(noSpinDist);
     });
   });
 });

@@ -1,6 +1,6 @@
 import { supabase } from '../lib/supabase';
 
-export function initAuthPage(onSuccess: () => void): void {
+export function initAuthPage(onSuccess: () => void, onGuest?: () => void): void {
   const authPage = document.getElementById('auth-page')!;
   const loginCard = document.getElementById('auth-login-card')!;
   const registerCard = document.getElementById('auth-register-card')!;
@@ -25,6 +25,11 @@ export function initAuthPage(onSuccess: () => void): void {
     loginCard.offsetHeight;
     loginCard.style.animation = '';
     registerError.hidden = true;
+  });
+
+  document.getElementById('guest-play')?.addEventListener('click', () => {
+    authPage.hidden = true;
+    onGuest?.();
   });
 
   loginForm.addEventListener('submit', async (e) => {

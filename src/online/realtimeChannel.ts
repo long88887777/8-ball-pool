@@ -1,5 +1,5 @@
 import { supabase } from '../lib/supabase';
-import type { OnlineMessage, ShotMessage, ResultMessage, TurnEndMessage, HeartbeatMessage, GameOverMessage, RematchRequestMessage, RematchResponseMessage, RematchStartMessage, ChatMessage, SnapshotMessage } from './types';
+import type { OnlineMessage, RealtimeConnectionStatus, ShotMessage, ResultMessage, TurnEndMessage, HeartbeatMessage, GameOverMessage, RematchRequestMessage, RematchResponseMessage, RematchStartMessage, ChatMessage, SnapshotMessage } from './types';
 
 type MessageWithoutTs =
   | Omit<ShotMessage, 'ts'>
@@ -16,6 +16,7 @@ type MessageWithoutTs =
 export interface ChannelCallbacks {
   onMessage: (msg: OnlineMessage) => void;
   onPresence: (event: 'join' | 'leave', userId: string) => void;
+  onStatus?: (status: RealtimeConnectionStatus) => void;
 }
 
 export interface ChannelOptions {
@@ -32,6 +33,7 @@ export class GameChannel {
   join(options: ChannelOptions): void {
     this.userId = options.userId;
     const channelName = `room:${options.roomId}`;
+    options.callbacks.onStatus?.('connecting');
 
     this.channel = supabase.channel(channelName, {
       config: { broadcast: { self: false } },
@@ -70,7 +72,12 @@ export class GameChannel {
       })
       .subscribe(async (status) => {
         if (status === 'SUBSCRIBED') {
+          options.callbacks.onStatus?.('stable');
           await this.channel!.track({ user_id: this.userId });
+        } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          options.callbacks.onStatus?.('reconnecting');
+        } else if (status === 'CLOSED') {
+          options.callbacks.onStatus?.('disconnected');
         }
       });
 

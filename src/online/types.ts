@@ -45,6 +45,32 @@ export type OnlinePhase =
   | 'watching_opponent_shot'
   | 'game_over';
 
+export type RealtimeConnectionStatus = 'connecting' | 'stable' | 'reconnecting' | 'disconnected';
+
+export type NetworkHealthStatus =
+  | 'connecting'
+  | 'stable'
+  | 'high_latency'
+  | 'opponent_protected'
+  | 'disconnected';
+
+export type MatchAuditEventType =
+  | 'network_status'
+  | 'presence_lost'
+  | 'disconnect_protection_started'
+  | 'disconnect_forfeit'
+  | 'surrender_sent'
+  | 'surrender_received'
+  | 'game_over_received'
+  | 'shot_sent'
+  | 'shot_received'
+  | 'snapshot_ignored'
+  | 'sync_anomaly'
+  | 'turn_end_sent'
+  | 'turn_end_received'
+  | 'result_sent'
+  | 'result_received';
+
 type MessageBase = { ts: number };
 
 export type NetworkBallSnapshot = {

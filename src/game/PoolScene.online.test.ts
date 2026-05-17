@@ -17,7 +17,7 @@ import { PoolScene } from './PoolScene';
 import { createEightBallState, resolveEightBallShot, startEightBallShot } from './eightBallRules';
 import { createGameState } from './state';
 import { transitionToMyTurn, transitionToOpponentTurn, type OnlineState } from '../online/onlineState';
-import type { RoomInfo } from '../online/types';
+import type { MatchAuditEventType, RoomInfo } from '../online/types';
 
 type ShotHandlerHarness = {
   handleOpponentShot: (msg: {
@@ -59,9 +59,22 @@ type ShotHandlerHarness = {
   reportOnlineLeave: () => void;
   sendOnlineResult: () => void;
   restartRack: ReturnType<typeof vi.fn>;
-  showOnlineGameOver: ReturnType<typeof vi.fn>;
+  showOnlineGameOver: (iWin: boolean, reason: string) => void;
   updateHud: ReturnType<typeof vi.fn>;
   updateOnlineStats: ReturnType<typeof vi.fn>;
+  logOnlineAuditEvent: (
+    eventType: MatchAuditEventType,
+    opts?: { reason?: string; metadata?: Record<string, unknown> },
+  ) => Promise<void> | void;
+  updateOnlineNetworkHud: () => void;
+  victoryTitle?: HTMLElement;
+  victoryDetail?: HTMLElement;
+  victoryOverlay?: HTMLElement;
+  coinResult?: HTMLElement;
+  settleMatchCoins: (won: boolean) => void;
+  formatCoinResultText: () => string;
+  setElementHidden: (selector: string, hidden: boolean) => void;
+  supabaseClient: { from: ReturnType<typeof vi.fn> };
   gameMode: 'pvp' | 'ai' | 'challenge' | 'online';
   language: 'en' | 'zh';
   roomInfo: RoomInfo | null;
@@ -176,7 +189,13 @@ function createOnlineSceneHarness(options: { useRealSync?: boolean } = {}): Shot
     turnTimer: 30,
     turnTimeLimit: 30,
     disconnectTimeout: 30,
+    highLatencyThreshold: 10,
+    protectionWindow: 15,
     lastOpponentHeartbeat: Date.now(),
+    realtimeStatus: 'stable',
+    realtimeStatusUpdatedAt: Date.now(),
+    opponentPresenceLostAt: null,
+    disconnectProtectionStartedAt: null,
     isMyTurn: false,
     winner: null,
     gameOverReason: null,
@@ -205,9 +224,10 @@ function createOnlineSceneHarness(options: { useRealSync?: boolean } = {}): Shot
   scene.startPocketAnimation = vi.fn();
   scene.audio = { play: vi.fn() };
   scene.restartRack = vi.fn();
-  scene.showOnlineGameOver = vi.fn();
+  scene.showOnlineGameOver = vi.fn() as unknown as ShotHandlerHarness['showOnlineGameOver'];
   scene.updateHud = vi.fn();
   scene.updateOnlineStats = vi.fn();
+  scene.logOnlineAuditEvent = vi.fn();
 
   return scene;
 }
@@ -676,7 +696,121 @@ describe('PoolScene online turn state', () => {
     expect(send).toHaveBeenCalledWith({ type: 'game_over', reason: 'surrender', winner: 1 });
     expect(scene.onlineState.phase).toBe('game_over');
     expect(scene.showOnlineGameOver).toHaveBeenCalledWith(false, 'surrender');
+    expect(scene.logOnlineAuditEvent).toHaveBeenCalledWith('surrender_sent', {
+      reason: 'self_surrender',
+      metadata: { winner: 1 },
+    });
     expect(scene.restartRack).not.toHaveBeenCalled();
+  });
+
+  it('shows a protection countdown instead of ending immediately when opponent heartbeat is late', () => {
+    const scene = createOnlineSceneHarness();
+    const previousDocument = globalThis.document;
+    const networkStatus = {
+      textContent: '',
+      dataset: {} as Record<string, string>,
+      hidden: true,
+    };
+    scene.onlineState = {
+      ...scene.onlineState,
+      lastOpponentHeartbeat: Date.now() - 18000,
+      realtimeStatus: 'stable',
+    };
+    globalThis.document = {
+      querySelector: vi.fn((selector: string) => {
+        if (selector === '#network-status') return networkStatus;
+        return null;
+      }),
+    } as unknown as Document;
+
+    try {
+      scene.updateOnlineNetworkHud();
+
+      expect(networkStatus.hidden).toBe(false);
+      expect(networkStatus.dataset.status).toBe('opponent_protected');
+      expect(networkStatus.textContent).toContain('保护');
+      expect(networkStatus.textContent).toContain('12');
+      expect(scene.showOnlineGameOver).not.toHaveBeenCalled();
+    } finally {
+      globalThis.document = previousDocument;
+    }
+  });
+
+  it('logs late moving snapshots as sync anomalies when an authoritative result already exists', () => {
+    const scene = createOnlineSceneHarness();
+    scene.onlineState = { ...scene.onlineState, phase: 'watching_opponent_shot' };
+    scene.wasMoving = true;
+    scene.pendingResult = {
+      type: 'result',
+      ts: Date.now(),
+      balls: [{ id: 5, x: 920, y: 520, pocketed: true, pocketIndex: 3 }],
+    };
+    scene.physicsEngine.isSettled.mockReturnValue(false);
+
+    scene.handleOpponentSnapshot({
+      type: 'snapshot',
+      ts: Date.now(),
+      balls: [{ id: 5, x: 500, y: 300, vx: 260, vy: -140, pocketed: false }],
+    });
+
+    expect(scene.logOnlineAuditEvent).toHaveBeenCalledWith('sync_anomaly', {
+      reason: 'late_snapshot_after_authoritative_result',
+      metadata: { ballCount: 1 },
+    });
+  });
+
+  it('renders online game over details for both disconnect and surrender perspectives', () => {
+    const scene = createOnlineSceneHarness();
+    const title = { textContent: '' };
+    const detail = { textContent: '' };
+    const overlay = { hidden: true };
+    scene.showOnlineGameOver = (PoolScene.prototype as unknown as ShotHandlerHarness).showOnlineGameOver;
+    scene.victoryTitle = title as HTMLElement;
+    scene.victoryDetail = detail as HTMLElement;
+    scene.victoryOverlay = overlay as HTMLElement;
+    scene.coinResult = { textContent: '' } as HTMLElement;
+    scene.settleMatchCoins = vi.fn();
+    scene.formatCoinResultText = vi.fn(() => '');
+    scene.setElementHidden = vi.fn();
+
+    scene.showOnlineGameOver(true, 'disconnect');
+    expect(title.textContent).toBe('You Win!');
+    expect(detail.textContent).toContain('Opponent disconnected');
+
+    scene.showOnlineGameOver(false, 'disconnect');
+    expect(title.textContent).toBe('You Lose');
+    expect(detail.textContent).toContain('You disconnected');
+
+    scene.showOnlineGameOver(true, 'surrender');
+    expect(detail.textContent).toContain('Opponent surrendered');
+
+    scene.showOnlineGameOver(false, 'surrender');
+    expect(detail.textContent).toContain('You surrendered');
+  });
+
+  it('persists audit events with room, player, phase, reason, and metadata', async () => {
+    const scene = createOnlineSceneHarness();
+    const insert = vi.fn(async () => ({ error: null }));
+    const from = vi.fn(() => ({ insert }));
+    scene.logOnlineAuditEvent = (PoolScene.prototype as unknown as ShotHandlerHarness).logOnlineAuditEvent;
+    scene.supabaseClient = { from };
+    scene.onlineState = { ...scene.onlineState, phase: 'my_turn' };
+
+    await scene.logOnlineAuditEvent('turn_end_sent' as MatchAuditEventType, {
+      reason: 'timeout',
+      metadata: { nextPlayer: 1 },
+    });
+
+    expect(from).toHaveBeenCalledWith('match_audit_logs');
+    expect(insert).toHaveBeenCalledWith({
+      room_id: 'room-1',
+      match_id: null,
+      player_id: 'self-1',
+      event_type: 'turn_end_sent',
+      reason: 'timeout',
+      phase: 'my_turn',
+      metadata: { nextPlayer: 1 },
+    });
   });
 
   it('applies snapshot when watching opponent shot and balls still in motion', () => {

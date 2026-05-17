@@ -36,6 +36,7 @@
           <p id="login-error" class="auth-error" hidden></p>
           <button type="submit" class="auth-btn">登录</button>
         </form>
+        <button type="button" id="guest-play" class="auth-guest-btn">游客模式</button>
         <p class="auth-switch">还没有账号？<button type="button" id="goto-register" class="auth-switch-link">立即注册</button></p>
       </div>
 
@@ -80,9 +81,42 @@
         </div>
         <div class="menu-user-bar">
           <span id="user-info" class="user-info" hidden></span>
+          <button id="growth-panel-toggle" class="menu-growth-btn" type="button">个人成长</button>
           <button id="btn-logout" class="menu-logout-btn" type="button">退出登录</button>
         </div>
+        <section class="menu-growth-overview" aria-label="Growth overview">
+          <div class="menu-growth-rank">
+            <span id="menu-growth-rank">Bronze · 1000 分</span>
+            <strong id="menu-growth-rank-gap">下一段还差 200 分</strong>
+          </div>
+          <div class="menu-growth-progress" aria-hidden="true">
+            <span id="menu-growth-rank-fill"></span>
+          </div>
+          <div class="menu-growth-grid">
+            <span id="menu-growth-record">0 局 · 0胜0负 · 胜率 0%</span>
+            <span id="menu-growth-streak">连胜 0 · 最佳 0</span>
+            <span id="menu-growth-tasks">每日任务 0/4</span>
+            <span id="menu-growth-stars">挑战 0/30 星</span>
+          </div>
+        </section>
         <div class="menu-buttons">
+          <div class="ai-difficulty-panel" aria-label="AI difficulty">
+            <span class="ai-difficulty-title">AI 难度</span>
+            <div class="ai-difficulty-options" role="radiogroup" aria-label="AI difficulty">
+              <label class="ai-difficulty-option">
+                <input type="radio" name="ai-difficulty" value="easy" />
+                <span>新手</span>
+              </label>
+              <label class="ai-difficulty-option">
+                <input type="radio" name="ai-difficulty" value="normal" checked />
+                <span>熟练</span>
+              </label>
+              <label class="ai-difficulty-option">
+                <input type="radio" name="ai-difficulty" value="hard" />
+                <span>大师</span>
+              </label>
+            </div>
+          </div>
           <button class="menu-btn" data-mode="ai" aria-label="Player versus AI mode">
             <span class="menu-btn-icon">🎯</span>
             <span class="menu-btn-text">
@@ -115,6 +149,62 @@
             </span>
             <span class="menu-btn-chevron" aria-hidden="true">›</span>
           </button>
+        </div>
+      </div>
+    </section>
+
+    <section id="growth-panel" class="growth-panel-overlay" hidden>
+      <div class="growth-panel-dialog">
+        <div class="growth-panel-header">
+          <div>
+            <p class="eyebrow">Progress</p>
+            <h2>个人成长</h2>
+          </div>
+          <button id="growth-panel-close" class="growth-panel-close" type="button" aria-label="Close growth panel">&times;</button>
+        </div>
+        <div class="growth-rank-band">
+          <div>
+            <span>当前段位</span>
+            <strong id="growth-detail-rank">Bronze</strong>
+          </div>
+          <div>
+            <span>积分</span>
+            <strong id="growth-detail-points">1000 分</strong>
+          </div>
+          <div class="growth-rank-next" id="growth-detail-next">下一段还差 200 分</div>
+        </div>
+        <div class="growth-detail-grid">
+          <div class="growth-section">
+            <h3>统计</h3>
+            <dl class="growth-stats-grid">
+              <div><dt>总局数</dt><dd id="growth-stat-games">0</dd></div>
+              <div><dt>战绩</dt><dd id="growth-stat-record">0胜 0负</dd></div>
+              <div><dt>胜率</dt><dd id="growth-stat-winrate">0%</dd></div>
+              <div><dt>连胜 / 最佳</dt><dd id="growth-stat-streak">0 / 0</dd></div>
+              <div><dt>清台率</dt><dd id="growth-stat-clear">0%</dd></div>
+              <div><dt>平均杆数</dt><dd id="growth-stat-strokes">0</dd></div>
+              <div><dt>最佳单局</dt><dd id="growth-stat-best">-</dd></div>
+            </dl>
+          </div>
+          <div class="growth-section">
+            <h3>每日任务</h3>
+            <ul id="growth-task-list" class="growth-list"></ul>
+          </div>
+          <div class="growth-section">
+            <h3>挑战总览</h3>
+            <div class="growth-challenge-row">
+              <span>星数</span>
+              <strong id="growth-challenge-stars">0/30</strong>
+            </div>
+            <div class="growth-challenge-row">
+              <span>完成关卡</span>
+              <strong id="growth-challenge-levels">0/10</strong>
+            </div>
+          </div>
+          <div class="growth-section">
+            <h3>最近战绩</h3>
+            <ul id="growth-recent-list" class="growth-list"></ul>
+          </div>
         </div>
       </div>
     </section>
@@ -191,9 +281,13 @@
           <h1 id="title">Pool Hall</h1>
         </div>
         <div class="hud" aria-live="polite">
+          <span id="coin-balance" class="coin-balance">金币 260</span>
+          <button id="daily-checkin" type="button">每日签到 +180</button>
+          <button id="cue-shop-open" type="button">球杆</button>
           <span id="mode">Local 8-Ball</span>
           <span id="remaining">Balls 15</span>
           <span id="strokes">Strokes 0</span>
+          <span id="network-status" class="network-status" data-status="connecting" hidden>Connecting...</span>
           <button id="language" type="button">中文</button>
           <button id="restart" type="button">New Rack</button>
         </div>
@@ -263,6 +357,19 @@
       </section>
 
       <section class="spin-panel" aria-label="Cue controls">
+        <div id="aim-assist-panel" class="aim-assist-panel" aria-live="polite">
+          <div class="aim-power-row">
+            <span>力度</span>
+            <strong id="aim-power-value">0%</strong>
+          </div>
+          <div class="aim-power-track" aria-hidden="true">
+            <span id="aim-power-fill" class="aim-power-fill"></span>
+          </div>
+          <div class="aim-help-row">
+            <span id="aim-shot-state">拖动球桌开始瞄准</span>
+            <button id="aim-cancel" class="aim-cancel-btn" type="button" hidden>取消</button>
+          </div>
+        </div>
         <div class="spin-status">
           <span id="spin-label">Cue Spin</span>
           <strong id="spin-state">Center</strong>
@@ -286,6 +393,7 @@
           <p class="eyebrow">Match Complete</p>
           <h2 id="victory-title">Player 1 Wins!</h2>
           <p id="victory-detail">Congratulations Player 1, you won the match.</p>
+          <p id="coin-result" class="coin-result"></p>
           <div id="victory-actions" class="victory-actions">
             <button id="victory-restart" type="button">New Rack</button>
           </div>
@@ -305,6 +413,21 @@
             </div>
           </div>
           <p id="rematch-countdown" class="rematch-countdown" hidden></p>
+        </div>
+      </section>
+
+      <section id="cue-shop" class="cue-shop-overlay" hidden>
+        <div class="cue-shop-dialog">
+          <div class="cue-shop-header">
+            <div>
+              <p class="eyebrow">Cue Collection</p>
+              <h2 id="cue-shop-title">球杆收藏</h2>
+            </div>
+            <button id="cue-shop-close" class="cue-shop-close" type="button" aria-label="Close cue shop">&times;</button>
+          </div>
+          <div id="cue-shop-balance" class="cue-shop-balance">金币 260</div>
+          <div id="cue-shop-grid" class="cue-shop-grid"></div>
+          <p id="cue-shop-feedback" class="cue-shop-feedback" aria-live="polite"></p>
         </div>
       </section>
 

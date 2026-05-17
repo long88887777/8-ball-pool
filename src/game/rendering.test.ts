@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { BALL_RADIUS } from './constants';
-import { createBallTexture } from './rendering';
+import { createBallTexture, drawCueStick } from './rendering';
+import type { CueStyle } from './economy';
 
 type DrawCall = {
   op: string;
@@ -119,5 +120,66 @@ describe('createBallTexture', () => {
           (call.radius ?? 0) > 2,
       ),
     ).toBe(true);
+  });
+});
+
+class FakeGraphics {
+  readonly fillColors: number[] = [];
+  readonly lineColors: number[] = [];
+
+  clear(): this { return this; }
+  setDepth(): this { return this; }
+  save(): this { return this; }
+  restore(): this { return this; }
+  translateCanvas(): this { return this; }
+  rotateCanvas(): this { return this; }
+  beginPath(): this { return this; }
+  closePath(): this { return this; }
+  moveTo(): this { return this; }
+  lineTo(): this { return this; }
+  strokePath(): this { return this; }
+  fillPath(): this { return this; }
+  fillRect(): this { return this; }
+  fillRoundedRect(): this { return this; }
+  strokeRoundedRect(): this { return this; }
+
+  lineStyle(_width: number, color?: number): this {
+    if (typeof color === 'number') this.lineColors.push(color);
+    return this;
+  }
+
+  fillStyle(color: number): this {
+    this.fillColors.push(color);
+    return this;
+  }
+
+  fillGradientStyle(topLeft: number, topRight: number, bottomLeft: number, bottomRight: number): this {
+    this.fillColors.push(topLeft, topRight, bottomLeft, bottomRight);
+    return this;
+  }
+}
+
+describe('drawCueStick', () => {
+  it('uses the equipped cue style colors for the cue body and jewels', () => {
+    const graphics = new FakeGraphics();
+    const cueStyle: CueStyle = {
+      id: 'test-cue',
+      name: 'Test Cue',
+      price: 100,
+      rarity: 'epic',
+      shaftColor: 0x123456,
+      forearmColor: 0xabcdef,
+      wrapColor: 0x345678,
+      accentColor: 0xfedcba,
+      gemColor: 0x55aaee,
+    };
+
+    drawCueStick(graphics as unknown as Phaser.GameObjects.Graphics, 100, 100, 0, 20, cueStyle);
+
+    expect(graphics.fillColors).toContain(cueStyle.shaftColor);
+    expect(graphics.fillColors).toContain(cueStyle.forearmColor);
+    expect(graphics.fillColors).toContain(cueStyle.wrapColor);
+    expect(graphics.fillColors).toContain(cueStyle.accentColor);
+    expect(graphics.fillColors).toContain(cueStyle.gemColor);
   });
 });

@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { AIController } from './ai/aiController';
 import type { AIDecision } from './ai/types';
+import { normalizeAIDifficulty, type AIDifficulty } from './ai/difficulty';
 import { PoolAudio } from './audio';
 import { CHALLENGE_LEVELS, type ChallengeLevel } from './challenge/levels';
 import {
@@ -47,6 +48,50 @@ import {
   rayCircleIntersection,
 } from './geometry';
 import { formatMessage, getCopy, getInitialLanguage, type Language } from './i18n';
+import {
+  CUE_CATALOG,
+  DAILY_CHECK_IN_REWARD,
+  DEFAULT_PLAYER_WALLET,
+  MATCH_LOSS_PENALTY,
+  MATCH_WIN_REWARD,
+  applyDailyCheckIn,
+  applyMatchCoinResult,
+  buyCue,
+  equipCue,
+  getCueStyle,
+  readPlayerWallet,
+  readPlayerWalletSupabase,
+  writePlayerWallet,
+  writePlayerWalletSupabase,
+  type CueStyle,
+  type PlayerWallet,
+  type StorageAdapter,
+} from './economy';
+import { summarizeChallengeStars } from './growth/challengeSummary';
+import {
+  applyMatchToStats,
+  createDefaultPlayerStats,
+  createLocalMatchTracker,
+  getRankProgress,
+  recordPlayerStroke,
+  summarizeStats,
+  type LocalMatchTracker,
+  type MatchMode,
+  type PlayerStats,
+} from './growth/stats';
+import {
+  completeDailyTask,
+  createDailyTaskState,
+  summarizeDailyTasks,
+  type DailyTaskId,
+  type DailyTaskState,
+} from './growth/tasks';
+import {
+  readDailyTaskStateSupabase,
+  readPlayerStatsSupabase,
+  writeDailyTaskStateSupabase,
+  writePlayerStatsSupabase,
+} from './growth/persistence';
 import { ProfessionalPoolEngine } from './proPhysics/engine';
 import {
   SPIN_PRESETS,
@@ -76,8 +121,17 @@ import {
   resolveEightBallShot,
   startEightBallShot,
   type BallGroup,
+  type EightBallFoulReason,
   type EightBallState,
 } from './eightBallRules';
+import {
+  adjustAimPower,
+  computeAimIntent,
+  resolveFoulFeedbackTarget,
+  rotateAimPoint,
+  type AimIntent,
+  type FoulFeedbackTarget,
+} from './shotControl';
 import { createGameState, recordStroke, restartGame, type GameState } from './state';
 import { GameChannel } from '../online/realtimeChannel';
 import { createLeaveReporter, type LeaveReporter } from '../online/leaveReporter';
@@ -90,11 +144,26 @@ import {
   transitionToGameOver,
   tickTurnTimer,
   recordHeartbeat,
+  recordChannelStatus,
+  markOpponentPresenceLost,
+  markDisconnectProtectionSeen,
   checkDisconnect,
+  getNetworkHealth,
   pickBreakerFromRoomId,
   type OnlineState,
 } from '../online/onlineState';
-import type { RoomInfo, OnlineMessage, ShotMessage, ResultMessage, SnapshotMessage, TurnEndMessage, ChatMessage, NetworkBallSnapshot } from '../online/types';
+import type {
+  MatchAuditEventType,
+  RealtimeConnectionStatus,
+  RoomInfo,
+  OnlineMessage,
+  ShotMessage,
+  ResultMessage,
+  SnapshotMessage,
+  TurnEndMessage,
+  ChatMessage,
+  NetworkBallSnapshot,
+} from '../online/types';
 import { supabase } from '../lib/supabase';
 
 type BallKind = 'cue' | 'target';
@@ -124,12 +193,17 @@ const DEPTH = {
 
 const SHOT_CLOCK_SECONDS = 20;
 const ONLINE_SNAPSHOT_INTERVAL_MS = 200;
+const AIM_FINE_ROTATION_STEP = (0.35 * Math.PI) / 180;
+const AIM_FAST_ROTATION_STEP = (1.1 * Math.PI) / 180;
+const AIM_POWER_STEP = 5;
+const FOUL_FEEDBACK_MS = 1400;
 
 export class PoolScene extends Phaser.Scene {
   private cueBall!: PoolBall;
   private targetBalls: PoolBall[] = [];
   private aimLine!: Phaser.GameObjects.Graphics;
   private cueGraphics!: Phaser.GameObjects.Graphics;
+  private feedbackGraphics!: Phaser.GameObjects.Graphics;
   private forbiddenIcon!: Phaser.GameObjects.Graphics;
   private handSprite!: Phaser.GameObjects.Image;
   private cuePlacementValid = true;
@@ -147,7 +221,26 @@ export class PoolScene extends Phaser.Scene {
   private victoryOverlay?: HTMLElement;
   private victoryTitle?: HTMLElement;
   private victoryDetail?: HTMLElement;
+  private coinResult?: HTMLElement;
   private victoryRestartButton?: HTMLButtonElement;
+  private aimCancelButton?: HTMLButtonElement;
+  private dailyCheckInButton?: HTMLButtonElement;
+  private cueShopButton?: HTMLButtonElement;
+  private cueShopOverlay?: HTMLElement;
+  private cueShopCloseButton?: HTMLButtonElement;
+  private cueShopGrid?: HTMLElement;
+  private cueShopFeedback?: HTMLElement;
+  private wallet: PlayerWallet = DEFAULT_PLAYER_WALLET;
+  private walletRevision = 0;
+  private walletSaveQueue: Promise<void> = Promise.resolve();
+  private matchCoinSettled = false;
+  private lastCoinDelta = 0;
+  private lastCoinResultWon: boolean | null = null;
+  private playerStats: PlayerStats = createDefaultPlayerStats();
+  private dailyTasks: DailyTaskState = createDailyTaskState(this.localDateKey());
+  private growthSaveQueue: Promise<void> = Promise.resolve();
+  private localMatchTracker: LocalMatchTracker = createLocalMatchTracker();
+  private matchGrowthSettled = false;
   private spinPadButton?: HTMLButtonElement;
   private spinMarker?: HTMLElement;
   private spinPresetButtons: HTMLButtonElement[] = [];
@@ -164,6 +257,31 @@ export class PoolScene extends Phaser.Scene {
   };
   private victoryRestartHandler = (): void => {
     this.restartRack();
+  };
+  private aimCancelHandler = (): void => {
+    this.cancelAim();
+  };
+  private dailyCheckInHandler = (): void => {
+    this.claimDailyCheckIn();
+  };
+  private cueShopOpenHandler = (): void => {
+    this.showCueShop();
+  };
+  private cueShopCloseHandler = (): void => {
+    this.hideCueShop();
+  };
+  private cueShopActionHandler = (event: MouseEvent): void => {
+    const target = event.target as HTMLElement | null;
+    const button = target?.closest<HTMLButtonElement>('[data-cue-action]');
+    if (!button) return;
+    const cueId = button.dataset.cueId;
+    const action = button.dataset.cueAction;
+    if (!cueId) return;
+    if (action === 'buy') {
+      this.buyCueStyle(cueId);
+    } else if (action === 'equip') {
+      this.equipCueStyle(cueId);
+    }
   };
   private rematchRequestHandler = (): void => {
     this.sendRematchRequest();
@@ -185,6 +303,7 @@ export class PoolScene extends Phaser.Scene {
     this.updateHud();
   };
   private gameMode: 'pvp' | 'ai' | 'challenge' | 'online' = 'ai';
+  private aiDifficulty: AIDifficulty = 'normal';
   private aiController = new AIController();
   private aiThinking = false;
   private aiDecision: AIDecision | null = null;
@@ -198,11 +317,15 @@ export class PoolScene extends Phaser.Scene {
   private challengeBtnHandler = (): void => { this.showChallengeSelect(); };
   private ballPocketMap = new Map<number, number>();
   private pocketAnimatingBalls = new Set<number>();
+  private lastFoulFeedback: FoulFeedbackTarget | null = null;
+  private foulFeedbackUntil = 0;
   private netDeformGraphics!: Phaser.GameObjects.Graphics;
   private onlineChannel: GameChannel | null = null;
   private onlineState: OnlineState | null = null;
   private roomInfo: RoomInfo | null = null;
   private matchStartedAt: number | null = null;
+  private currentMatchId: string | null = null;
+  private supabaseClient = supabase;
   private leaveReporter: LeaveReporter | null = null;
   private pendingResult: ResultMessage | null = null;
   private pendingTurnEnd: TurnEndMessage | null = null;
@@ -210,6 +333,7 @@ export class PoolScene extends Phaser.Scene {
   private opponentResultApplied = false;
   private opponentTurnEndApplied = false;
   private lastSnapshotSentAt = 0;
+  private lastNetworkAuditStatus: string | null = null;
   private rematchPhase: 'idle' | 'awaiting_response' | 'prompted' | 'countdown' = 'idle';
   private rematchCountdownTimer: ReturnType<typeof setInterval> | null = null;
   private lastGameLoser: 0 | 1 | null = null;
@@ -242,7 +366,10 @@ export class PoolScene extends Phaser.Scene {
     if (registryMode) {
       this.gameMode = registryMode;
     }
+    this.aiDifficulty = normalizeAIDifficulty(this.game.registry.get('aiDifficulty'), 'normal');
+    this.aiController = new AIController({ difficulty: this.aiDifficulty });
     this.createTextures();
+    this.wallet = readPlayerWallet(this.storage());
     this.state = createGameState(BALLS.length, null);
     this.rules = createEightBallState();
     this.drawRoom();
@@ -252,14 +379,20 @@ export class PoolScene extends Phaser.Scene {
     this.createBalls();
     this.aimLine = this.add.graphics().setDepth(DEPTH.aim);
     this.cueGraphics = this.add.graphics().setDepth(DEPTH.aim + 1);
+    this.feedbackGraphics = this.add.graphics().setDepth(DEPTH.aim + 2);
     this.netDeformGraphics = this.add.graphics().setDepth(DEPTH.ball - 1);
     this.forbiddenIcon = this.createForbiddenIcon();
     this.bindInput();
     this.bindRestart();
     this.bindLanguage();
     this.bindSpinControl();
+    this.bindKeyboardAim();
+    this.bindAimAssistUI();
+    this.bindEconomyUI();
     this.bindChallengeUI();
     this.updateHud();
+    void this.loadPlayerWallet();
+    void this.loadGrowthData();
 
     this.bindVictoryOverlay();
     this.bindChatUI();
@@ -278,6 +411,8 @@ export class PoolScene extends Phaser.Scene {
       this.restartButton?.removeEventListener('click', this.restartHandler);
       this.languageButton?.removeEventListener('click', this.languageHandler);
       this.victoryRestartButton?.removeEventListener('click', this.victoryRestartHandler);
+      this.aimCancelButton?.removeEventListener('click', this.aimCancelHandler);
+      this.unbindEconomyUI();
       this.challengeBtn?.removeEventListener('click', this.challengeBtnHandler);
       document.querySelector<HTMLButtonElement>('#rematch-request')?.removeEventListener('click', this.rematchRequestHandler);
       document.querySelector<HTMLButtonElement>('#rematch-leave')?.removeEventListener('click', this.rematchLeaveHandler);
@@ -289,6 +424,7 @@ export class PoolScene extends Phaser.Scene {
         this.rematchCountdownTimer = null;
       }
       this.unbindSpinControl();
+      this.unbindKeyboardAim();
       this.unbindChatUI();
       this.cleanupOnlineMode();
     });
@@ -313,6 +449,7 @@ export class PoolScene extends Phaser.Scene {
     this.updateForbiddenIcon();
     this.updateHandSprite();
     this.renderAim();
+    this.renderFoulFeedback();
   }
 
   private createTextures(): void {
@@ -405,6 +542,10 @@ export class PoolScene extends Phaser.Scene {
   private bindInput(): void {
     this.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
       this.audio.unlock();
+      if (pointer.rightButtonDown()) {
+        this.cancelAim();
+        return;
+      }
       const point = { x: pointer.worldX, y: pointer.worldY };
       if (this.canPlaceBallInHandCueBall() && isOnTableSurface(point)) {
         this.cuePlacementState = { pointerId: pointer.id, kind: 'ball-in-hand' };
@@ -439,6 +580,7 @@ export class PoolScene extends Phaser.Scene {
         pointerId: pointer.id,
         current: point,
       };
+      this.updateAimHud();
     });
 
     this.input.on('pointermove', (pointer: Phaser.Input.Pointer) => {
@@ -463,6 +605,7 @@ export class PoolScene extends Phaser.Scene {
         x: prev.x + (raw.x - prev.x) * smoothing,
         y: prev.y + (raw.y - prev.y) * smoothing,
       };
+      this.updateAimHud();
     });
 
     this.input.on('pointerup', (pointer: Phaser.Input.Pointer) => {
@@ -491,9 +634,64 @@ export class PoolScene extends Phaser.Scene {
     });
   }
 
+  private bindKeyboardAim(): void {
+    window.addEventListener('keydown', this.keyboardAimHandler);
+  }
+
+  private unbindKeyboardAim(): void {
+    window.removeEventListener('keydown', this.keyboardAimHandler);
+  }
+
+  private readonly keyboardAimHandler = (event: KeyboardEvent): void => {
+    if (!this.aimState) {
+      return;
+    }
+
+    const target = event.target as HTMLElement | null;
+    const tagName = target?.tagName;
+    if (tagName === 'INPUT' || tagName === 'TEXTAREA' || tagName === 'SELECT') {
+      return;
+    }
+
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      this.cancelAim();
+      return;
+    }
+
+    const cue = this.cuePosition();
+    const rotationStep = event.shiftKey ? AIM_FAST_ROTATION_STEP : AIM_FINE_ROTATION_STEP;
+    const powerStep = event.shiftKey ? AIM_POWER_STEP * 3 : AIM_POWER_STEP;
+    let next: Vector | null = null;
+
+    if (event.key === 'ArrowLeft') {
+      next = rotateAimPoint(cue, this.aimState.current, -rotationStep);
+    } else if (event.key === 'ArrowRight') {
+      next = rotateAimPoint(cue, this.aimState.current, rotationStep);
+    } else if (event.key === 'ArrowUp') {
+      next = adjustAimPower(cue, this.aimState.current, powerStep);
+    } else if (event.key === 'ArrowDown') {
+      next = adjustAimPower(cue, this.aimState.current, -powerStep);
+    }
+
+    if (!next) {
+      return;
+    }
+
+    event.preventDefault();
+    this.aimState = { ...this.aimState, current: next };
+    this.updateAimHud();
+  };
+
   private bindRestart(): void {
     this.restartButton = document.querySelector<HTMLButtonElement>('#restart') ?? undefined;
     this.restartButton?.addEventListener('click', this.restartHandler);
+  }
+
+  private bindAimAssistUI(): void {
+    this.aimCancelButton = document.querySelector<HTMLButtonElement>('#aim-cancel') ?? undefined;
+    this.aimCancelButton?.addEventListener('click', this.aimCancelHandler);
+    this.updateAimHud();
   }
 
   private bindLanguage(): void {
@@ -580,6 +778,8 @@ export class PoolScene extends Phaser.Scene {
     this.gameMode = 'challenge';
     this.currentLevel = level;
     this.challengeState = createChallengeState(level);
+    this.localMatchTracker = createLocalMatchTracker();
+    this.matchGrowthSettled = false;
 
     this.aiThinking = false;
     this.aiDecision = null;
@@ -587,6 +787,9 @@ export class PoolScene extends Phaser.Scene {
     this.cuePlacementState = null;
     this.aimLine?.clear();
     this.cueGraphics?.clear();
+    this.feedbackGraphics?.clear();
+    this.lastFoulFeedback = null;
+    this.foulFeedbackUntil = 0;
     this.strikeLocked = false;
     this.setSelectedSpin(SPIN_PRESETS.center);
     this.forbiddenIcon?.setVisible(false);
@@ -666,6 +869,7 @@ export class PoolScene extends Phaser.Scene {
       progress.levels[key] = { stars: bestStars, bestShots };
       this.cachedProgress = progress;
       void writeProgressSupabase(supabase, progress);
+      this.completeDailyGrowthTask('pass_challenge');
     }
 
     const titleEl = document.querySelector('#challenge-result-title');
@@ -723,6 +927,7 @@ export class PoolScene extends Phaser.Scene {
     this.victoryOverlay = document.querySelector<HTMLElement>('#victory-overlay') ?? undefined;
     this.victoryTitle = document.querySelector<HTMLElement>('#victory-title') ?? undefined;
     this.victoryDetail = document.querySelector<HTMLElement>('#victory-detail') ?? undefined;
+    this.coinResult = document.querySelector<HTMLElement>('#coin-result') ?? undefined;
     this.victoryRestartButton = document.querySelector<HTMLButtonElement>('#victory-restart') ?? undefined;
     this.victoryRestartButton?.addEventListener('click', this.victoryRestartHandler);
 
@@ -733,21 +938,406 @@ export class PoolScene extends Phaser.Scene {
     document.querySelector<HTMLButtonElement>('#rematch-decline')?.addEventListener('click', this.rematchDeclineHandler);
   }
 
+  private bindEconomyUI(): void {
+    this.dailyCheckInButton = document.querySelector<HTMLButtonElement>('#daily-checkin') ?? undefined;
+    this.cueShopButton = document.querySelector<HTMLButtonElement>('#cue-shop-open') ?? undefined;
+    this.cueShopOverlay = document.querySelector<HTMLElement>('#cue-shop') ?? undefined;
+    this.cueShopCloseButton = document.querySelector<HTMLButtonElement>('#cue-shop-close') ?? undefined;
+    this.cueShopGrid = document.querySelector<HTMLElement>('#cue-shop-grid') ?? undefined;
+    this.cueShopFeedback = document.querySelector<HTMLElement>('#cue-shop-feedback') ?? undefined;
+
+    this.dailyCheckInButton?.addEventListener('click', this.dailyCheckInHandler);
+    this.cueShopButton?.addEventListener('click', this.cueShopOpenHandler);
+    this.cueShopCloseButton?.addEventListener('click', this.cueShopCloseHandler);
+    this.cueShopGrid?.addEventListener('click', this.cueShopActionHandler);
+    this.renderEconomyHud();
+    this.renderCueShop();
+  }
+
+  private unbindEconomyUI(): void {
+    this.dailyCheckInButton?.removeEventListener('click', this.dailyCheckInHandler);
+    this.cueShopButton?.removeEventListener('click', this.cueShopOpenHandler);
+    this.cueShopCloseButton?.removeEventListener('click', this.cueShopCloseHandler);
+    this.cueShopGrid?.removeEventListener('click', this.cueShopActionHandler);
+  }
+
+  private async loadPlayerWallet(): Promise<void> {
+    const loadRevision = this.walletRevision;
+    const wallet = await readPlayerWalletSupabase(supabase, this.storage());
+    if (loadRevision !== this.walletRevision) {
+      return;
+    }
+    this.wallet = wallet;
+    this.renderEconomyHud();
+    this.renderCueShop();
+  }
+
+  private async loadGrowthData(): Promise<void> {
+    const dateKey = this.localDateKey();
+    const storage = this.storage();
+    const [stats, tasks] = await Promise.all([
+      readPlayerStatsSupabase(supabase, storage),
+      readDailyTaskStateSupabase(supabase, dateKey, storage),
+    ]);
+    this.playerStats = stats;
+    this.dailyTasks = tasks;
+    this.renderGrowthHud();
+  }
+
+  private savePlayerWallet(wallet: PlayerWallet): PlayerWallet {
+    this.walletRevision += 1;
+    this.wallet = writePlayerWallet(this.storage(), wallet);
+    const walletToSave = this.wallet;
+    const storage = this.storage();
+    this.walletSaveQueue = this.walletSaveQueue
+      .catch(() => undefined)
+      .then(async () => {
+        await writePlayerWalletSupabase(supabase, walletToSave, storage);
+      })
+      .catch(() => undefined);
+    return this.wallet;
+  }
+
+  private saveGrowthData(): void {
+    const stats = this.playerStats;
+    const tasks = this.dailyTasks;
+    const storage = this.storage();
+    this.growthSaveQueue = this.growthSaveQueue
+      .catch(() => undefined)
+      .then(async () => {
+        await Promise.all([
+          writePlayerStatsSupabase(supabase, stats, storage),
+          writeDailyTaskStateSupabase(supabase, tasks, storage),
+        ]);
+      })
+      .catch(() => undefined);
+    this.renderGrowthHud();
+  }
+
   private showVictoryScreen(): void {
     if (!this.victoryOverlay || !this.victoryTitle || !this.victoryDetail) return;
     const copy = getCopy(this.language);
     const isZh = this.language === 'zh';
     const winner = this.rules.winner !== null ? this.rules.winner + 1 : 1;
+    const localWon = this.localPlayerWonCurrentMatch();
+    this.settleMatchCoins(localWon);
+    this.settleGrowthForMatch(localWon);
 
     this.victoryOverlay.hidden = false;
     this.victoryTitle.textContent = isZh ? `玩家 ${winner} 获胜！` : `Player ${winner} Wins!`;
     this.victoryDetail.textContent = isZh
       ? `恭喜玩家 ${winner}，你赢得了这场比赛。`
       : `Congratulations Player ${winner}, you won the match.`;
+    if (this.coinResult) {
+      this.coinResult.textContent = this.formatCoinResultText();
+    }
   }
 
   private hideVictoryScreen(): void {
     if (this.victoryOverlay) this.victoryOverlay.hidden = true;
+  }
+
+  private claimDailyCheckIn(): void {
+    const result = applyDailyCheckIn(this.wallet, this.localDateKey());
+    this.savePlayerWallet(result.wallet);
+    if (result.claimed) {
+      this.completeDailyGrowthTask('daily_check_in');
+    }
+    this.renderEconomyHud();
+    this.renderCueShop(result.claimed ? `签到成功，获得 ${DAILY_CHECK_IN_REWARD} 金币。` : '今天已经签到过了。');
+  }
+
+  private showCueShop(): void {
+    this.renderCueShop();
+    if (this.cueShopOverlay) {
+      this.cueShopOverlay.hidden = false;
+    }
+  }
+
+  private hideCueShop(): void {
+    if (this.cueShopOverlay) {
+      this.cueShopOverlay.hidden = true;
+    }
+  }
+
+  private buyCueStyle(cueId: string): void {
+    const result = buyCue(this.wallet, cueId);
+    this.savePlayerWallet(result.wallet);
+    if (result.purchased) {
+      const equipped = equipCue(this.wallet, cueId);
+      this.savePlayerWallet(equipped.wallet);
+      this.renderEconomyHud();
+      this.renderCueShop('已解锁并装备新球杆。');
+      return;
+    }
+    this.renderEconomyHud();
+    this.renderCueShop(result.reason === 'not-enough-coins' ? '金币不足，赢几局再来。' : '这支球杆已经在你的收藏里。');
+  }
+
+  private equipCueStyle(cueId: string): void {
+    const result = equipCue(this.wallet, cueId);
+    this.savePlayerWallet(result.wallet);
+    this.renderEconomyHud();
+    this.renderCueShop(result.equipped ? '已装备。' : '这支球杆还没有解锁。');
+  }
+
+  private currentCueStyle(): CueStyle {
+    return getCueStyle(this.wallet.equippedCueId);
+  }
+
+  private settleMatchCoins(won: boolean): void {
+    if (this.matchCoinSettled) {
+      return;
+    }
+    const before = this.wallet.coins;
+    this.savePlayerWallet(applyMatchCoinResult(this.wallet, won));
+    this.matchCoinSettled = true;
+    this.lastCoinDelta = this.wallet.coins - before;
+    this.lastCoinResultWon = won;
+    this.renderEconomyHud();
+    this.renderCueShop();
+  }
+
+  private completeDailyGrowthTask(taskId: DailyTaskId): void {
+    const result = completeDailyTask(this.dailyTasks, taskId);
+    if (!result.completedNow) {
+      return;
+    }
+    this.dailyTasks = result.state;
+    if (result.coinReward > 0) {
+      this.savePlayerWallet({
+        ...this.wallet,
+        coins: this.wallet.coins + result.coinReward,
+      });
+    }
+    this.saveGrowthData();
+  }
+
+  private settleGrowthForMatch(won: boolean, reason: 'normal' | 'disconnect' | 'surrender' = 'normal'): void {
+    if (this.matchGrowthSettled) {
+      return;
+    }
+    this.matchGrowthSettled = true;
+    const mode = this.growthMatchMode();
+    const myIndex = this.localGrowthPlayerIndex();
+    const strokes = this.localMatchTracker.playerStrokes[myIndex] || this.state.strokes;
+    const clearedTable = won && reason === 'normal';
+
+    this.playerStats = applyMatchToStats(this.playerStats, {
+      matchId: this.growthMatchId(),
+      playedAt: new Date().toISOString(),
+      mode,
+      opponentName: this.growthOpponentName(),
+      won,
+      strokes,
+      clearedTable,
+    });
+    this.completeDailyGrowthTask('play_match');
+    if (won) {
+      this.completeDailyGrowthTask('win_match');
+    }
+    this.saveGrowthData();
+  }
+
+  private growthMatchMode(): MatchMode {
+    if (this.gameMode === 'online') return 'online';
+    if (this.gameMode === 'ai') return 'ai';
+    if (this.gameMode === 'challenge') return 'challenge';
+    return 'pvp';
+  }
+
+  private localGrowthPlayerIndex(): 0 | 1 {
+    if (this.gameMode === 'online' && this.roomInfo) {
+      return this.roomInfo.isHost ? 0 : 1;
+    }
+    return 0;
+  }
+
+  private growthOpponentName(): string {
+    if (this.gameMode === 'online' && this.roomInfo) {
+      return this.roomInfo.opponentNickname;
+    }
+    if (this.gameMode === 'ai') {
+      return `AI ${getCopy(this.language).ai.difficulty[this.aiDifficulty]}`;
+    }
+    return 'Player 2';
+  }
+
+  private growthMatchId(): string {
+    if (this.gameMode === 'online' && this.roomInfo) {
+      return this.roomInfo.roomId;
+    }
+    return `${this.gameMode}-${Date.now()}`;
+  }
+
+  private renderGrowthHud(): void {
+    if (typeof document === 'undefined' || typeof document.querySelector !== 'function') {
+      return;
+    }
+    const summary = summarizeStats(this.playerStats);
+    const rank = getRankProgress(this.playerStats.rankPoints);
+    const taskSummary = summarizeDailyTasks(this.dailyTasks);
+    const challengeSummary = summarizeChallengeStars(this.cachedProgress ?? readProgress(this.storage()), CHALLENGE_LEVELS);
+
+    const rankEl = document.querySelector<HTMLElement>('#growth-rank');
+    const progressEl = document.querySelector<HTMLElement>('#growth-rank-progress');
+    const statsEl = document.querySelector<HTMLElement>('#growth-stats');
+    const tasksEl = document.querySelector<HTMLElement>('#growth-tasks');
+    const challengeEl = document.querySelector<HTMLElement>('#growth-challenges');
+
+    if (rankEl) {
+      rankEl.textContent = `${rank.rankName} · ${rank.points} 分`;
+    }
+    if (progressEl) {
+      progressEl.textContent = rank.pointsToNext > 0
+        ? `下一段还差 ${rank.pointsToNext} 分`
+        : '已到达当前最高段位';
+      progressEl.style.setProperty('--growth-rank-progress', `${rank.progressPercent}%`);
+    }
+    if (statsEl) {
+      statsEl.textContent = `${summary.totalGames} 局 · ${summary.wins}胜${summary.losses}负 · 胜率 ${summary.winRate}%`;
+    }
+    if (tasksEl) {
+      tasksEl.textContent = `每日任务 ${taskSummary.completed}/${taskSummary.total}`;
+    }
+    if (challengeEl) {
+      challengeEl.textContent = `挑战 ${challengeSummary.earnedStars}/${challengeSummary.totalStars} 星 · ${challengeSummary.completedLevels}/${challengeSummary.totalLevels} 关`;
+    }
+  }
+
+  private localPlayerWonCurrentMatch(): boolean {
+    if (this.gameMode === 'online' && this.roomInfo) {
+      const myIndex: 0 | 1 = this.roomInfo.isHost ? 0 : 1;
+      return this.rules.winner === myIndex;
+    }
+    return this.rules.winner === 0;
+  }
+
+  private formatCoinResultText(): string {
+    if (this.lastCoinResultWon === null) {
+      return '';
+    }
+    const signed = this.lastCoinDelta >= 0 ? `+${this.lastCoinDelta}` : String(this.lastCoinDelta);
+    const reason = this.lastCoinResultWon ? `胜利奖励 ${MATCH_WIN_REWARD}` : `失败扣除 ${MATCH_LOSS_PENALTY}`;
+    return `${reason} 金币，本局结算 ${signed}，当前金币 ${this.wallet.coins}。`;
+  }
+
+  private renderEconomyHud(): void {
+    const coinBalance = document.querySelector<HTMLElement>('#coin-balance');
+    const cueName = this.currentCueStyle().name;
+    if (coinBalance) {
+      coinBalance.textContent = `金币 ${this.wallet.coins}`;
+    }
+    if (this.cueShopButton) {
+      this.cueShopButton.textContent = `球杆：${cueName}`;
+    }
+    if (this.dailyCheckInButton) {
+      const checkedIn = this.wallet.lastCheckInDate === this.localDateKey();
+      this.dailyCheckInButton.textContent = checkedIn ? '今日已签到' : `每日签到 +${DAILY_CHECK_IN_REWARD}`;
+      this.dailyCheckInButton.disabled = checkedIn;
+    }
+  }
+
+  private renderCueShop(feedback = ''): void {
+    const balance = document.querySelector<HTMLElement>('#cue-shop-balance');
+    if (balance) {
+      balance.textContent = `金币 ${this.wallet.coins}`;
+    }
+    if (this.cueShopFeedback) {
+      this.cueShopFeedback.textContent = feedback;
+    }
+    if (!this.cueShopGrid) {
+      return;
+    }
+
+    this.cueShopGrid.replaceChildren(...CUE_CATALOG.map((cue) => this.createCueCard(cue)));
+  }
+
+  private createCueCard(cue: CueStyle): HTMLElement {
+    const owned = this.wallet.unlockedCueIds.includes(cue.id);
+    const equipped = this.wallet.equippedCueId === cue.id;
+    const card = document.createElement('article');
+    card.className = `cue-card cue-rarity-${cue.rarity}${equipped ? ' is-equipped' : ''}`;
+    card.style.setProperty('--cue-shaft', this.cssColor(cue.shaftColor));
+    card.style.setProperty('--cue-forearm', this.cssColor(cue.forearmColor));
+    card.style.setProperty('--cue-wrap', this.cssColor(cue.wrapColor));
+    card.style.setProperty('--cue-accent', this.cssColor(cue.accentColor));
+    card.style.setProperty('--cue-gem', this.cssColor(cue.gemColor));
+
+    const preview = document.createElement('div');
+    preview.className = 'cue-preview';
+    preview.setAttribute('aria-hidden', 'true');
+    preview.append(
+      this.createCueSegment('cue-preview-butt'),
+      this.createCueSegment('cue-preview-wrap'),
+      this.createCueSegment('cue-preview-forearm'),
+      this.createCueSegment('cue-preview-shaft'),
+      this.createCueSegment('cue-preview-tip'),
+    );
+
+    const name = document.createElement('h3');
+    name.textContent = cue.name;
+
+    const meta = document.createElement('p');
+    meta.className = 'cue-meta';
+    meta.textContent = `${this.rarityLabel(cue.rarity)} · ${cue.price === 0 ? '默认拥有' : `${cue.price} 金币`}`;
+
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.dataset.cueId = cue.id;
+    if (equipped) {
+      button.textContent = '已装备';
+      button.disabled = true;
+    } else if (owned) {
+      button.textContent = '装备';
+      button.dataset.cueAction = 'equip';
+    } else {
+      button.textContent = this.wallet.coins >= cue.price ? '解锁' : '金币不足';
+      button.dataset.cueAction = 'buy';
+      button.disabled = this.wallet.coins < cue.price;
+    }
+
+    card.append(preview, name, meta, button);
+    return card;
+  }
+
+  private createCueSegment(className: string): HTMLSpanElement {
+    const segment = document.createElement('span');
+    segment.className = className;
+    return segment;
+  }
+
+  private cssColor(color: number): string {
+    return `#${color.toString(16).padStart(6, '0')}`;
+  }
+
+  private rarityLabel(rarity: CueStyle['rarity']): string {
+    if (rarity === 'legendary') return '传说';
+    if (rarity === 'epic') return '史诗';
+    if (rarity === 'rare') return '稀有';
+    return '基础';
+  }
+
+  private localDateKey(): string {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  }
+
+  private storage(): StorageAdapter {
+    try {
+      if (typeof window !== 'undefined' && window.localStorage) {
+        return window.localStorage;
+      }
+    } catch {
+      // Browsers can expose localStorage but reject access in strict privacy modes.
+    }
+    return {
+      getItem: () => null,
+      setItem: () => undefined,
+    };
   }
 
   private bindSpinControl(): void {
@@ -919,61 +1509,77 @@ export class PoolScene extends Phaser.Scene {
     return { x: this.cueBall.x, y: this.cueBall.y };
   }
 
+  private currentAimIntent(): AimIntent | null {
+    if (!this.aimState) {
+      return null;
+    }
+    return computeAimIntent(this.cuePosition(), this.aimState.current);
+  }
+
+  private cancelAim(): void {
+    if (!this.aimState) {
+      return;
+    }
+    this.aimState = null;
+    this.aimLine.clear();
+    this.cueGraphics.clear();
+    this.updateAimHud();
+  }
+
   private shootFromAim(): void {
     if (!this.aimState) {
       return;
     }
 
     const cue = this.cuePosition();
-    const pull = {
-      x: this.aimState.current.x - cue.x,
-      y: this.aimState.current.y - cue.y,
-    };
-    const dragDistance = Math.hypot(pull.x, pull.y);
-    const power = clampShotPower(dragDistance);
+    const aimIntent = computeAimIntent(cue, this.aimState.current);
     this.aimState = null;
     this.aimLine.clear();
+    this.updateAimHud();
 
-    if (power < TABLE.minShotPower || dragDistance === 0) {
+    if (!aimIntent.canShoot || !aimIntent.direction) {
       return;
     }
 
     this.alignRulesCurrentPlayerWithOnlineShooter('me');
 
-    const cueAngle = Math.atan2(-pull.y / dragDistance, -pull.x / dragDistance);
+    const cueAngle = Math.atan2(aimIntent.direction.y, aimIntent.direction.x);
     this.strikeLocked = true;
     if (this.gameMode === 'challenge' && this.challengeState) {
       this.challengeState = recordChallengeShot(this.challengeState);
       this.updateChallengeHud();
     }
     this.tweens.addCounter({
-      from: getCuePullback(power),
+      from: getCuePullback(aimIntent.power),
       to: 12,
       duration: CUE.strikeDurationMs,
       ease: 'Cubic.easeIn',
       onUpdate: (tween) => {
-        drawCueStick(this.cueGraphics, cue.x, cue.y, cueAngle, tween.getValue() ?? 12);
+        drawCueStick(this.cueGraphics, cue.x, cue.y, cueAngle, tween.getValue() ?? 12, this.currentCueStyle());
       },
       onComplete: () => {
         this.cueGraphics.clear();
-        this.applyCueImpulse(pull, dragDistance, power);
+        this.applyCueImpulse(aimIntent);
         this.strikeLocked = false;
         if (this.gameMode === 'online') {
-          const dir = { x: -pull.x / dragDistance, y: -pull.y / dragDistance };
-          this.sendOnlineShot(dir, power, this.selectedSpin, cue);
+          this.sendOnlineShot(aimIntent.direction!, aimIntent.power, this.selectedSpin, cue);
         }
       },
     });
+    this.localMatchTracker = recordPlayerStroke(this.localMatchTracker, this.rules.currentPlayer);
     this.state = recordStroke(this.state);
     this.rules = startEightBallShot(this.rules);
     this.shotClockRemaining = SHOT_CLOCK_SECONDS;
     this.updateHud();
   }
 
-  private applyCueImpulse(pull: Vector, dragDistance: number, power: number): void {
+  private applyCueImpulse(aimIntent: AimIntent): void {
+    if (!aimIntent.direction) {
+      return;
+    }
     this.physicsEngine.strikeCueBall({
-      direction: { x: -pull.x / dragDistance, y: -pull.y / dragDistance },
-      power,
+      direction: aimIntent.direction,
+      power: aimIntent.power,
       contactOffset: this.selectedSpin,
     });
     this.wasMoving = true;
@@ -987,21 +1593,19 @@ export class PoolScene extends Phaser.Scene {
     }
 
     const cue = this.cuePosition();
-    const pull = {
-      x: this.aimState.current.x - cue.x,
-      y: this.aimState.current.y - cue.y,
-    };
-    const dragDistance = Math.hypot(pull.x, pull.y);
-    const power = clampShotPower(dragDistance);
+    const aimIntent = computeAimIntent(cue, this.aimState.current);
+    const { dragDistance, power, direction } = aimIntent;
+    this.updateAimHud(aimIntent);
 
     if (dragDistance < 1) {
       return;
     }
 
-    const direction = {
-      x: -pull.x / dragDistance,
-      y: -pull.y / dragDistance,
-    };
+    if (!direction) {
+      this.drawAimPowerRail(power);
+      return;
+    }
+
     const cueAngle = Math.atan2(direction.y, direction.x);
     const cueBack = getCuePullback(power);
 
@@ -1023,10 +1627,23 @@ export class PoolScene extends Phaser.Scene {
       }
     }
 
-    this.aimLine.fillStyle(0xd9a441, 0.95);
-    this.aimLine.fillRoundedRect(PLAY_AREA.left, PLAY_AREA.bottom + 24, power * 220, 10, 5);
+    this.drawAimPowerRail(power);
     this.drawSpinAimFeedback(cue);
-    drawCueStick(this.cueGraphics, cue.x, cue.y, cueAngle, cueBack);
+    drawCueStick(this.cueGraphics, cue.x, cue.y, cueAngle, cueBack, this.currentCueStyle());
+  }
+
+  private drawAimPowerRail(power: number): void {
+    const width = 220;
+    this.aimLine.fillStyle(0x10100e, 0.22);
+    this.aimLine.fillRoundedRect(PLAY_AREA.left, PLAY_AREA.bottom + 24, width, 10, 5);
+    this.aimLine.fillStyle(this.powerColor(power), 0.95);
+    this.aimLine.fillRoundedRect(PLAY_AREA.left, PLAY_AREA.bottom + 24, power * width, 10, 5);
+  }
+
+  private powerColor(power: number): number {
+    if (power >= 0.72) return 0xd64b3c;
+    if (power >= 0.42) return 0xd9a441;
+    return 0x27b38a;
   }
 
   private drawPredictedCollisionRoutes(
@@ -1395,7 +2012,11 @@ export class PoolScene extends Phaser.Scene {
       this.syncBallsFromPhysics(this.physicsEngine.getBalls());
     }
     const playerBeforeResolve = this.rules.currentPlayer;
+    const foulBeforeResolve = this.rules.shot;
     this.rules = resolveEightBallShot(this.rules);
+    if (this.rules.lastFoul) {
+      this.showFoulFeedback(this.rules.lastFoul, foulBeforeResolve.firstContactBallId);
+    }
 
     if (this.rules.gameOver && this.rules.messageKey === 'eightBallLoss') {
       this.shotClockRemaining = 0;
@@ -1411,6 +2032,47 @@ export class PoolScene extends Phaser.Scene {
     if (!this.rules.gameOver && this.isAITurn() && !this.aiThinking) {
       this.scheduleAITurn();
     }
+  }
+
+  private showFoulFeedback(reason: EightBallFoulReason, firstContactBallId: number | null): void {
+    this.lastFoulFeedback = resolveFoulFeedbackTarget(
+      reason,
+      this.cuePosition(),
+      firstContactBallId,
+      this.getTableBallPositions(),
+    );
+    this.foulFeedbackUntil = this.time.now + FOUL_FEEDBACK_MS;
+    this.renderFoulFeedback();
+  }
+
+  private renderFoulFeedback(): void {
+    if (!this.feedbackGraphics) return;
+    this.feedbackGraphics.clear();
+    if (!this.lastFoulFeedback || this.time.now > this.foulFeedbackUntil) {
+      this.lastFoulFeedback = null;
+      return;
+    }
+
+    const progress = Math.max(0, Math.min(1, (this.foulFeedbackUntil - this.time.now) / FOUL_FEEDBACK_MS));
+    const alpha = 0.25 + progress * 0.45;
+    if (this.lastFoulFeedback.kind === 'ball' || this.lastFoulFeedback.kind === 'cue') {
+      const point = this.lastFoulFeedback.position;
+      const radius = BALL_RADIUS + 10 + (1 - progress) * 10;
+      this.feedbackGraphics.lineStyle(4, 0xd64b3c, alpha);
+      this.feedbackGraphics.strokeCircle(point.x, point.y, radius);
+      this.feedbackGraphics.fillStyle(0xd64b3c, alpha * 0.18);
+      this.feedbackGraphics.fillCircle(point.x, point.y, radius);
+      return;
+    }
+
+    this.feedbackGraphics.lineStyle(4, 0xd64b3c, alpha * 0.8);
+    this.feedbackGraphics.strokeRoundedRect(
+      PLAY_AREA.left,
+      PLAY_AREA.top,
+      PLAY_AREA.right - PLAY_AREA.left,
+      PLAY_AREA.bottom - PLAY_AREA.top,
+      10,
+    );
   }
 
   private updateShotClock(deltaSeconds: number): void {
@@ -1497,7 +2159,7 @@ export class PoolScene extends Phaser.Scene {
       duration: CUE.strikeDurationMs,
       ease: 'Cubic.easeIn',
       onUpdate: (tween) => {
-        drawCueStick(this.cueGraphics, cue.x, cue.y, cueAngle, tween.getValue() ?? 12);
+        drawCueStick(this.cueGraphics, cue.x, cue.y, cueAngle, tween.getValue() ?? 12, this.currentCueStyle());
       },
       onComplete: () => {
         this.cueGraphics.clear();
@@ -1514,6 +2176,7 @@ export class PoolScene extends Phaser.Scene {
       },
     });
 
+    this.localMatchTracker = recordPlayerStroke(this.localMatchTracker, this.rules.currentPlayer);
     this.state = recordStroke(this.state);
     this.rules = startEightBallShot(this.rules);
     this.shotClockRemaining = SHOT_CLOCK_SECONDS;
@@ -1540,7 +2203,7 @@ export class PoolScene extends Phaser.Scene {
     }
 
     const cueAngle = Math.atan2(shot.direction.y, shot.direction.x);
-    drawCueStick(this.cueGraphics, cue.x, cue.y, cueAngle, getCuePullback(shot.power));
+    drawCueStick(this.cueGraphics, cue.x, cue.y, cueAngle, getCuePullback(shot.power), this.currentCueStyle());
   }
 
   private getTableBallPositions(): Map<number, Vector> {
@@ -1574,13 +2237,19 @@ export class PoolScene extends Phaser.Scene {
     this.createBalls();
     this.state = restartGame(BALLS.length, null);
     this.rules = createEightBallState();
+    this.localMatchTracker = createLocalMatchTracker();
     this.shotClockRemaining = SHOT_CLOCK_SECONDS;
     this.wasMoving = false;
+    this.matchCoinSettled = false;
+    this.matchGrowthSettled = false;
+    this.lastCoinDelta = 0;
+    this.lastCoinResultWon = null;
     this.opponentShotResolved = false;
     this.opponentResultApplied = false;
     this.opponentTurnEndApplied = false;
     this.hideVictoryScreen();
     this.updateHud();
+    this.updateAimHud();
   }
 
   private updateHud(): void {
@@ -1647,10 +2316,13 @@ export class PoolScene extends Phaser.Scene {
     if (aimState) aimState.textContent = copy.aimOn;
     if (spinLabel) spinLabel.textContent = copy.spin.label;
     if (message) message.textContent = messageText;
+    this.renderEconomyHud();
+    this.updateAimHud();
 
     if (this.gameMode === 'ai') {
-      if (playerTwoName) playerTwoName.textContent = copy.ai.playerName;
-      if (mode) mode.textContent = copy.hud.modeAi;
+      const difficultyLabel = copy.ai.difficulty[this.aiDifficulty];
+      if (playerTwoName) playerTwoName.textContent = copy.ai.playerNameWithDifficulty(difficultyLabel);
+      if (mode) mode.textContent = `${copy.hud.modeAi} · ${difficultyLabel}`;
     }
     if (this.gameMode === 'online' && this.roomInfo) {
       const hostName = this.roomInfo.isHost ? this.roomInfo.myNickname : this.roomInfo.opponentNickname;
@@ -1659,7 +2331,10 @@ export class PoolScene extends Phaser.Scene {
       if (playerTwoName) playerTwoName.textContent = guestName;
     }
     if (this.aiThinking && message) {
-      message.textContent = this.aiDecision ? copy.ai.aiming : copy.ai.thinking;
+      const difficultyLabel = copy.ai.difficulty[this.aiDifficulty];
+      message.textContent = this.aiDecision
+        ? copy.ai.aimingWithDifficulty(difficultyLabel)
+        : copy.ai.thinkingWithDifficulty(difficultyLabel);
     }
 
     this.updateSpinControl();
@@ -1667,9 +2342,46 @@ export class PoolScene extends Phaser.Scene {
     this.renderDomBallList('#player-one-targets', getPlayerTargetDisplayBallIds(this.rules, 0), copy.hud.openTargets);
     this.renderDomBallList('#player-two-targets', getPlayerTargetDisplayBallIds(this.rules, 1), copy.hud.openTargets);
     this.updateShotClockHud();
-    if (this.rules.gameOver) {
+    this.updateOnlineNetworkHud();
+    if (this.rules.gameOver && this.gameMode !== 'online') {
       this.showVictoryScreen();
     }
+  }
+
+  private updateOnlineNetworkHud(): void {
+    const networkStatus = document.querySelector<HTMLElement>('#network-status');
+    if (!networkStatus) {
+      return;
+    }
+    if (this.gameMode !== 'online' || !this.onlineState) {
+      networkStatus.hidden = true;
+      networkStatus.textContent = '';
+      delete networkStatus.dataset.status;
+      return;
+    }
+
+    const health = getNetworkHealth(this.onlineState, Date.now());
+    networkStatus.hidden = false;
+    networkStatus.dataset.status = health.status;
+    networkStatus.textContent = this.formatNetworkStatusText(health.status, health.remainingProtectionSeconds);
+  }
+
+  private formatNetworkStatusText(status: string, remainingProtectionSeconds: number | null): string {
+    const isZh = this.language === 'zh';
+    if (status === 'connecting') {
+      return isZh ? '连接中...' : 'Connecting...';
+    }
+    if (status === 'high_latency') {
+      return isZh ? '延迟偏高' : 'High latency';
+    }
+    if (status === 'opponent_protected') {
+      const remaining = remainingProtectionSeconds ?? 0;
+      return isZh ? `对手疑似掉线，保护倒计时 ${remaining}s` : `Opponent reconnecting, protection ${remaining}s`;
+    }
+    if (status === 'disconnected') {
+      return isZh ? '连接中断' : 'Disconnected';
+    }
+    return isZh ? '连接稳定' : 'Connection stable';
   }
 
   private updateShotClockHud(): void {
@@ -1758,6 +2470,40 @@ export class PoolScene extends Phaser.Scene {
     });
   }
 
+  private updateAimHud(intent: AimIntent | null = this.currentAimIntent()): void {
+    const panel = document.querySelector<HTMLElement>('#aim-assist-panel');
+    const powerValue = document.querySelector<HTMLElement>('#aim-power-value');
+    const powerFill = document.querySelector<HTMLElement>('#aim-power-fill');
+    const shotState = document.querySelector<HTMLElement>('#aim-shot-state');
+    const cancelButton = this.aimCancelButton;
+
+    const active = !!intent;
+    panel?.classList.toggle('is-aiming', active);
+    if (cancelButton) {
+      cancelButton.hidden = !active;
+    }
+
+    const percent = intent ? Math.round(intent.power * 100) : 0;
+    if (powerValue) {
+      powerValue.textContent = `${percent}%`;
+    }
+    if (powerFill) {
+      powerFill.style.setProperty('--aim-power', `${percent}%`);
+      powerFill.classList.toggle('is-soft', percent < 42);
+      powerFill.classList.toggle('is-medium', percent >= 42 && percent < 72);
+      powerFill.classList.toggle('is-hard', percent >= 72);
+    }
+    if (shotState) {
+      if (!intent) {
+        shotState.textContent = this.language === 'zh' ? '拖动球桌开始瞄准' : 'Drag on the table to aim';
+      } else if (intent.canShoot) {
+        shotState.textContent = this.language === 'zh' ? '松开击球 · Esc 取消 · 方向键微调' : 'Release to shoot · Esc cancels · Arrows fine-tune';
+      } else {
+        shotState.textContent = this.language === 'zh' ? '力度过轻，松开会取消' : 'Too soft: release cancels';
+      }
+    }
+  }
+
   private selectedSpinPreset(): CueSpinPreset | null {
     const presets = Object.keys(SPIN_PRESETS) as CueSpinPreset[];
     return presets.find((preset) => contactOffsetMatchesPreset(this.selectedSpin, preset)) ?? null;
@@ -1823,10 +2569,11 @@ export class PoolScene extends Phaser.Scene {
     this.onlineChannel = new GameChannel();
     this.onlineChannel.join({
       roomId: this.roomInfo.roomId,
-      userId: this.roomInfo.isHost ? 'host' : 'guest',
+      userId: this.roomInfo.myUserId,
       callbacks: {
         onMessage: (msg) => this.handleOnlineMessage(msg),
         onPresence: (event) => this.handleOnlinePresence(event),
+        onStatus: (status) => this.handleOnlineStatus(status),
       },
     });
     this.leaveReporter = createLeaveReporter({
@@ -1846,13 +2593,31 @@ export class PoolScene extends Phaser.Scene {
       }
       this.shotClockRemaining = 30;
       this.updateHud();
+      return;
     }
+    if (event === 'leave' && this.onlineState.phase !== 'game_over') {
+      this.onlineState = markOpponentPresenceLost(this.onlineState, Date.now());
+      this.logOnlineAuditEvent('presence_lost', {
+        reason: 'opponent_presence_leave',
+      });
+      this.updateOnlineNetworkHud();
+    }
+  }
+
+  private handleOnlineStatus(status: RealtimeConnectionStatus): void {
+    if (!this.onlineState) return;
+    this.onlineState = recordChannelStatus(this.onlineState, status, Date.now());
+    this.logOnlineAuditEvent('network_status', {
+      reason: status,
+    });
+    this.updateOnlineNetworkHud();
   }
 
   private handleOnlineMessage(msg: OnlineMessage): void {
     if (!this.onlineState) return;
     if (msg.type === 'heartbeat') {
       this.onlineState = recordHeartbeat(this.onlineState, Date.now());
+      this.updateOnlineNetworkHud();
       return;
     }
     if (msg.type === 'snapshot') {
@@ -1875,6 +2640,10 @@ export class PoolScene extends Phaser.Scene {
       const myIndex = this.roomInfo!.isHost ? 0 : 1;
       const iWin = msg.winner === myIndex;
       this.onlineState = transitionToGameOver(this.onlineState, msg.winner, msg.reason);
+      this.logOnlineAuditEvent(msg.reason === 'surrender' ? 'surrender_received' : 'game_over_received', {
+        reason: msg.reason,
+        metadata: { winner: msg.winner },
+      });
       this.showOnlineGameOver(iWin, msg.reason);
       void this.updateOnlineStats(iWin, msg.reason);
       return;
@@ -1897,6 +2666,12 @@ export class PoolScene extends Phaser.Scene {
 
   private handleOpponentShot(msg: ShotMessage): void {
     if (!this.onlineState) return;
+    this.logOnlineAuditEvent('shot_received', {
+      metadata: {
+        power: msg.power,
+        hasSnapshot: Boolean(msg.ballsSnapshot?.length),
+      },
+    });
     this.opponentShotResolved = false;
     this.opponentResultApplied = false;
     this.opponentTurnEndApplied = false;
@@ -1915,6 +2690,7 @@ export class PoolScene extends Phaser.Scene {
       contactOffset: msg.contactOffset,
     });
     this.wasMoving = true;
+    this.localMatchTracker = recordPlayerStroke(this.localMatchTracker, this.rules.currentPlayer);
     this.state = recordStroke(this.state);
     this.rules = startEightBallShot(this.rules);
     this.audio.play('cue');
@@ -1923,9 +2699,20 @@ export class PoolScene extends Phaser.Scene {
   private handleOpponentSnapshot(msg: SnapshotMessage): void {
     if (!this.onlineState) return;
     if (this.onlineState.phase !== 'watching_opponent_shot') return;
-    if (this.opponentShotResolved) return;
-    if (this.opponentResultApplied || this.opponentTurnEndApplied) return;
-    if (this.pendingResult || this.pendingTurnEnd) return;
+    if (this.opponentShotResolved) {
+      this.logOnlineAuditEvent('snapshot_ignored', {
+        reason: 'shot_already_resolved',
+        metadata: { ballCount: msg.balls.length },
+      });
+      return;
+    }
+    if (this.opponentResultApplied || this.opponentTurnEndApplied || this.pendingResult || this.pendingTurnEnd) {
+      this.logOnlineAuditEvent('sync_anomaly', {
+        reason: 'late_snapshot_after_authoritative_result',
+        metadata: { ballCount: msg.balls.length },
+      });
+      return;
+    }
     if (!msg.balls || msg.balls.length === 0) return;
     if (!this.wasMoving && this.physicsEngine.isSettled()) return;
     this.physicsEngine.applyNetworkSnapshot(this.protectPocketedSnapshotBalls(msg.balls));
@@ -1935,6 +2722,9 @@ export class PoolScene extends Phaser.Scene {
   private handleOpponentResult(msg: ResultMessage): void {
     if (!this.onlineState || this.opponentResultApplied) return;
     if (this.onlineState.phase !== 'watching_opponent_shot' && !this.opponentTurnEndApplied) return;
+    this.logOnlineAuditEvent('result_received', {
+      metadata: { ballCount: msg.balls.length },
+    });
     this.pendingResult = msg;
     if (this.physicsEngine.isSettled() && !this.wasMoving) {
       this.applyPendingOpponentResult();
@@ -1944,6 +2734,14 @@ export class PoolScene extends Phaser.Scene {
   private handleOpponentTurnEnd(msg: TurnEndMessage): void {
     if (!this.onlineState || this.opponentTurnEndApplied) return;
     if (this.onlineState.phase !== 'watching_opponent_shot' && !this.opponentResultApplied) return;
+    this.logOnlineAuditEvent('turn_end_received', {
+      reason: msg.gameOver ? 'game_over' : msg.foul ? 'foul' : 'turn_end',
+      metadata: {
+        nextPlayer: msg.nextPlayer,
+        pocketedBallIds: msg.pocketedBallIds,
+        winner: msg.winner,
+      },
+    });
     this.pendingTurnEnd = msg;
     if (this.physicsEngine.isSettled() && !this.wasMoving) {
       this.applyPendingOpponentResult();
@@ -2008,6 +2806,12 @@ export class PoolScene extends Phaser.Scene {
       cueBallPos,
       ballsSnapshot,
     });
+    this.logOnlineAuditEvent('shot_sent', {
+      metadata: {
+        power,
+        snapshotBallCount: ballsSnapshot.length,
+      },
+    });
     this.onlineState = transitionToWatchingMyShot(this.onlineState);
     this.lastSnapshotSentAt = Date.now();
   }
@@ -2028,6 +2832,9 @@ export class PoolScene extends Phaser.Scene {
       pocketIndex: b.pocketed ? this.ballPocketMap.get(b.id) : undefined,
     }));
     this.onlineChannel.send({ type: 'result', balls });
+    this.logOnlineAuditEvent('result_sent', {
+      metadata: { ballCount: balls.length },
+    });
   }
 
   private sendOnlineTurnEnd(foul: boolean, cueBallInHand: boolean, nextPlayer: 0 | 1, pocketedBallIds: number[], gameOver: boolean, winner: 0 | 1 | null): void {
@@ -2040,6 +2847,10 @@ export class PoolScene extends Phaser.Scene {
       pocketedBallIds,
       gameOver,
       winner,
+    });
+    this.logOnlineAuditEvent('turn_end_sent', {
+      reason: gameOver ? 'game_over' : foul ? 'foul' : 'turn_end',
+      metadata: { nextPlayer, pocketedBallIds, winner, cueBallInHand },
     });
   }
 
@@ -2325,6 +3136,10 @@ export class PoolScene extends Phaser.Scene {
     const myIndex: 0 | 1 = this.roomInfo.isHost ? 0 : 1;
     const winner: 0 | 1 = myIndex === 0 ? 1 : 0;
     this.onlineChannel?.send({ type: 'game_over', reason: 'surrender', winner });
+    this.logOnlineAuditEvent('surrender_sent', {
+      reason: 'self_surrender',
+      metadata: { winner },
+    });
     this.onlineState = transitionToGameOver(this.onlineState, winner, 'surrender');
     this.showOnlineGameOver(false, 'surrender');
     void this.updateOnlineStats(false, 'surrender');
@@ -2344,6 +3159,10 @@ export class PoolScene extends Phaser.Scene {
         reason: 'disconnect',
         winner: opponentIndex,
       });
+      this.logOnlineAuditEvent('disconnect_forfeit', {
+        reason: 'self_leave',
+        metadata: { winner: opponentIndex },
+      });
     } catch {
       // unloading; WS may be torn down. 30s heartbeat timeout is the fallback.
     }
@@ -2354,6 +3173,10 @@ export class PoolScene extends Phaser.Scene {
     if (!this.onlineState || !this.onlineChannel) return;
     const myIndex: 0 | 1 = this.roomInfo!.isHost ? 0 : 1;
     this.onlineChannel.send({ type: 'game_over', reason: 'disconnect', winner: myIndex });
+    this.logOnlineAuditEvent('disconnect_forfeit', {
+      reason: 'opponent_timeout',
+      metadata: { winner: myIndex },
+    });
     this.onlineState = transitionToGameOver(this.onlineState, myIndex, 'disconnect');
     this.showOnlineGameOver(true, 'disconnect');
     void this.updateOnlineStats(true, 'disconnect');
@@ -2361,6 +3184,7 @@ export class PoolScene extends Phaser.Scene {
 
   private updateOnlineTick(deltaSeconds: number): void {
     if (!this.onlineState || this.onlineState.phase === 'game_over') return;
+    const now = Date.now();
     if (this.onlineState.phase === 'my_turn') {
       this.onlineState = tickTurnTimer(this.onlineState, deltaSeconds);
       this.shotClockRemaining = this.onlineState.turnTimer;
@@ -2371,13 +3195,28 @@ export class PoolScene extends Phaser.Scene {
       }
     }
     if (this.onlineState.phase === 'watching_my_shot' && !this.physicsEngine.isSettled()) {
-      const now = Date.now();
       if (now - this.lastSnapshotSentAt >= ONLINE_SNAPSHOT_INTERVAL_MS) {
         this.sendOnlineSnapshot();
         this.lastSnapshotSentAt = now;
       }
     }
-    if (checkDisconnect(this.onlineState, Date.now())) {
+    const health = getNetworkHealth(this.onlineState, now);
+    if (health.status === 'opponent_protected' && this.onlineState.disconnectProtectionStartedAt === null) {
+      this.onlineState = markDisconnectProtectionSeen(this.onlineState, now);
+      this.logOnlineAuditEvent('disconnect_protection_started', {
+        reason: 'heartbeat_late',
+        metadata: { remainingSeconds: health.remainingProtectionSeconds },
+      });
+    }
+    if (health.status !== this.lastNetworkAuditStatus) {
+      this.lastNetworkAuditStatus = health.status;
+      this.logOnlineAuditEvent('network_status', {
+        reason: health.status,
+        metadata: { latencyMs: health.latencyMs, remainingProtectionSeconds: health.remainingProtectionSeconds },
+      });
+    }
+    this.updateOnlineNetworkHud();
+    if (checkDisconnect(this.onlineState, now)) {
       this.handleOpponentDisconnect();
     }
   }
@@ -2386,12 +3225,17 @@ export class PoolScene extends Phaser.Scene {
     const myIndex: 0 | 1 = this.roomInfo!.isHost ? 0 : 1;
     const opponentIndex: 0 | 1 = this.roomInfo!.isHost ? 1 : 0;
     this.lastGameLoser = iWin ? opponentIndex : myIndex;
+    this.settleMatchCoins(iWin);
+    this.settleGrowthForMatch(iWin, reason === 'surrender' ? 'surrender' : reason === 'disconnect' ? 'disconnect' : 'normal');
 
     if (this.victoryTitle) {
       this.victoryTitle.textContent = iWin ? 'You Win!' : 'You Lose';
     }
     if (this.victoryDetail) {
-      this.victoryDetail.textContent = reason === 'disconnect' ? 'Opponent disconnected' : '';
+      this.victoryDetail.textContent = this.formatOnlineGameOverDetail(iWin, reason);
+    }
+    if (this.coinResult) {
+      this.coinResult.textContent = this.formatCoinResultText();
     }
     if (this.victoryOverlay) {
       this.victoryOverlay.hidden = false;
@@ -2411,6 +3255,18 @@ export class PoolScene extends Phaser.Scene {
       this.setElementHidden('#rematch-prompt', true);
       this.setElementHidden('#rematch-countdown', true);
     }
+  }
+
+  private formatOnlineGameOverDetail(iWin: boolean, reason: string): string {
+    if (reason === 'disconnect') {
+      return iWin
+        ? 'Opponent disconnected. The protection window expired.'
+        : 'You disconnected. The protection window expired.';
+    }
+    if (reason === 'surrender') {
+      return iWin ? 'Opponent surrendered.' : 'You surrendered.';
+    }
+    return iWin ? 'You cleared the winning shot.' : 'Opponent cleared the winning shot.';
   }
 
   private setElementHidden(selector: string, hidden: boolean): void {
@@ -2519,6 +3375,10 @@ export class PoolScene extends Phaser.Scene {
     }
     this.rematchPhase = 'idle';
     this.setElementHidden('#rematch-countdown', true);
+    this.matchCoinSettled = false;
+    this.lastCoinDelta = 0;
+    this.lastCoinResultWon = null;
+    this.matchGrowthSettled = false;
     this.restartRack();
 
     if (this.gameMode === 'online' && this.onlineState && this.roomInfo) {
@@ -2544,12 +3404,38 @@ export class PoolScene extends Phaser.Scene {
     window.location.reload();
   }
 
+  private async logOnlineAuditEvent(
+    eventType: MatchAuditEventType,
+    opts: { reason?: string; metadata?: Record<string, unknown> } = {},
+  ): Promise<void> {
+    if (!this.roomInfo) return;
+
+    const payload = {
+      room_id: this.roomInfo.roomId,
+      match_id: this.currentMatchId,
+      player_id: this.roomInfo.myUserId,
+      event_type: eventType,
+      reason: opts.reason ?? null,
+      phase: this.onlineState?.phase ?? null,
+      metadata: opts.metadata ?? {},
+    };
+
+    try {
+      const { error } = await this.supabaseClient.from('match_audit_logs').insert(payload);
+      if (error) {
+        console.warn('logOnlineAuditEvent failed:', error.message);
+      }
+    } catch (error) {
+      console.warn('logOnlineAuditEvent failed:', error);
+    }
+  }
+
   private async updateOnlineStats(
     won: boolean,
     reason: 'normal' | 'disconnect' | 'surrender',
   ): Promise<void> {
     const stat = won ? 'wins' : 'losses';
-    await supabase.rpc('increment_profile_stat', { stat_name: stat });
+    await this.supabaseClient.rpc('increment_profile_stat', { stat_name: stat });
 
     if (!this.roomInfo) return;
 
@@ -2560,7 +3446,7 @@ export class PoolScene extends Phaser.Scene {
       const guestId = this.roomInfo.isHost ? opponentId : myUserId;
       const winnerId = won ? myUserId : opponentId;
 
-      await supabase.from('matches').upsert(
+      const { data } = await this.supabaseClient.from('matches').upsert(
         {
           room_id: this.roomInfo.roomId,
           player1_id: hostId,
@@ -2568,14 +3454,19 @@ export class PoolScene extends Phaser.Scene {
           winner_id: winnerId,
           reason,
           started_at: new Date(this.matchStartedAt).toISOString(),
+          player1_strokes: this.localMatchTracker.playerStrokes[0],
+          player2_strokes: this.localMatchTracker.playerStrokes[1],
+          player1_cleared_table: winnerId === hostId && reason === 'normal',
+          player2_cleared_table: winnerId === guestId && reason === 'normal',
         },
         { onConflict: 'room_id', ignoreDuplicates: true },
-      );
+      ).select('id').single();
+      this.currentMatchId = data?.id ?? this.currentMatchId;
     } else {
       console.warn('updateOnlineStats: matchStartedAt is null; skipping matches insert');
     }
 
-    await supabase.from('rooms').update({ status: 'finished' }).eq('id', this.roomInfo.roomId);
+    await this.supabaseClient.from('rooms').update({ status: 'finished' }).eq('id', this.roomInfo.roomId);
   }
 
   private cleanupOnlineMode(): void {
@@ -2589,6 +3480,11 @@ export class PoolScene extends Phaser.Scene {
     }
     this.onlineState = null;
     this.matchStartedAt = null;
+    this.currentMatchId = null;
+    this.matchCoinSettled = false;
+    this.lastCoinDelta = 0;
+    this.lastCoinResultWon = null;
+    this.matchGrowthSettled = false;
     this.pendingResult = null;
     this.pendingTurnEnd = null;
     this.opponentShotResolved = false;

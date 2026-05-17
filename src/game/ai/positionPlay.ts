@@ -4,9 +4,7 @@ import { isPathClear, isOnTable } from './shotGenerator';
 
 const IDEAL_DISTANCE = 150;
 const ZONE_RADIUS = 50;
-const MAX_CORRECTION = 1.2;
-const SPIN_BASE_FACTOR = 0.22;
-const SPIN_SIDE_FACTOR = 0.6;
+const MAX_RECOMMENDED_SPIN_MAGNITUDE = 0.85;
 
 export function computeNextTarget(
   ballPositions: Map<number, Vector>,
@@ -122,16 +120,18 @@ export function generatePositionAwareShots(
 
   let spinVariants: Vector[];
   if (nextTarget) {
-    const baseSpin = deriveSpin(cuePos, ghostBallPos, direction, nextTarget.idealZone, targetPos);
+    const baseSpin = limitSpinMagnitude(
+      deriveSpin(cuePos, ghostBallPos, direction, nextTarget.idealZone, targetPos),
+      MAX_RECOMMENDED_SPIN_MAGNITUDE,
+    );
     spinVariants = [
       baseSpin,
-      { x: baseSpin.x * 0.6, y: baseSpin.y * 0.6 },
-      { x: clampSpin(baseSpin.x * 1.4), y: clampSpin(baseSpin.y * 1.4) },
-      { x: baseSpin.x * 0.3, y: baseSpin.y * 1.2 },
-      { x: baseSpin.x * 1.2, y: baseSpin.y * 0.3 },
+      limitSpinMagnitude({ x: baseSpin.x * 0.8, y: baseSpin.y * 0.8 }, MAX_RECOMMENDED_SPIN_MAGNITUDE),
+      limitSpinMagnitude({ x: baseSpin.x * 0.6, y: baseSpin.y * 0.6 }, MAX_RECOMMENDED_SPIN_MAGNITUDE),
+      limitSpinMagnitude({ x: baseSpin.x * 0.35, y: baseSpin.y * 0.35 }, MAX_RECOMMENDED_SPIN_MAGNITUDE),
+      limitSpinMagnitude({ x: baseSpin.x * 0.75, y: baseSpin.y * 0.55 }, MAX_RECOMMENDED_SPIN_MAGNITUDE),
+      limitSpinMagnitude({ x: baseSpin.x * 0.55, y: baseSpin.y * 0.75 }, MAX_RECOMMENDED_SPIN_MAGNITUDE),
       { x: 0, y: 0 },
-      { x: clampSpin(baseSpin.x * 0.8), y: clampSpin(baseSpin.y * 1.5) },
-      { x: clampSpin(baseSpin.x * 1.5), y: clampSpin(baseSpin.y * 0.8) },
     ];
   } else {
     spinVariants = FALLBACK_SPINS;
@@ -191,6 +191,19 @@ function clampSpin(v: number): number {
   return Math.max(-1, Math.min(1, v));
 }
 
+function limitSpinMagnitude(spin: Vector, maxMagnitude: number): Vector {
+  const magnitude = Math.hypot(spin.x, spin.y);
+  if (magnitude <= maxMagnitude || magnitude < 0.001) {
+    return { x: clampSpin(spin.x), y: clampSpin(spin.y) };
+  }
+
+  const scale = maxMagnitude / magnitude;
+  return {
+    x: clampSpin(spin.x * scale),
+    y: clampSpin(spin.y * scale),
+  };
+}
+
 export function deriveSpin(
   cuePos: Vector,
   ghostBallPos: Vector,
@@ -198,7 +211,6 @@ export function deriveSpin(
   idealZone: Vector,
   targetPos?: Vector,
 ): Vector {
-  // Collision normal: from ghost ball to target ball center (the actual contact normal)
   let collisionNormal: Vector;
   if (targetPos) {
     const nx = targetPos.x - ghostBallPos.x;
@@ -217,7 +229,6 @@ export function deriveSpin(
     collisionNormal = { x: dx / len, y: dy / len };
   }
 
-  // Natural post-collision cue ball direction (tangent component of incoming velocity)
   const dot = shotDirection.x * collisionNormal.x + shotDirection.y * collisionNormal.y;
   const tangentX = shotDirection.x - dot * collisionNormal.x;
   const tangentY = shotDirection.y - dot * collisionNormal.y;
@@ -231,7 +242,6 @@ export function deriveSpin(
     naturalDir = { x: tangentX / tangentLen, y: tangentY / tangentLen };
   }
 
-  // Desired direction: from ghost ball to ideal zone
   const toIdealX = idealZone.x - ghostBallPos.x;
   const toIdealY = idealZone.y - ghostBallPos.y;
   const toIdealLen = Math.hypot(toIdealX, toIdealY);
@@ -239,24 +249,19 @@ export function deriveSpin(
 
   const idealDir = { x: toIdealX / toIdealLen, y: toIdealY / toIdealLen };
 
-  // Correction vector: how much we need to deviate from natural path
   const correctionX = idealDir.x - naturalDir.x;
   const correctionY = idealDir.y - naturalDir.y;
 
-  // Decompose into follow/draw (along shot axis) and side english (perpendicular)
   const followComponent = correctionX * shotDirection.x + correctionY * shotDirection.y;
   const perpX = -shotDirection.y;
   const perpY = shotDirection.x;
   const sideComponent = correctionX * perpX + correctionY * perpY;
 
-  // Apply compensation: side spin is weaker in fastPhysics (0.6x factor)
-  const sideCompensated = sideComponent / SPIN_SIDE_FACTOR;
+  const sideCompensated = sideComponent / 0.6;
 
-  let spinY = Math.max(-1, Math.min(1, followComponent / MAX_CORRECTION));
-  let spinX = Math.max(-1, Math.min(1, sideCompensated / MAX_CORRECTION));
+  let spinY = Math.max(-1, Math.min(1, followComponent / 1.2));
+  let spinX = Math.max(-1, Math.min(1, sideCompensated / 1.2));
 
-  // Boost spin values for thin cuts where natural direction is strong
-  // (the cue ball has more tangent velocity, needs more spin to overcome)
   const cutAngle = Math.acos(Math.min(1, Math.abs(dot)));
   if (cutAngle > 0.3) {
     const boost = 1 + cutAngle * 0.4;
@@ -264,5 +269,5 @@ export function deriveSpin(
     spinX = clampSpin(spinX * boost);
   }
 
-  return { x: spinX, y: spinY };
+  return limitSpinMagnitude({ x: spinX, y: spinY }, MAX_RECOMMENDED_SPIN_MAGNITUDE);
 }

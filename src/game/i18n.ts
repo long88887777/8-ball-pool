@@ -27,6 +27,14 @@ export type GameCopy = {
     aiming: string;
     shooting: string;
     playerName: string;
+    difficulty: {
+      easy: string;
+      normal: string;
+      hard: string;
+    };
+    playerNameWithDifficulty: (difficulty: string) => string;
+    thinkingWithDifficulty: (difficulty: string) => string;
+    aimingWithDifficulty: (difficulty: string) => string;
   };
   challenge: {
     modeButton: string;
@@ -108,6 +116,14 @@ const COPY: Record<Language, GameCopy> = {
       aiming: 'AI aiming...',
       shooting: 'AI shooting',
       playerName: 'AI',
+      difficulty: {
+        easy: 'Rookie',
+        normal: 'Skilled',
+        hard: 'Master',
+      },
+      playerNameWithDifficulty: (difficulty) => `AI · ${difficulty}`,
+      thinkingWithDifficulty: (difficulty) => `AI thinking · ${difficulty}`,
+      aimingWithDifficulty: (difficulty) => `AI aiming · ${difficulty}`,
     },
     challenge: {
       modeButton: 'Challenge',
@@ -197,6 +213,14 @@ const COPY: Record<Language, GameCopy> = {
       aiming: 'AI 瞄准中...',
       shooting: 'AI 击球',
       playerName: '电脑',
+      difficulty: {
+        easy: '新手',
+        normal: '熟练',
+        hard: '大师',
+      },
+      playerNameWithDifficulty: (difficulty) => `电脑 · ${difficulty}`,
+      thinkingWithDifficulty: (difficulty) => `AI 思考中 · ${difficulty}`,
+      aimingWithDifficulty: (difficulty) => `AI 瞄准中 · ${difficulty}`,
     },
     challenge: {
       modeButton: '挑战',
