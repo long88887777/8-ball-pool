@@ -146,6 +146,33 @@ Add a computer opponent after the physics, rules, and controls are stable.
 - Harder AI makes visibly better shot choices.
 - AI behavior remains performant in the browser.
 
+## V5: Domestic Recharge Foundation
+
+### Goal
+
+Add a safe recharge foundation for authenticated players without launching real-money payment until merchant credentials and provider callbacks are ready.
+
+### Scope
+
+- Add recharge packages, recharge orders, and wallet ledger tables.
+- Add backend-only recharge confirmation so paid coins are not minted by browser code.
+- Add a mock payment channel for development and staging verification.
+- Add a restrained recharge dialog in the game UI.
+- Keep WeChat Pay and Alipay as future provider adapters over the same order and ledger model.
+
+### Non-Goals
+
+- No real WeChat Pay or Alipay production launch in the first slice.
+- No overseas payment aggregator integration.
+- No full wallet hardening for every game reward and purchase until the next payment phase.
+
+### Acceptance Criteria
+
+- A signed-in test player can create a recharge order, complete mock payment, and see coins arrive.
+- Repeating the same payment confirmation does not add coins twice.
+- Recharge grants are recorded in an append-only wallet ledger.
+- The existing game remains playable if recharge UI is hidden or mock payments are disabled.
+
 ## Suggested Development Order
 
 1. V1.1: Visual and shot-feel refinement.
@@ -153,6 +180,7 @@ Add a computer opponent after the physics, rules, and controls are stable.
 3. V2: Local two-player 8-ball.
 4. V3: Simplified spin system.
 5. V4: Human vs computer AI.
+6. V5: Domestic Recharge Foundation.
 
 ## Notes
 
