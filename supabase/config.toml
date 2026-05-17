@@ -3,3 +3,8 @@ project_id = "auymwlpzwtpsnaaemnut"
 [functions.match-players]
 verify_jwt = true
 
+[functions.create-recharge-order]
+verify_jwt = true
+
+[functions.mock-pay-recharge-order]
+verify_jwt = true

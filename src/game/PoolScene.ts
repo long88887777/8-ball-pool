@@ -67,6 +67,18 @@ import {
   type PlayerWallet,
   type StorageAdapter,
 } from './economy';
+import {
+  createRechargeOrder,
+  fetchRechargePackages,
+  fetchRecentRechargeOrders,
+  formatCny,
+  mockPayRechargeOrder,
+  selectDefaultRechargePackage,
+  type CreatedRechargeOrder,
+  type RechargeOrder,
+  type SupabaseRechargeClient,
+  type RechargePackage,
+} from './recharge';
 import { summarizeChallengeStars } from './growth/challengeSummary';
 import {
   applyMatchToStats,
@@ -230,6 +242,20 @@ export class PoolScene extends Phaser.Scene {
   private cueShopCloseButton?: HTMLButtonElement;
   private cueShopGrid?: HTMLElement;
   private cueShopFeedback?: HTMLElement;
+  private rechargeButton?: HTMLButtonElement;
+  private rechargeOverlay?: HTMLElement;
+  private rechargeCloseButton?: HTMLButtonElement;
+  private rechargePackagesEl?: HTMLElement;
+  private rechargeBalanceEl?: HTMLElement;
+  private rechargeOrderEl?: HTMLElement;
+  private rechargeFeedbackEl?: HTMLElement;
+  private rechargeCreateButton?: HTMLButtonElement;
+  private rechargeMockPayButton?: HTMLButtonElement;
+  private rechargePackages: RechargePackage[] = [];
+  private rechargeOrders: RechargeOrder[] = [];
+  private selectedRechargePackageId: string | null = null;
+  private pendingRechargeOrder: CreatedRechargeOrder | null = null;
+  private rechargeBusy = false;
   private wallet: PlayerWallet = DEFAULT_PLAYER_WALLET;
   private walletRevision = 0;
   private walletSaveQueue: Promise<void> = Promise.resolve();
@@ -269,6 +295,26 @@ export class PoolScene extends Phaser.Scene {
   };
   private cueShopCloseHandler = (): void => {
     this.hideCueShop();
+  };
+  private rechargeOpenHandler = (): void => {
+    this.showRechargePanel();
+  };
+  private rechargeCloseHandler = (): void => {
+    this.hideRechargePanel();
+  };
+  private rechargePackageClickHandler = (event: MouseEvent): void => {
+    const target = event.target as HTMLElement | null;
+    const button = target?.closest<HTMLButtonElement>('[data-recharge-package-id]');
+    if (!button) return;
+    this.selectedRechargePackageId = button.dataset.rechargePackageId ?? null;
+    this.pendingRechargeOrder = null;
+    this.renderRechargePanel();
+  };
+  private rechargeCreateHandler = (): void => {
+    void this.createSelectedRechargeOrder();
+  };
+  private rechargeMockPayHandler = (): void => {
+    void this.completeMockRechargePayment();
   };
   private cueShopActionHandler = (event: MouseEvent): void => {
     const target = event.target as HTMLElement | null;
@@ -326,6 +372,7 @@ export class PoolScene extends Phaser.Scene {
   private matchStartedAt: number | null = null;
   private currentMatchId: string | null = null;
   private supabaseClient = supabase;
+  private rechargeClient = supabase as unknown as SupabaseRechargeClient;
   private leaveReporter: LeaveReporter | null = null;
   private pendingResult: ResultMessage | null = null;
   private pendingTurnEnd: TurnEndMessage | null = null;
@@ -945,13 +992,28 @@ export class PoolScene extends Phaser.Scene {
     this.cueShopCloseButton = document.querySelector<HTMLButtonElement>('#cue-shop-close') ?? undefined;
     this.cueShopGrid = document.querySelector<HTMLElement>('#cue-shop-grid') ?? undefined;
     this.cueShopFeedback = document.querySelector<HTMLElement>('#cue-shop-feedback') ?? undefined;
+    this.rechargeButton = document.querySelector<HTMLButtonElement>('#recharge-open') ?? undefined;
+    this.rechargeOverlay = document.querySelector<HTMLElement>('#recharge-panel') ?? undefined;
+    this.rechargeCloseButton = document.querySelector<HTMLButtonElement>('#recharge-close') ?? undefined;
+    this.rechargePackagesEl = document.querySelector<HTMLElement>('#recharge-packages') ?? undefined;
+    this.rechargeBalanceEl = document.querySelector<HTMLElement>('#recharge-balance') ?? undefined;
+    this.rechargeOrderEl = document.querySelector<HTMLElement>('#recharge-order') ?? undefined;
+    this.rechargeFeedbackEl = document.querySelector<HTMLElement>('#recharge-feedback') ?? undefined;
+    this.rechargeCreateButton = document.querySelector<HTMLButtonElement>('#recharge-create') ?? undefined;
+    this.rechargeMockPayButton = document.querySelector<HTMLButtonElement>('#recharge-mock-pay') ?? undefined;
 
     this.dailyCheckInButton?.addEventListener('click', this.dailyCheckInHandler);
     this.cueShopButton?.addEventListener('click', this.cueShopOpenHandler);
     this.cueShopCloseButton?.addEventListener('click', this.cueShopCloseHandler);
     this.cueShopGrid?.addEventListener('click', this.cueShopActionHandler);
+    this.rechargeButton?.addEventListener('click', this.rechargeOpenHandler);
+    this.rechargeCloseButton?.addEventListener('click', this.rechargeCloseHandler);
+    this.rechargePackagesEl?.addEventListener('click', this.rechargePackageClickHandler);
+    this.rechargeCreateButton?.addEventListener('click', this.rechargeCreateHandler);
+    this.rechargeMockPayButton?.addEventListener('click', this.rechargeMockPayHandler);
     this.renderEconomyHud();
     this.renderCueShop();
+    this.renderRechargePanel();
   }
 
   private unbindEconomyUI(): void {
@@ -959,6 +1021,11 @@ export class PoolScene extends Phaser.Scene {
     this.cueShopButton?.removeEventListener('click', this.cueShopOpenHandler);
     this.cueShopCloseButton?.removeEventListener('click', this.cueShopCloseHandler);
     this.cueShopGrid?.removeEventListener('click', this.cueShopActionHandler);
+    this.rechargeButton?.removeEventListener('click', this.rechargeOpenHandler);
+    this.rechargeCloseButton?.removeEventListener('click', this.rechargeCloseHandler);
+    this.rechargePackagesEl?.removeEventListener('click', this.rechargePackageClickHandler);
+    this.rechargeCreateButton?.removeEventListener('click', this.rechargeCreateHandler);
+    this.rechargeMockPayButton?.removeEventListener('click', this.rechargeMockPayHandler);
   }
 
   private async loadPlayerWallet(): Promise<void> {
@@ -970,6 +1037,7 @@ export class PoolScene extends Phaser.Scene {
     this.wallet = wallet;
     this.renderEconomyHud();
     this.renderCueShop();
+    this.renderRechargePanel();
   }
 
   private async loadGrowthData(): Promise<void> {
@@ -1057,6 +1125,86 @@ export class PoolScene extends Phaser.Scene {
   private hideCueShop(): void {
     if (this.cueShopOverlay) {
       this.cueShopOverlay.hidden = true;
+    }
+  }
+
+  private showRechargePanel(): void {
+    if (this.rechargeOverlay) {
+      this.rechargeOverlay.hidden = false;
+    }
+    void this.loadRechargeData();
+  }
+
+  private hideRechargePanel(): void {
+    if (this.rechargeOverlay) {
+      this.rechargeOverlay.hidden = true;
+    }
+  }
+
+  private async loadRechargeData(): Promise<void> {
+    this.setRechargeBusy(true);
+    this.setRechargeFeedback('正在加载充值档位...');
+    try {
+      const packages = await fetchRechargePackages(this.rechargeClient);
+      this.rechargePackages = packages;
+      this.selectedRechargePackageId = selectDefaultRechargePackage(packages, this.selectedRechargePackageId);
+      this.setRechargeFeedback(packages.length > 0 ? '' : '暂无可用充值档位。');
+      try {
+        this.rechargeOrders = await fetchRecentRechargeOrders(this.rechargeClient);
+      } catch {
+        this.rechargeOrders = [];
+      }
+    } catch (error) {
+      this.setRechargeFeedback(error instanceof Error ? error.message : '充值信息加载失败。');
+    } finally {
+      this.setRechargeBusy(false);
+      this.renderRechargePanel();
+    }
+  }
+
+  private async createSelectedRechargeOrder(): Promise<void> {
+    if (!this.selectedRechargePackageId || this.rechargeBusy) return;
+    this.setRechargeBusy(true);
+    this.setRechargeFeedback('正在创建订单...');
+    try {
+      const result = await createRechargeOrder(this.rechargeClient, this.selectedRechargePackageId);
+      this.pendingRechargeOrder = result.order;
+      this.setRechargeFeedback('订单已创建，请完成测试支付。');
+    } catch (error) {
+      this.setRechargeFeedback(error instanceof Error ? error.message : '订单创建失败。');
+    } finally {
+      this.setRechargeBusy(false);
+      this.renderRechargePanel();
+    }
+  }
+
+  private async completeMockRechargePayment(): Promise<void> {
+    if (!this.pendingRechargeOrder || this.rechargeBusy) return;
+    this.setRechargeBusy(true);
+    this.setRechargeFeedback('正在确认测试支付...');
+    try {
+      const result = await mockPayRechargeOrder(this.rechargeClient, this.pendingRechargeOrder.id);
+      await this.loadPlayerWallet();
+      this.pendingRechargeOrder = null;
+      this.rechargeOrders = await fetchRecentRechargeOrders(this.rechargeClient);
+      this.setRechargeFeedback(`充值成功，到账 ${result.grantedCoins} 金币。`);
+    } catch (error) {
+      this.setRechargeFeedback(error instanceof Error ? error.message : '测试支付确认失败。');
+    } finally {
+      this.setRechargeBusy(false);
+      this.renderRechargePanel();
+    }
+  }
+
+  private setRechargeBusy(busy: boolean): void {
+    this.rechargeBusy = busy;
+    if (this.rechargeCreateButton) this.rechargeCreateButton.disabled = busy || !this.selectedRechargePackageId;
+    if (this.rechargeMockPayButton) this.rechargeMockPayButton.disabled = busy || !this.pendingRechargeOrder;
+  }
+
+  private setRechargeFeedback(message: string): void {
+    if (this.rechargeFeedbackEl) {
+      this.rechargeFeedbackEl.textContent = message;
     }
   }
 
@@ -1251,6 +1399,53 @@ export class PoolScene extends Phaser.Scene {
     }
 
     this.cueShopGrid.replaceChildren(...CUE_CATALOG.map((cue) => this.createCueCard(cue)));
+  }
+
+  private renderRechargePanel(): void {
+    if (this.rechargeBalanceEl) {
+      this.rechargeBalanceEl.textContent = `金币 ${this.wallet.coins}`;
+    }
+    if (this.rechargePackagesEl) {
+      this.rechargePackagesEl.replaceChildren(...this.rechargePackages.map((item) => this.createRechargePackageButton(item)));
+    }
+    if (this.rechargeOrderEl) {
+      if (this.pendingRechargeOrder) {
+        this.rechargeOrderEl.hidden = false;
+        this.rechargeOrderEl.textContent = `待支付订单 ${this.pendingRechargeOrder.id.slice(0, 8)} · ${formatCny(this.pendingRechargeOrder.package.amountCents, this.pendingRechargeOrder.package.currency)}`;
+      } else {
+        const latest = this.rechargeOrders[0];
+        this.rechargeOrderEl.hidden = !latest;
+        this.rechargeOrderEl.textContent = latest
+          ? `最近订单 ${latest.status === 'paid' ? '已支付' : latest.status} · ${latest.coinAmount} 金币`
+          : '';
+      }
+    }
+    if (this.rechargeCreateButton) {
+      this.rechargeCreateButton.disabled = this.rechargeBusy || !this.selectedRechargePackageId;
+    }
+    if (this.rechargeMockPayButton) {
+      this.rechargeMockPayButton.hidden = !this.pendingRechargeOrder;
+      this.rechargeMockPayButton.disabled = this.rechargeBusy || !this.pendingRechargeOrder;
+    }
+  }
+
+  private createRechargePackageButton(item: RechargePackage): HTMLButtonElement {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = `recharge-package${item.id === this.selectedRechargePackageId ? ' is-selected' : ''}`;
+    button.dataset.rechargePackageId = item.id;
+    button.setAttribute('role', 'option');
+    button.setAttribute('aria-selected', String(item.id === this.selectedRechargePackageId));
+
+    const title = document.createElement('strong');
+    title.textContent = item.title;
+    const price = document.createElement('span');
+    price.textContent = formatCny(item.amountCents, item.currency);
+    const bonus = document.createElement('small');
+    bonus.textContent = item.bonusCoins > 0 ? `含赠送 ${item.bonusCoins} 金币` : '基础档位';
+
+    button.append(title, price, bonus);
+    return button;
   }
 
   private createCueCard(cue: CueStyle): HTMLElement {
