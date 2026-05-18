@@ -918,6 +918,7 @@ h2 {
   font-size: 13px;
   font-weight: 600;
 }
+
 .recharge-overlay {
   position: fixed;
   inset: 0;
@@ -1417,8 +1418,10 @@ h2 {
   inset: 0;
   z-index: 200;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: center;
+  overflow-y: auto;
+  padding: clamp(14px, 2.5vh, 28px) 16px clamp(24px, 4vh, 42px);
   background: linear-gradient(160deg, #faf9f7 0%, #f0ede8 50%, #e8e4dd 100%);
   font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-serif;
   animation: menuFadeIn 0.4s ease;
@@ -1513,10 +1516,13 @@ h2 {
 .menu-content {
   position: relative;
   z-index: 1;
+  width: 100%;
+  min-height: calc(100dvh - clamp(38px, 6.5vh, 70px));
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 54px;
+  justify-content: center;
+  gap: clamp(16px, 2.5vh, 28px);
 }
 
 .menu-title {
@@ -1534,7 +1540,7 @@ h2 {
 }
 
 .menu-heading {
-  font-size: clamp(48px, 9vw, 64px);
+  font-size: clamp(44px, 7vh, 64px);
   font-weight: 700;
   color: #1d1d1f;
   letter-spacing: -0.03em;
@@ -1545,7 +1551,7 @@ h2 {
 .menu-buttons {
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: clamp(10px, 1.8vh, 16px);
   width: min(480px, 85vw);
   animation: menuButtonsIn 0.5s ease 0.2s both;
 }
@@ -1621,7 +1627,8 @@ h2 {
   align-items: center;
   gap: 20px;
   width: 100%;
-  padding: 26px 28px;
+  min-height: clamp(72px, 9vh, 92px);
+  padding: clamp(16px, 2.4vh, 24px) 28px;
   background: rgba(255,255,255,0.92);
   border: none;
   border-left: 4px solid transparent;
@@ -1680,6 +1687,18 @@ h2 {
   color: #c7c7cc;
   font-size: 28px;
   font-weight: 300;
+}
+
+@media (min-width: 760px) {
+  .menu-buttons {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    width: min(760px, 92vw);
+  }
+
+  .ai-difficulty-panel {
+    grid-column: 1 / -1;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -2119,7 +2138,7 @@ h2 {
   align-items: center;
   justify-content: center;
   gap: 1rem;
-  margin-bottom: 1.5rem;
+  margin-bottom: 0;
 }
 
 .user-info {

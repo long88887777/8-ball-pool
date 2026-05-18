@@ -2,6 +2,8 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 
 const STORAGE_KEY = 'pool.challenge.progress';
 
+type ProgressStorage = Pick<Storage, 'getItem' | 'setItem'>;
+
 export type LevelResult = {
   stars: number;
   bestShots: number;
@@ -11,7 +13,7 @@ export type ChallengeProgress = {
   levels: Record<string, LevelResult>;
 };
 
-export function readProgress(storage: Pick<Storage, 'getItem'>): ChallengeProgress {
+export function readProgress(storage: Pick<ProgressStorage, 'getItem'>): ChallengeProgress {
   try {
     const raw = storage.getItem(STORAGE_KEY);
     if (!raw) return { levels: {} };
@@ -25,39 +27,77 @@ export function readProgress(storage: Pick<Storage, 'getItem'>): ChallengeProgre
   }
 }
 
-export function writeProgress(storage: Pick<Storage, 'setItem'>, progress: ChallengeProgress): void {
+export function writeProgress(storage: Pick<ProgressStorage, 'setItem'>, progress: ChallengeProgress): void {
   storage.setItem(STORAGE_KEY, JSON.stringify(progress));
 }
 
-export async function readProgressSupabase(supabase: SupabaseClient): Promise<ChallengeProgress> {
+export async function readProgressSupabase(
+  supabase: SupabaseClient,
+  storage: ProgressStorage = browserStorage(),
+): Promise<ChallengeProgress> {
   const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return readProgress(localStorage);
-  const { data } = await supabase
-    .from('challenge_progress')
-    .select('levels')
-    .eq('user_id', user.id)
-    .maybeSingle();
-  if (data?.levels) {
-    const parsed = data.levels as Record<string, unknown>;
-    if (parsed && typeof parsed === 'object') {
-      return { levels: parsed as ChallengeProgress['levels'] };
+  if (!user) return readProgress(storage);
+  try {
+    const { data, error } = await supabase
+      .from('challenge_progress')
+      .select('levels')
+      .eq('user_id', user.id)
+      .maybeSingle();
+    if (!error && data?.levels) {
+      const parsed = data.levels as Record<string, unknown>;
+      if (parsed && typeof parsed === 'object') {
+        const progress = { levels: parsed as ChallengeProgress['levels'] };
+        writeProgress(storage, progress);
+        return progress;
+      }
     }
+  } catch {
+    return readProgress(storage);
   }
-  return { levels: {} };
+  const localProgress = readProgress(storage);
+  if (Object.keys(localProgress.levels).length > 0) {
+    await writeProgressRow(supabase, user.id, localProgress);
+  }
+  return localProgress;
 }
 
 export async function writeProgressSupabase(
   supabase: SupabaseClient,
   progress: ChallengeProgress,
+  storage: ProgressStorage = browserStorage(),
 ): Promise<void> {
+  writeProgress(storage, progress);
   const { data: { user } } = await supabase.auth.getUser();
-  if (!user) {
-    writeProgress(localStorage, progress);
-    return;
+  if (!user) return;
+  await writeProgressRow(supabase, user.id, progress);
+}
+
+async function writeProgressRow(
+  supabase: SupabaseClient,
+  userId: string,
+  progress: ChallengeProgress,
+): Promise<void> {
+  try {
+    await supabase
+      .from('challenge_progress')
+      .upsert({ user_id: userId, levels: progress.levels, updated_at: new Date().toISOString() });
+  } catch {
+    // Local progress has already been saved.
   }
-  await supabase
-    .from('challenge_progress')
-    .upsert({ user_id: user.id, levels: progress.levels, updated_at: new Date().toISOString() });
+}
+
+function browserStorage(): ProgressStorage {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      return localStorage;
+    }
+  } catch {
+    // Browsers can expose localStorage but reject access in strict privacy modes.
+  }
+  return {
+    getItem: () => null,
+    setItem: () => undefined,
+  };
 }
 
 export function isLevelUnlocked(progress: ChallengeProgress, levelId: number): boolean {
