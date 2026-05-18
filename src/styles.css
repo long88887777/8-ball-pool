@@ -44,6 +44,10 @@ button {
   gap: 12px;
 }
 
+.game-shell[hidden] {
+  display: none;
+}
+
 .game-header {
   display: flex;
   align-items: end;
@@ -745,7 +749,7 @@ h2 {
 .cue-shop-overlay {
   position: fixed;
   inset: 0;
-  z-index: 24;
+  z-index: 1120;
   display: grid;
   place-items: center;
   padding: 20px;
@@ -922,7 +926,7 @@ h2 {
 .recharge-overlay {
   position: fixed;
   inset: 0;
-  z-index: 25;
+  z-index: 1130;
   display: grid;
   place-items: center;
   padding: 20px;
@@ -1196,8 +1200,7 @@ h2 {
   display: grid;
   place-items: center;
   padding: 20px;
-  background: rgba(245, 243, 240, 0.8);
-  backdrop-filter: blur(8px);
+  background: #f5f3f0;
 }
 
 .challenge-overlay[hidden] {
@@ -2139,11 +2142,20 @@ h2 {
   justify-content: center;
   gap: 1rem;
   margin-bottom: 0;
+  flex-wrap: wrap;
 }
 
 .user-info {
   color: #3a3a3c;
   font-size: 0.85rem;
+}
+
+.menu-action-group {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  flex-wrap: wrap;
 }
 
 .menu-growth-btn,
@@ -2156,6 +2168,11 @@ h2 {
   font-size: 0.8rem;
   cursor: pointer;
   transition: border-color 0.2s, color 0.2s;
+}
+
+.menu-economy-btn {
+  border-color: rgba(196, 149, 45, 0.22);
+  color: #7c5712;
 }
 
 .menu-growth-btn:hover {
@@ -2423,6 +2440,11 @@ h2 {
   .menu-growth-rank {
     align-items: start;
     flex-direction: column;
+  }
+
+  .menu-user-bar,
+  .menu-action-group {
+    width: 100%;
   }
 }
 

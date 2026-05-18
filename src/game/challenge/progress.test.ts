@@ -118,4 +118,50 @@ describe('progress', () => {
 
     await expect(readProgressSupabase(client as never, storage)).resolves.toEqual(progress);
   });
+
+  it('merges local progress into authenticated Supabase progress before mirroring locally', async () => {
+    writeProgress(storage, {
+      levels: {
+        '1': { stars: 3, bestShots: 2 },
+        '2': { stars: 2, bestShots: 4 },
+      },
+    });
+    const { client, upserts } = createMockSupabase({
+      levelsRow: {
+        '1': { stars: 1, bestShots: 6 },
+        '3': { stars: 1, bestShots: 5 },
+      },
+    });
+
+    const progress = await readProgressSupabase(client as never, storage);
+
+    expect(progress).toEqual({
+      levels: {
+        '1': { stars: 3, bestShots: 2 },
+        '2': { stars: 2, bestShots: 4 },
+        '3': { stars: 1, bestShots: 5 },
+      },
+    });
+    expect(readProgress(storage)).toEqual(progress);
+    expect(upserts).toEqual([
+      {
+        table: 'challenge_progress',
+        payload: expect.objectContaining({
+          user_id: 'user-1',
+          levels: progress.levels,
+        }),
+      },
+    ]);
+  });
+
+  it('keeps local progress and rejects when Supabase write returns an error', async () => {
+    const progress: ChallengeProgress = {
+      levels: { '1': { stars: 3, bestShots: 1 } },
+    };
+    const error = new Error('policy denied');
+    const { client } = createMockSupabase({ upsertError: error });
+
+    await expect(writeProgressSupabase(client as never, progress, storage)).rejects.toBe(error);
+    expect(readProgress(storage)).toEqual(progress);
+  });
 });

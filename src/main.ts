@@ -11,6 +11,30 @@ import { summarizeChallengeStars } from './game/growth/challengeSummary';
 import { readDailyTaskStateSupabase, readPlayerStatsSupabase } from './game/growth/persistence';
 import { getRankProgress, summarizeStats, type PlayerStats } from './game/growth/stats';
 import { DAILY_TASKS, summarizeDailyTasks, type DailyTaskState } from './game/growth/tasks';
+import {
+  CUE_CATALOG,
+  DEFAULT_PLAYER_WALLET,
+  buyCue,
+  equipCue,
+  readPlayerWalletSupabase,
+  writePlayerWallet,
+  writePlayerWalletSupabase,
+  type CueStyle,
+  type PlayerWallet,
+  type StorageAdapter,
+} from './game/economy';
+import {
+  createRechargeOrder,
+  fetchRechargePackages,
+  fetchRecentRechargeOrders,
+  formatCny,
+  mockPayRechargeOrder,
+  selectDefaultRechargePackage,
+  type CreatedRechargeOrder,
+  type RechargeOrder,
+  type RechargePackage,
+  type SupabaseRechargeClient,
+} from './game/recharge';
 import './styles.css';
 
 type GameMode = 'pvp' | 'ai' | 'challenge' | 'online';
@@ -18,6 +42,15 @@ type GameMode = 'pvp' | 'ai' | 'challenge' | 'online';
 let currentGame: Phaser.Game | null = null;
 let guestMode = false;
 let currentProfileName = '游客玩家';
+let currentWallet: PlayerWallet = DEFAULT_PLAYER_WALLET;
+let walletSaveQueue: Promise<void> = Promise.resolve();
+let rechargePackages: RechargePackage[] = [];
+let rechargeOrders: RechargeOrder[] = [];
+let selectedRechargePackageId: string | null = null;
+let pendingRechargeOrder: CreatedRechargeOrder | null = null;
+let rechargeBusy = false;
+
+const rechargeClient = supabase as unknown as SupabaseRechargeClient;
 
 function selectedAIDifficulty(): AIDifficulty {
   const selected = document.querySelector<HTMLInputElement>('input[name="ai-difficulty"]:checked');
@@ -27,8 +60,11 @@ function selectedAIDifficulty(): AIDifficulty {
 function startGame(mode: GameMode, roomInfo?: RoomInfo): void {
   const menu = document.getElementById('main-menu');
   const shell = document.querySelector<HTMLElement>('.game-shell');
+  const challengeSelect = document.getElementById('challenge-select');
   if (menu) menu.hidden = true;
   if (shell) shell.hidden = false;
+  if (challengeSelect) challengeSelect.hidden = mode !== 'challenge';
+  hideEconomyPanels();
 
   const config: Phaser.Types.Core.GameConfig = {
     type: Phaser.AUTO,
@@ -86,6 +122,7 @@ document.querySelectorAll<HTMLButtonElement>('.menu-btn').forEach((btn) => {
 });
 
 document.getElementById('btn-back')?.addEventListener('click', backToMenu);
+window.addEventListener('pool:return-to-menu', backToMenu);
 
 document.getElementById('btn-pause')?.addEventListener('click', () => {
   const pauseOverlay = document.getElementById('pause-overlay');
@@ -154,12 +191,13 @@ async function loadUserProfile(): Promise<void> {
 
 async function loadGrowthOverview(): Promise<void> {
   const dateKey = localDateKey();
-  const [stats, tasks, progress] = await Promise.all([
+  const [stats, tasks, progress, wallet] = await Promise.all([
     readPlayerStatsSupabase(supabase),
     readDailyTaskStateSupabase(supabase, dateKey),
     readProgressSupabase(supabase),
+    readPlayerWalletSupabase(supabase),
   ]);
-  renderGrowthOverview(stats, tasks, summarizeChallengeStars(progress, CHALLENGE_LEVELS));
+  renderGrowthOverview(stats, tasks, summarizeChallengeStars(progress, CHALLENGE_LEVELS), wallet);
 }
 
 function renderProfileSummary(stats: PlayerStats | null, tasks: DailyTaskState | null, isGuest: boolean): void {
@@ -180,8 +218,11 @@ function renderGrowthOverview(
   stats: PlayerStats,
   tasks: DailyTaskState,
   challengeSummary: ReturnType<typeof summarizeChallengeStars>,
+  wallet: PlayerWallet,
 ): void {
   renderProfileSummary(stats, tasks, guestMode);
+  currentWallet = wallet;
+  renderMenuEconomy();
   const summary = summarizeStats(stats);
   const rank = getRankProgress(stats.rankPoints);
   const taskSummary = summarizeDailyTasks(tasks);
@@ -199,6 +240,7 @@ function renderGrowthOverview(
   setText('growth-detail-next', rank.pointsToNext > 0 ? `下一段还差 ${rank.pointsToNext} 分` : '最高段位');
   setStyle('growth-detail-next', '--growth-rank-progress', `${rank.progressPercent}%`);
   setText('growth-stat-games', String(summary.totalGames));
+  setText('growth-stat-coins', String(wallet.coins));
   setText('growth-stat-record', `${summary.wins}胜 ${summary.losses}负`);
   setText('growth-stat-winrate', `${summary.winRate}%`);
   setText('growth-stat-streak', `${summary.currentStreak} / ${summary.bestStreak}`);
@@ -252,6 +294,288 @@ function setText(id: string, text: string): void {
 function setStyle(id: string, property: string, value: string): void {
   const el = document.getElementById(id) as HTMLElement | null;
   el?.style.setProperty(property, value);
+}
+
+async function loadMenuWallet(): Promise<void> {
+  currentWallet = await readPlayerWalletSupabase(supabase);
+  renderMenuEconomy();
+}
+
+function saveMenuWallet(wallet: PlayerWallet): void {
+  const storage = browserStorage();
+  currentWallet = writePlayerWallet(storage, wallet);
+  renderMenuEconomy();
+  const walletToSave = currentWallet;
+  walletSaveQueue = walletSaveQueue
+    .catch(() => undefined)
+    .then(async () => {
+      currentWallet = await writePlayerWalletSupabase(supabase, walletToSave, storage);
+      renderMenuEconomy();
+    })
+    .catch(() => undefined);
+}
+
+function browserStorage(): StorageAdapter {
+  try {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      return window.localStorage;
+    }
+  } catch {
+    // Fall back to an in-memory no-op store when browser storage is unavailable.
+  }
+
+  return {
+    getItem: () => null,
+    setItem: () => undefined,
+  };
+}
+
+function renderMenuEconomy(): void {
+  setText('growth-stat-coins', String(currentWallet.coins));
+  setText('coin-balance', `金币 ${currentWallet.coins}`);
+  setText('cue-shop-balance', `金币 ${currentWallet.coins}`);
+  setText('recharge-balance', `金币 ${currentWallet.coins}`);
+  setText('cue-shop-open', '球杆收藏');
+  renderCueShop();
+  renderRechargePanel();
+}
+
+function showCueShop(): void {
+  renderCueShop();
+  const overlay = document.getElementById('cue-shop');
+  if (overlay) overlay.hidden = false;
+  void loadMenuWallet();
+}
+
+function hideCueShop(): void {
+  const overlay = document.getElementById('cue-shop');
+  if (overlay) overlay.hidden = true;
+}
+
+function showRechargePanel(): void {
+  renderRechargePanel();
+  const overlay = document.getElementById('recharge-panel');
+  if (overlay) overlay.hidden = false;
+  void loadMenuWallet();
+  void loadRechargeData();
+}
+
+function hideRechargePanel(): void {
+  const overlay = document.getElementById('recharge-panel');
+  if (overlay) overlay.hidden = true;
+}
+
+function hideEconomyPanels(): void {
+  hideCueShop();
+  hideRechargePanel();
+}
+
+async function loadRechargeData(): Promise<void> {
+  setRechargeBusy(true);
+  setRechargeFeedback('正在加载充值档位...');
+  try {
+    rechargePackages = await fetchRechargePackages(rechargeClient);
+    selectedRechargePackageId = selectDefaultRechargePackage(rechargePackages, selectedRechargePackageId);
+    setRechargeFeedback(rechargePackages.length > 0 ? '' : '暂无可用充值档位。');
+    try {
+      rechargeOrders = await fetchRecentRechargeOrders(rechargeClient);
+    } catch {
+      rechargeOrders = [];
+    }
+  } catch (error) {
+    setRechargeFeedback(error instanceof Error ? error.message : '充值信息加载失败。');
+  } finally {
+    setRechargeBusy(false);
+    renderRechargePanel();
+  }
+}
+
+async function createSelectedRechargeOrder(): Promise<void> {
+  if (!selectedRechargePackageId || rechargeBusy) return;
+  setRechargeBusy(true);
+  setRechargeFeedback('正在创建订单...');
+  try {
+    const result = await createRechargeOrder(rechargeClient, selectedRechargePackageId);
+    pendingRechargeOrder = result.order;
+    setRechargeFeedback('订单已创建，请完成测试支付。');
+  } catch (error) {
+    setRechargeFeedback(error instanceof Error ? error.message : '订单创建失败。');
+  } finally {
+    setRechargeBusy(false);
+    renderRechargePanel();
+  }
+}
+
+async function completeMockRechargePayment(): Promise<void> {
+  if (!pendingRechargeOrder || rechargeBusy) return;
+  setRechargeBusy(true);
+  setRechargeFeedback('正在确认测试支付...');
+  try {
+    const result = await mockPayRechargeOrder(rechargeClient, pendingRechargeOrder.id);
+    currentWallet = { ...currentWallet, coins: result.wallet.coins };
+    pendingRechargeOrder = null;
+    rechargeOrders = await fetchRecentRechargeOrders(rechargeClient);
+    setRechargeFeedback(`充值成功，到账 ${result.grantedCoins} 金币。`);
+    await loadMenuWallet();
+  } catch (error) {
+    setRechargeFeedback(error instanceof Error ? error.message : '测试支付确认失败。');
+  } finally {
+    setRechargeBusy(false);
+    renderMenuEconomy();
+  }
+}
+
+function setRechargeBusy(busy: boolean): void {
+  rechargeBusy = busy;
+  const createButton = document.getElementById('recharge-create') as HTMLButtonElement | null;
+  const mockPayButton = document.getElementById('recharge-mock-pay') as HTMLButtonElement | null;
+  if (createButton) createButton.disabled = busy || !selectedRechargePackageId;
+  if (mockPayButton) mockPayButton.disabled = busy || !pendingRechargeOrder;
+}
+
+function setRechargeFeedback(message: string): void {
+  setText('recharge-feedback', message);
+}
+
+function renderRechargePanel(): void {
+  const packagesEl = document.getElementById('recharge-packages');
+  if (packagesEl) {
+    packagesEl.replaceChildren(...rechargePackages.map((item) => createRechargePackageButton(item)));
+  }
+
+  const orderEl = document.getElementById('recharge-order');
+  if (orderEl) {
+    if (pendingRechargeOrder) {
+      orderEl.hidden = false;
+      orderEl.textContent = `待支付订单 ${pendingRechargeOrder.id.slice(0, 8)} · ${formatCny(pendingRechargeOrder.package.amountCents, pendingRechargeOrder.package.currency)}`;
+    } else {
+      const latest = rechargeOrders[0];
+      orderEl.hidden = !latest;
+      orderEl.textContent = latest
+        ? `最近订单 ${latest.status === 'paid' ? '已支付' : latest.status} · ${latest.coinAmount} 金币`
+        : '';
+    }
+  }
+
+  const createButton = document.getElementById('recharge-create') as HTMLButtonElement | null;
+  const mockPayButton = document.getElementById('recharge-mock-pay') as HTMLButtonElement | null;
+  if (createButton) createButton.disabled = rechargeBusy || !selectedRechargePackageId;
+  if (mockPayButton) {
+    mockPayButton.hidden = !pendingRechargeOrder;
+    mockPayButton.disabled = rechargeBusy || !pendingRechargeOrder;
+  }
+}
+
+function createRechargePackageButton(item: RechargePackage): HTMLButtonElement {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = `recharge-package${item.id === selectedRechargePackageId ? ' is-selected' : ''}`;
+  button.dataset.rechargePackageId = item.id;
+  button.setAttribute('role', 'option');
+  button.setAttribute('aria-selected', String(item.id === selectedRechargePackageId));
+
+  const title = document.createElement('strong');
+  title.textContent = item.title;
+  const price = document.createElement('span');
+  price.textContent = formatCny(item.amountCents, item.currency);
+  const bonus = document.createElement('small');
+  bonus.textContent = item.bonusCoins > 0 ? `含赠送 ${item.bonusCoins} 金币` : '基础档位';
+
+  button.append(title, price, bonus);
+  return button;
+}
+
+function renderCueShop(feedback = ''): void {
+  const feedbackEl = document.getElementById('cue-shop-feedback');
+  if (feedbackEl) feedbackEl.textContent = feedback;
+
+  const grid = document.getElementById('cue-shop-grid');
+  if (!grid) return;
+  grid.replaceChildren(...CUE_CATALOG.map((cue) => createCueCard(cue)));
+}
+
+function createCueCard(cue: CueStyle): HTMLElement {
+  const owned = currentWallet.unlockedCueIds.includes(cue.id);
+  const equipped = currentWallet.equippedCueId === cue.id;
+  const card = document.createElement('article');
+  card.className = `cue-card cue-rarity-${cue.rarity}${equipped ? ' is-equipped' : ''}`;
+  card.style.setProperty('--cue-shaft', cssColor(cue.shaftColor));
+  card.style.setProperty('--cue-forearm', cssColor(cue.forearmColor));
+  card.style.setProperty('--cue-wrap', cssColor(cue.wrapColor));
+  card.style.setProperty('--cue-accent', cssColor(cue.accentColor));
+  card.style.setProperty('--cue-gem', cssColor(cue.gemColor));
+
+  const preview = document.createElement('div');
+  preview.className = 'cue-preview';
+  preview.setAttribute('aria-hidden', 'true');
+  preview.append(
+    createCueSegment('cue-preview-butt'),
+    createCueSegment('cue-preview-wrap'),
+    createCueSegment('cue-preview-forearm'),
+    createCueSegment('cue-preview-shaft'),
+    createCueSegment('cue-preview-tip'),
+  );
+
+  const name = document.createElement('h3');
+  name.textContent = cue.name;
+
+  const meta = document.createElement('p');
+  meta.className = 'cue-meta';
+  meta.textContent = `${rarityLabel(cue.rarity)} · ${cue.price === 0 ? '默认拥有' : `${cue.price} 金币`}`;
+
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.dataset.cueId = cue.id;
+  if (equipped) {
+    button.textContent = '已装备';
+    button.disabled = true;
+  } else if (owned) {
+    button.textContent = '装备';
+    button.dataset.cueAction = 'equip';
+  } else {
+    button.textContent = currentWallet.coins >= cue.price ? '解锁' : '金币不足';
+    button.dataset.cueAction = 'buy';
+    button.disabled = currentWallet.coins < cue.price;
+  }
+
+  card.append(preview, name, meta, button);
+  return card;
+}
+
+function createCueSegment(className: string): HTMLSpanElement {
+  const segment = document.createElement('span');
+  segment.className = className;
+  return segment;
+}
+
+function buyCueStyle(cueId: string): void {
+  const result = buyCue(currentWallet, cueId);
+  if (result.purchased) {
+    const equipped = equipCue(result.wallet, cueId);
+    saveMenuWallet(equipped.wallet);
+    renderCueShop('已解锁并装备新球杆。');
+    return;
+  }
+  renderCueShop(result.reason === 'not-enough-coins' ? '金币不足，赢几局再来。' : '这支球杆已经在你的收藏里。');
+}
+
+function equipCueStyle(cueId: string): void {
+  const result = equipCue(currentWallet, cueId);
+  if (result.equipped) {
+    saveMenuWallet(result.wallet);
+  }
+  renderCueShop(result.equipped ? '已装备。' : '这支球杆还没有解锁。');
+}
+
+function cssColor(color: number): string {
+  return `#${color.toString(16).padStart(6, '0')}`;
+}
+
+function rarityLabel(rarity: CueStyle['rarity']): string {
+  if (rarity === 'legendary') return '传说';
+  if (rarity === 'epic') return '史诗';
+  if (rarity === 'rare') return '稀有';
+  return '基础';
 }
 
 function showMenu(): void {
@@ -319,6 +643,38 @@ async function init(): Promise<void> {
   document.getElementById('growth-panel-close')?.addEventListener('click', () => {
     const panel = document.getElementById('growth-panel');
     if (panel) panel.hidden = true;
+  });
+
+  document.getElementById('cue-shop-open')?.addEventListener('click', showCueShop);
+  document.getElementById('cue-shop-close')?.addEventListener('click', hideCueShop);
+  document.getElementById('recharge-open')?.addEventListener('click', showRechargePanel);
+  document.getElementById('recharge-close')?.addEventListener('click', hideRechargePanel);
+  document.getElementById('recharge-packages')?.addEventListener('click', (event) => {
+    const target = event.target as HTMLElement | null;
+    const button = target?.closest<HTMLButtonElement>('[data-recharge-package-id]');
+    if (!button) return;
+    selectedRechargePackageId = button.dataset.rechargePackageId ?? null;
+    pendingRechargeOrder = null;
+    renderRechargePanel();
+  });
+  document.getElementById('recharge-create')?.addEventListener('click', () => {
+    void createSelectedRechargeOrder();
+  });
+  document.getElementById('recharge-mock-pay')?.addEventListener('click', () => {
+    void completeMockRechargePayment();
+  });
+  document.getElementById('cue-shop-grid')?.addEventListener('click', (event) => {
+    const target = event.target as HTMLElement | null;
+    const button = target?.closest<HTMLButtonElement>('[data-cue-action]');
+    if (!button) return;
+    const cueId = button.dataset.cueId;
+    const action = button.dataset.cueAction;
+    if (!cueId) return;
+    if (action === 'buy') {
+      buyCueStyle(cueId);
+    } else if (action === 'equip') {
+      equipCueStyle(cueId);
+    }
   });
 }
 

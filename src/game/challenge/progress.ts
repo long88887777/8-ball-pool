@@ -28,7 +28,11 @@ export function readProgress(storage: Pick<ProgressStorage, 'getItem'>): Challen
 }
 
 export function writeProgress(storage: Pick<ProgressStorage, 'setItem'>, progress: ChallengeProgress): void {
-  storage.setItem(STORAGE_KEY, JSON.stringify(progress));
+  try {
+    storage.setItem(STORAGE_KEY, JSON.stringify(progress));
+  } catch {
+    // Keep remote sync usable if browser storage is unavailable.
+  }
 }
 
 export async function readProgressSupabase(
@@ -37,26 +41,39 @@ export async function readProgressSupabase(
 ): Promise<ChallengeProgress> {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return readProgress(storage);
+  const localProgress = readProgress(storage);
   try {
     const { data, error } = await supabase
       .from('challenge_progress')
       .select('levels')
       .eq('user_id', user.id)
       .maybeSingle();
+    if (error) return localProgress;
     if (!error && data?.levels) {
       const parsed = data.levels as Record<string, unknown>;
       if (parsed && typeof parsed === 'object') {
-        const progress = { levels: parsed as ChallengeProgress['levels'] };
+        const remoteProgress = { levels: parsed as ChallengeProgress['levels'] };
+        const progress = mergeProgress(remoteProgress, localProgress);
         writeProgress(storage, progress);
+        if (!sameProgress(remoteProgress, progress)) {
+          try {
+            await writeProgressRow(supabase, user.id, progress);
+          } catch {
+            // Reading should still succeed when opportunistic sync-back fails.
+          }
+        }
         return progress;
       }
     }
   } catch {
     return readProgress(storage);
   }
-  const localProgress = readProgress(storage);
   if (Object.keys(localProgress.levels).length > 0) {
-    await writeProgressRow(supabase, user.id, localProgress);
+    try {
+      await writeProgressRow(supabase, user.id, localProgress);
+    } catch {
+      // Reading should still return the local fallback if remote sync fails.
+    }
   }
   return localProgress;
 }
@@ -77,13 +94,39 @@ async function writeProgressRow(
   userId: string,
   progress: ChallengeProgress,
 ): Promise<void> {
-  try {
-    await supabase
-      .from('challenge_progress')
-      .upsert({ user_id: userId, levels: progress.levels, updated_at: new Date().toISOString() });
-  } catch {
-    // Local progress has already been saved.
+  const { error } = await supabase
+    .from('challenge_progress')
+    .upsert({ user_id: userId, levels: progress.levels, updated_at: new Date().toISOString() });
+  if (error) {
+    throw error;
   }
+}
+
+function mergeProgress(remote: ChallengeProgress, local: ChallengeProgress): ChallengeProgress {
+  const levels: ChallengeProgress['levels'] = { ...remote.levels };
+  for (const [levelId, localResult] of Object.entries(local.levels)) {
+    const remoteResult = levels[levelId];
+    levels[levelId] = remoteResult
+      ? {
+          stars: Math.max(remoteResult.stars, localResult.stars),
+          bestShots: Math.min(remoteResult.bestShots, localResult.bestShots),
+        }
+      : localResult;
+  }
+  return { levels };
+}
+
+function sameProgress(left: ChallengeProgress, right: ChallengeProgress): boolean {
+  const leftKeys = Object.keys(left.levels);
+  const rightKeys = Object.keys(right.levels);
+  if (leftKeys.length !== rightKeys.length) return false;
+  return leftKeys.every((key) => {
+    const leftResult = left.levels[key];
+    const rightResult = right.levels[key];
+    return rightResult !== undefined
+      && leftResult.stars === rightResult.stars
+      && leftResult.bestShots === rightResult.bestShots;
+  });
 }
 
 function browserStorage(): ProgressStorage {

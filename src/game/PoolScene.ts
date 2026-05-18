@@ -14,7 +14,6 @@ import {
   recordChallengePocketWithRequired,
   checkKickChain,
   resetChallengeShot,
-  revertCuePocketShot,
   resolveChallengeResult,
   type ChallengeState,
 } from './challenge/challengeState';
@@ -219,6 +218,7 @@ export class PoolScene extends Phaser.Scene {
   private forbiddenIcon!: Phaser.GameObjects.Graphics;
   private handSprite!: Phaser.GameObjects.Image;
   private cuePlacementValid = true;
+  private breakCuePlacementConfirmed = false;
   private state: GameState = createGameState(BALLS.length);
   private rules: EightBallState = createEightBallState();
   private aimState: AimState | null = null;
@@ -237,12 +237,10 @@ export class PoolScene extends Phaser.Scene {
   private victoryRestartButton?: HTMLButtonElement;
   private aimCancelButton?: HTMLButtonElement;
   private dailyCheckInButton?: HTMLButtonElement;
-  private cueShopButton?: HTMLButtonElement;
   private cueShopOverlay?: HTMLElement;
   private cueShopCloseButton?: HTMLButtonElement;
   private cueShopGrid?: HTMLElement;
   private cueShopFeedback?: HTMLElement;
-  private rechargeButton?: HTMLButtonElement;
   private rechargeOverlay?: HTMLElement;
   private rechargeCloseButton?: HTMLButtonElement;
   private rechargePackagesEl?: HTMLElement;
@@ -279,6 +277,10 @@ export class PoolScene extends Phaser.Scene {
       this.surrenderOnlineMatch();
       return;
     }
+    if (this.gameMode === 'challenge') {
+      this.retryChallengeLevel();
+      return;
+    }
     this.restartRack();
   };
   private victoryRestartHandler = (): void => {
@@ -290,14 +292,8 @@ export class PoolScene extends Phaser.Scene {
   private dailyCheckInHandler = (): void => {
     this.claimDailyCheckIn();
   };
-  private cueShopOpenHandler = (): void => {
-    this.showCueShop();
-  };
   private cueShopCloseHandler = (): void => {
     this.hideCueShop();
-  };
-  private rechargeOpenHandler = (): void => {
-    this.showRechargePanel();
   };
   private rechargeCloseHandler = (): void => {
     this.hideRechargePanel();
@@ -356,11 +352,13 @@ export class PoolScene extends Phaser.Scene {
   private challengeState: ChallengeState | null = null;
   private currentLevel: ChallengeLevel | null = null;
   private cachedProgress: ChallengeProgress | null = null;
+  private challengeProgressSaveQueue: Promise<void> = Promise.resolve();
   private challengeBtn?: HTMLButtonElement;
   private challengeSelectOverlay?: HTMLElement;
   private challengeResultOverlay?: HTMLElement;
   private challengeHud?: HTMLElement;
   private challengeBtnHandler = (): void => { this.showChallengeSelect(); };
+  private challengeBackHandler = (): void => { this.returnToMenuFromChallengeSelect(); };
   private ballPocketMap = new Map<number, number>();
   private pocketAnimatingBalls = new Set<number>();
   private lastFoulFeedback: FoulFeedbackTarget | null = null;
@@ -461,6 +459,7 @@ export class PoolScene extends Phaser.Scene {
       this.aimCancelButton?.removeEventListener('click', this.aimCancelHandler);
       this.unbindEconomyUI();
       this.challengeBtn?.removeEventListener('click', this.challengeBtnHandler);
+      document.querySelector<HTMLButtonElement>('#challenge-back')?.removeEventListener('click', this.challengeBackHandler);
       document.querySelector<HTMLButtonElement>('#rematch-request')?.removeEventListener('click', this.rematchRequestHandler);
       document.querySelector<HTMLButtonElement>('#rematch-leave')?.removeEventListener('click', this.rematchLeaveHandler);
       document.querySelector<HTMLButtonElement>('#rematch-cancel')?.removeEventListener('click', this.rematchCancelHandler);
@@ -605,7 +604,7 @@ export class PoolScene extends Phaser.Scene {
         return;
       }
 
-      if (this.canPlaceBreakCueBall() && this.isCuePlacementStart(point)) {
+      if (this.canPlaceBreakCueBall() && this.canStartBreakCuePlacement(point)) {
         this.cuePlacementState = { pointerId: pointer.id, kind: 'break' };
         this.aimState = null;
         this.aimLine.clear();
@@ -660,6 +659,7 @@ export class PoolScene extends Phaser.Scene {
         const point = { x: pointer.worldX, y: pointer.worldY };
         if (this.cuePlacementState.kind === 'break') {
           this.placeCueBall(point);
+          this.breakCuePlacementConfirmed = true;
           this.cuePlacementState = null;
         } else {
           this.placeBallInHandCueBall(point);
@@ -753,9 +753,7 @@ export class PoolScene extends Phaser.Scene {
     this.challengeResultOverlay = document.querySelector<HTMLElement>('#challenge-result') ?? undefined;
     this.challengeHud = document.querySelector<HTMLElement>('#challenge-hud') ?? undefined;
 
-    document.querySelector('#challenge-back')?.addEventListener('click', () => {
-      this.hideChallengeSelect();
-    });
+    document.querySelector('#challenge-back')?.addEventListener('click', this.challengeBackHandler);
     document.querySelector('#challenge-retry')?.addEventListener('click', () => {
       this.retryChallengeLevel();
     });
@@ -771,11 +769,17 @@ export class PoolScene extends Phaser.Scene {
   private async showChallengeSelect(): Promise<void> {
     if (!this.challengeSelectOverlay) return;
     const copy = getCopy(this.language);
+    const title = document.querySelector('#challenge-title');
+    const grid = document.querySelector('#challenge-grid');
+    const backBtn = document.querySelector('#challenge-back');
+
+    if (title) title.textContent = copy.challenge.title;
+    if (backBtn) backBtn.textContent = copy.challenge.back;
+    this.challengeSelectOverlay.hidden = false;
+
+    await this.challengeProgressSaveQueue.catch(() => undefined);
     const progress = await readProgressSupabase(supabase);
     this.cachedProgress = progress;
-    const grid = document.querySelector('#challenge-grid');
-    const title = document.querySelector('#challenge-title');
-    if (title) title.textContent = copy.challenge.title;
     if (!grid) return;
 
     grid.innerHTML = '';
@@ -810,13 +814,16 @@ export class PoolScene extends Phaser.Scene {
       grid.appendChild(card);
     }
 
-    const backBtn = document.querySelector('#challenge-back');
-    if (backBtn) backBtn.textContent = copy.challenge.back;
     this.challengeSelectOverlay.hidden = false;
   }
 
   private hideChallengeSelect(): void {
     if (this.challengeSelectOverlay) this.challengeSelectOverlay.hidden = true;
+  }
+
+  private returnToMenuFromChallengeSelect(): void {
+    this.hideChallengeSelect();
+    window.dispatchEvent(new Event('pool:return-to-menu'));
   }
 
   private startChallengeLevel(level: ChallengeLevel): void {
@@ -842,6 +849,7 @@ export class PoolScene extends Phaser.Scene {
     this.forbiddenIcon?.setVisible(false);
     this.handSprite?.setVisible(false);
     this.cuePlacementValid = true;
+    this.breakCuePlacementConfirmed = false;
     this.ballPrevPositions.clear();
     this.wasMoving = false;
 
@@ -850,8 +858,11 @@ export class PoolScene extends Phaser.Scene {
     this.targetBalls = [];
 
     const cueBallDef = level.balls.find(b => b.id === 0)!;
-    this.cueBall = this.createBall(cueBallDef.position, 'cue-ball', 'cue');
+    const cueBallStart = clampBreakCuePosition(cueBallDef.position);
+    this.cueBall = this.createBall(cueBallStart, 'cue-ball', 'cue');
     const targets = level.balls.filter(b => b.id !== 0);
+    this.state = restartGame(targets.length, null);
+    this.rules = createEightBallState();
     targets.forEach((def, index) => {
       this.targetBalls.push(
         this.createBall(def.position, `target-ball-${index}`, 'target', def.id)
@@ -859,7 +870,7 @@ export class PoolScene extends Phaser.Scene {
     });
 
     this.physicsEngine.rack([
-      { id: 0, kind: 'cue', position: cueBallDef.position },
+      { id: 0, kind: 'cue', position: cueBallStart },
       ...targets.map(def => ({
         id: def.id,
         kind: 'target' as const,
@@ -902,7 +913,7 @@ export class PoolScene extends Phaser.Scene {
   private async showChallengeResult(): Promise<void> {
     if (!this.challengeResultOverlay || !this.challengeState) return;
     const copy = getCopy(this.language);
-    const result = resolveChallengeResult(this.challengeState);
+    const result = this.challengeState.result ?? resolveChallengeResult(this.challengeState);
     this.challengeState = { ...this.challengeState, result };
 
     if (result.passed) {
@@ -915,7 +926,7 @@ export class PoolScene extends Phaser.Scene {
         : this.challengeState.shotsUsed;
       progress.levels[key] = { stars: bestStars, bestShots };
       this.cachedProgress = progress;
-      void writeProgressSupabase(supabase, progress);
+      this.saveChallengeProgress(progress);
       this.completeDailyGrowthTask('pass_challenge');
     }
 
@@ -953,6 +964,15 @@ export class PoolScene extends Phaser.Scene {
     if (this.challengeResultOverlay) this.challengeResultOverlay.hidden = true;
   }
 
+  private setChallengeBallInHand(rules: EightBallState, cueBallInHand: boolean): EightBallState {
+    return {
+      ...rules,
+      cueBallInHand,
+      messageKey: cueBallInHand ? 'eightBallBallInHand' : rules.messageKey,
+      messageValues: cueBallInHand ? { player: rules.currentPlayer + 1 } : rules.messageValues,
+    };
+  }
+
   private retryChallengeLevel(): void {
     if (this.currentLevel) {
       this.hideChallengeResult();
@@ -987,12 +1007,10 @@ export class PoolScene extends Phaser.Scene {
 
   private bindEconomyUI(): void {
     this.dailyCheckInButton = document.querySelector<HTMLButtonElement>('#daily-checkin') ?? undefined;
-    this.cueShopButton = document.querySelector<HTMLButtonElement>('#cue-shop-open') ?? undefined;
     this.cueShopOverlay = document.querySelector<HTMLElement>('#cue-shop') ?? undefined;
     this.cueShopCloseButton = document.querySelector<HTMLButtonElement>('#cue-shop-close') ?? undefined;
     this.cueShopGrid = document.querySelector<HTMLElement>('#cue-shop-grid') ?? undefined;
     this.cueShopFeedback = document.querySelector<HTMLElement>('#cue-shop-feedback') ?? undefined;
-    this.rechargeButton = document.querySelector<HTMLButtonElement>('#recharge-open') ?? undefined;
     this.rechargeOverlay = document.querySelector<HTMLElement>('#recharge-panel') ?? undefined;
     this.rechargeCloseButton = document.querySelector<HTMLButtonElement>('#recharge-close') ?? undefined;
     this.rechargePackagesEl = document.querySelector<HTMLElement>('#recharge-packages') ?? undefined;
@@ -1003,10 +1021,8 @@ export class PoolScene extends Phaser.Scene {
     this.rechargeMockPayButton = document.querySelector<HTMLButtonElement>('#recharge-mock-pay') ?? undefined;
 
     this.dailyCheckInButton?.addEventListener('click', this.dailyCheckInHandler);
-    this.cueShopButton?.addEventListener('click', this.cueShopOpenHandler);
     this.cueShopCloseButton?.addEventListener('click', this.cueShopCloseHandler);
     this.cueShopGrid?.addEventListener('click', this.cueShopActionHandler);
-    this.rechargeButton?.addEventListener('click', this.rechargeOpenHandler);
     this.rechargeCloseButton?.addEventListener('click', this.rechargeCloseHandler);
     this.rechargePackagesEl?.addEventListener('click', this.rechargePackageClickHandler);
     this.rechargeCreateButton?.addEventListener('click', this.rechargeCreateHandler);
@@ -1018,10 +1034,8 @@ export class PoolScene extends Phaser.Scene {
 
   private unbindEconomyUI(): void {
     this.dailyCheckInButton?.removeEventListener('click', this.dailyCheckInHandler);
-    this.cueShopButton?.removeEventListener('click', this.cueShopOpenHandler);
     this.cueShopCloseButton?.removeEventListener('click', this.cueShopCloseHandler);
     this.cueShopGrid?.removeEventListener('click', this.cueShopActionHandler);
-    this.rechargeButton?.removeEventListener('click', this.rechargeOpenHandler);
     this.rechargeCloseButton?.removeEventListener('click', this.rechargeCloseHandler);
     this.rechargePackagesEl?.removeEventListener('click', this.rechargePackageClickHandler);
     this.rechargeCreateButton?.removeEventListener('click', this.rechargeCreateHandler);
@@ -1080,6 +1094,17 @@ export class PoolScene extends Phaser.Scene {
       })
       .catch(() => undefined);
     this.renderGrowthHud();
+  }
+
+  private saveChallengeProgress(progress: ChallengeProgress): void {
+    const progressToSave: ChallengeProgress = { levels: { ...progress.levels } };
+    const storage = this.storage();
+    this.challengeProgressSaveQueue = this.challengeProgressSaveQueue
+      .catch(() => undefined)
+      .then(async () => {
+        await writeProgressSupabase(supabase, progressToSave, storage);
+      })
+      .catch(() => undefined);
   }
 
   private showVictoryScreen(): void {
@@ -1372,13 +1397,16 @@ export class PoolScene extends Phaser.Scene {
 
   private renderEconomyHud(): void {
     const coinBalance = document.querySelector<HTMLElement>('#coin-balance');
+    const growthCoins = document.querySelector<HTMLElement>('#growth-stat-coins');
     const cueName = this.currentCueStyle().name;
     if (coinBalance) {
       coinBalance.textContent = `金币 ${this.wallet.coins}`;
     }
-    if (this.cueShopButton) {
-      this.cueShopButton.textContent = `球杆：${cueName}`;
+    if (growthCoins) {
+      growthCoins.textContent = String(this.wallet.coins);
     }
+    const cueShopButton = document.querySelector<HTMLElement>('#cue-shop-open');
+    if (cueShopButton) cueShopButton.title = `当前球杆：${cueName}`;
     if (this.dailyCheckInButton) {
       const checkedIn = this.wallet.lastCheckInDate === this.localDateKey();
       this.dailyCheckInButton.textContent = checkedIn ? '今日已签到' : `每日签到 +${DAILY_CHECK_IN_REWARD}`;
@@ -1626,6 +1654,7 @@ export class PoolScene extends Phaser.Scene {
     return (
       !this.strikeLocked &&
       this.state.strokes === 0 &&
+      (this.gameMode !== 'challenge' || !this.breakCuePlacementConfirmed) &&
       !this.rules.cueBallInHand &&
       !this.rules.gameOver &&
       !this.isAITurn() &&
@@ -1640,6 +1669,10 @@ export class PoolScene extends Phaser.Scene {
 
   private isCuePlacementStart(point: Vector): boolean {
     return Phaser.Math.Distance.Between(point.x, point.y, this.cueBall.x, this.cueBall.y) <= BALL_RADIUS * 1.8;
+  }
+
+  private canStartBreakCuePlacement(point: Vector): boolean {
+    return this.gameMode === 'challenge' ? isOnTableSurface(point) : this.isCuePlacementStart(point);
   }
 
   private placeCueBall(point: Vector): void {
@@ -1979,13 +2012,7 @@ export class PoolScene extends Phaser.Scene {
           const sortedIds = this.currentLevel.balls.filter(b => b.id !== 0).map(b => b.id).sort((a, b) => a - b);
           this.challengeState = recordChallengeOrderedPocket(this.challengeState, event.ballId, sortedIds);
         } else if (this.currentLevel?.requireKickChain) {
-          const [, kickedBall] = this.currentLevel.requireKickChain;
-          const kickedBallSnapshot = this.physicsEngine.getBalls().find(b => b.id === kickedBall);
-          const kickedAlreadyPocketed = kickedBallSnapshot?.pocketed ?? false;
-          const satisfied = kickedAlreadyPocketed || checkKickChain(this.challengeState, this.currentLevel.requireKickChain);
-          if (satisfied) {
-            this.challengeState = recordChallengePocket(this.challengeState, event.ballId);
-          }
+          this.challengeState = recordChallengePocket(this.challengeState, event.ballId);
         } else {
           this.challengeState = recordChallengePocket(this.challengeState, event.ballId);
         }
@@ -2145,18 +2172,21 @@ export class PoolScene extends Phaser.Scene {
         this.showChallengeResult();
         return;
       }
+      const shotPocketedTargets = this.challengeState.ballsPocketedThisShot.length;
       const cueBallSnapshot = this.physicsEngine.getBalls().find(b => b.id === 0);
-      if (cueBallSnapshot?.pocketed || this.challengeState.cuePocketed) {
-        const sortedIds = this.currentLevel!.balls.filter(b => b.id !== 0).map(b => b.id).sort((a, b) => a - b);
-        for (const ballId of this.challengeState.ballsPocketedThisShot) {
-          const ballDef = this.currentLevel!.balls.find(b => b.id === ballId);
-          if (ballDef) {
-            this.physicsEngine.resetBall(ballId, ballDef.position);
-          }
-        }
-        this.challengeState = revertCuePocketShot(this.challengeState, sortedIds, !!this.currentLevel!.orderedPocket);
-        const cueDef = this.currentLevel!.balls.find(b => b.id === 0)!;
-        this.physicsEngine.resetCueBall(cueDef.position);
+      const cueBallPocketed = cueBallSnapshot?.pocketed || this.challengeState.cuePocketed;
+      const shotUsedLastChance = this.challengeState.shotsUsed >= this.challengeState.maxShots;
+      const shotClearedLevel = this.challengeState.targetsPocketed >= this.challengeState.totalTargets;
+      const shotFailedFinalChance = shotUsedLastChance && (cueBallPocketed || shotPocketedTargets === 0);
+      if (shotFailedFinalChance) {
+        this.challengeState = { ...this.challengeState, result: { passed: false, stars: 0 } };
+        this.rules = this.setChallengeBallInHand(this.rules, false);
+        this.showChallengeResult();
+        return;
+      }
+      if (cueBallPocketed) {
+        this.physicsEngine.resetCueBall(CUE_START);
+        this.rules = this.setChallengeBallInHand(this.rules, true);
         this.syncBallsFromPhysics(this.physicsEngine.getBalls());
       }
       if (this.challengeState.requiredPocketViolation) {
@@ -2172,25 +2202,14 @@ export class PoolScene extends Phaser.Scene {
         this.syncBallsFromPhysics(this.physicsEngine.getBalls());
       }
       if (this.currentLevel?.requireKickChain) {
-        const [, kickedBall] = this.currentLevel.requireKickChain;
-        const kickedAlreadyPocketed = this.challengeState.allPocketedBallIds.includes(kickedBall);
-        const satisfied = kickedAlreadyPocketed || checkKickChain(this.challengeState, this.currentLevel.requireKickChain);
+        const satisfied = this.challengeState.kickChainSatisfied || checkKickChain(this.challengeState, this.currentLevel.requireKickChain);
         this.challengeState = { ...this.challengeState, kickChainSatisfied: satisfied };
         if (!satisfied) {
-          const pocketedSnapshots = this.physicsEngine.getBalls().filter(b => b.pocketed && b.id !== 0);
-          for (const snap of pocketedSnapshots) {
-            if (!this.challengeState.allPocketedBallIds.includes(snap.id)) {
-              const ballDef = this.currentLevel!.balls.find(b => b.id === snap.id);
-              if (ballDef) {
-                this.physicsEngine.resetBall(snap.id, ballDef.position);
-              }
-            }
-          }
           this.syncBallsFromPhysics(this.physicsEngine.getBalls());
         }
       }
       this.challengeState = resetChallengeShot(this.challengeState);
-      if (this.challengeState.targetsPocketed >= this.challengeState.totalTargets) {
+      if (shotClearedLevel) {
         this.showChallengeResult();
         return;
       }
@@ -2428,6 +2447,7 @@ export class PoolScene extends Phaser.Scene {
     this.forbiddenIcon?.setVisible(false);
     this.handSprite?.setVisible(false);
     this.cuePlacementValid = true;
+    this.breakCuePlacementConfirmed = false;
     this.ballPrevPositions.clear();
     this.createBalls();
     this.state = restartGame(BALLS.length, null);
@@ -2450,11 +2470,20 @@ export class PoolScene extends Phaser.Scene {
   private updateHud(): void {
     const matchPanel = document.querySelector('.match-panel') as HTMLElement | null;
     if (matchPanel) matchPanel.hidden = this.gameMode === 'challenge';
+    const mode = document.querySelector<HTMLElement>('#mode');
+    const strokes = document.querySelector<HTMLElement>('#strokes');
+    const remaining = document.querySelector<HTMLElement>('#remaining');
+    const copy = getCopy(this.language);
     if (this.gameMode === 'challenge') {
+      document.documentElement.lang = this.language === 'zh' ? 'zh-CN' : 'en';
+      document.title = copy.documentTitle;
+      if (mode) mode.hidden = true;
+      if (remaining) remaining.hidden = true;
+      if (strokes) strokes.hidden = true;
+      if (this.restartButton) this.restartButton.textContent = copy.challenge.retry;
       this.updateChallengeHud();
       return;
     }
-    const copy = getCopy(this.language);
     const messageText = this.formatCurrentMessageText();
     const currentPlayer = this.rules.players[this.rules.currentPlayer];
     const opponentPlayer = this.rules.players[this.rules.currentPlayer === 0 ? 1 : 0];
@@ -2476,11 +2505,8 @@ export class PoolScene extends Phaser.Scene {
     const playerTwoTargetLabel = document.querySelector('#player-two-target-label');
     const pocketedBallLabel = document.querySelector('#pocketed-ball-label');
     const languageLabel = document.querySelector('#language-label');
-    const mode = document.querySelector('#mode');
     const groupStatus = document.querySelector('#group-status');
-    const strokes = document.querySelector('#strokes');
     const best = document.querySelector('#best');
-    const remaining = document.querySelector('#remaining');
     const aimLabel = document.querySelector('#aim-label');
     const aimState = document.querySelector('#aim-state');
     const spinLabel = document.querySelector('#spin-label');
@@ -2502,11 +2528,20 @@ export class PoolScene extends Phaser.Scene {
     if (languageLabel) languageLabel.textContent = copy.languageLabel;
     if (this.languageButton) this.languageButton.textContent = copy.languageToggle;
     if (this.restartButton) this.restartButton.textContent = this.gameMode === 'online' ? '认输' : copy.hud.restart;
-    if (mode) mode.textContent = copy.hud.eightBallMode;
+    if (mode) {
+      mode.hidden = false;
+      mode.textContent = copy.hud.eightBallMode;
+    }
     if (groupStatus) groupStatus.textContent = copy.hud.playerGroup(currentPlayer.group);
-    if (strokes) strokes.textContent = copy.hud.strokes(this.state.strokes);
+    if (strokes) {
+      strokes.hidden = false;
+      strokes.textContent = copy.hud.strokes(this.state.strokes);
+    }
     if (best) best.textContent = copy.hud.playerGroup(opponentPlayer.group);
-    if (remaining) remaining.textContent = copy.hud.remaining(remainingObjectBalls);
+    if (remaining) {
+      remaining.hidden = false;
+      remaining.textContent = copy.hud.remaining(remainingObjectBalls);
+    }
     if (aimLabel) aimLabel.textContent = copy.aimLabel;
     if (aimState) aimState.textContent = copy.aimOn;
     if (spinLabel) spinLabel.textContent = copy.spin.label;

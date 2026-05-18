@@ -148,20 +148,21 @@ describe('kickChain', () => {
   it('records collisions', () => {
     let state = createChallengeState(level7);
     state = recordChallengeCollision(state, 0, 2);
-    state = recordChallengeCollision(state, 2, 1);
-    expect(state.collisionChain).toEqual([[0, 2], [2, 1]]);
+    state = recordChallengeCollision(state, 0, 1);
+    expect(state.collisionChain).toEqual([[0, 2], [0, 1]]);
   });
 
-  it('detects valid kick chain (cue→2, 2→1)', () => {
+  it('detects valid kick chain (cue→2, cue→1)', () => {
     let state = createChallengeState(level7);
     state = recordChallengeCollision(state, 0, 2);
-    state = recordChallengeCollision(state, 2, 1);
+    state = recordChallengeCollision(state, 0, 1);
     expect(checkKickChain(state, [2, 1])).toBe(true);
   });
 
-  it('rejects invalid chain (cue→1 directly)', () => {
+  it('rejects invalid chain when cue never kicks ball 1', () => {
     let state = createChallengeState(level7);
-    state = recordChallengeCollision(state, 0, 1);
+    state = recordChallengeCollision(state, 0, 2);
+    state = recordChallengeCollision(state, 2, 1);
     expect(checkKickChain(state, [2, 1])).toBe(false);
   });
 

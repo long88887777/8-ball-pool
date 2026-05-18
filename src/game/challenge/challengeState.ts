@@ -36,7 +36,7 @@ export function createChallengeState(level: ChallengeLevel): ChallengeState {
     nextRequiredBallId: level.orderedPocket ? targetBallIds[0] : null,
     orderViolation: false,
     requiredPocketViolation: false,
-    kickChainSatisfied: false,
+    kickChainSatisfied: !level.requireKickChain,
     collisionChain: [],
     cuePocketed: false,
     ballsPocketedThisShot: [],
@@ -49,6 +49,10 @@ export function recordChallengeShot(state: ChallengeState): ChallengeState {
 }
 
 export function recordChallengePocket(state: ChallengeState, ballId: number): ChallengeState {
+  if (state.allPocketedBallIds.includes(ballId)) {
+    return state;
+  }
+
   return {
     ...state,
     targetsPocketed: state.targetsPocketed + 1,
@@ -99,14 +103,14 @@ export function recordChallengePocketWithRequired(
 }
 
 export function checkKickChain(state: ChallengeState, requireKickChain: [number, number]): boolean {
-  const [hitBall, kickedBall] = requireKickChain;
+  const [pocketedBall, kickedBall] = requireKickChain;
   const cueHitTarget = state.collisionChain.some(
-    ([a, b]) => (a === 0 && b === hitBall) || (a === hitBall && b === 0),
+    ([a, b]) => (a === 0 && b === pocketedBall) || (a === pocketedBall && b === 0),
   );
-  const targetKicked = state.collisionChain.some(
-    ([a, b]) => (a === hitBall && b === kickedBall) || (a === kickedBall && b === hitBall),
+  const cueKickedTarget = state.collisionChain.some(
+    ([a, b]) => (a === 0 && b === kickedBall) || (a === kickedBall && b === 0),
   );
-  return cueHitTarget && targetKicked;
+  return cueHitTarget && cueKickedTarget;
 }
 
 export function resetChallengeShot(state: ChallengeState): ChallengeState {
@@ -114,7 +118,6 @@ export function resetChallengeShot(state: ChallengeState): ChallengeState {
     ...state,
     collisionChain: [],
     requiredPocketViolation: false,
-    kickChainSatisfied: false,
     cuePocketed: false,
     ballsPocketedThisShot: [],
   };
@@ -140,6 +143,10 @@ export function revertCuePocketShot(state: ChallengeState, sortedTargetIds: numb
 }
 
 export function resolveChallengeResult(state: ChallengeState): ChallengeResult {
+  if (!state.kickChainSatisfied) {
+    return { passed: false, stars: 0 };
+  }
+
   if (state.targetsPocketed >= state.totalTargets) {
     if (state.shotsUsed <= state.starThresholds[0]) return { passed: true, stars: 3 };
     if (state.shotsUsed <= state.starThresholds[1]) return { passed: true, stars: 2 };
