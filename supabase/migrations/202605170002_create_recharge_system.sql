@@ -88,9 +88,9 @@ create policy "Users can read own wallet ledger"
   using (auth.uid() = user_id);
 
 create or replace function public.confirm_recharge_order(
-  order_id uuid,
-  provider_trade_no text,
-  provider_payload jsonb default '{}'::jsonb
+  p_order_id uuid,
+  p_provider_trade_no text,
+  p_provider_payload jsonb default '{}'::jsonb
 )
 returns table (
   order_id uuid,
@@ -110,7 +110,7 @@ begin
   select *
     into locked_order
     from public.recharge_orders
-   where id = confirm_recharge_order.order_id
+   where id = confirm_recharge_order.p_order_id
    for update;
 
   if not found then
@@ -166,8 +166,8 @@ begin
 
   update public.recharge_orders
      set status = 'paid',
-         provider_trade_no = confirm_recharge_order.provider_trade_no,
-         provider_payload = coalesce(confirm_recharge_order.provider_payload, '{}'::jsonb),
+         provider_trade_no = confirm_recharge_order.p_provider_trade_no,
+         provider_payload = coalesce(confirm_recharge_order.p_provider_payload, '{}'::jsonb),
          paid_at = now(),
          updated_at = now()
    where id = locked_order.id

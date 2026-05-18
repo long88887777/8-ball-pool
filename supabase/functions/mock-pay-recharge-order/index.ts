@@ -73,9 +73,9 @@ Deno.serve(async (req: Request) => {
 
   const providerTradeNo = `mock_${order.id}`;
   const { data, error } = await adminClient.rpc("confirm_recharge_order", {
-    order_id: order.id,
-    provider_trade_no: providerTradeNo,
-    provider_payload: {
+    p_order_id: order.id,
+    p_provider_trade_no: providerTradeNo,
+    p_provider_payload: {
       channel: "mock",
       confirmedBy: "mock-pay-recharge-order",
       confirmedAt: new Date().toISOString(),
