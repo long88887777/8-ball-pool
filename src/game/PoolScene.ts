@@ -36,9 +36,11 @@ import {
   TABLE,
   type Vector,
 } from './constants';
+import { normalizeGameRuleset, type GameRuleset } from './gameRules';
 import {
   clampBreakCuePosition,
   clampShotPower,
+  createNineBallRack,
   createTriangleRack,
   getCuePullback,
   isOnTableSurface,
@@ -46,7 +48,7 @@ import {
   projectRayToPlayArea,
   rayCircleIntersection,
 } from './geometry';
-import { formatMessage, getCopy, getInitialLanguage, type Language } from './i18n';
+import { formatMessage, getCopy, getInitialLanguage, type GameCopy, type Language } from './i18n';
 import {
   CUE_CATALOG,
   DAILY_CHECK_IN_REWARD,
@@ -136,6 +138,23 @@ import {
   type EightBallState,
 } from './eightBallRules';
 import {
+  acceptNineBallPushOut,
+  clearNineBallBallInHand,
+  createNineBallState,
+  getNineBallTargetDisplayBallIds,
+  getPocketedNineBallDisplayBallIds,
+  getRemainingNineBallCount,
+  passNineBallPushOut,
+  recordNineBallCushion,
+  recordNineBallFirstContact,
+  recordNineBallPocket,
+  recordNineBallTimeoutFoul,
+  resolveNineBallShot,
+  startNineBallShot,
+  type NineBallFoulReason,
+  type NineBallState,
+} from './nineBallRules';
+import {
   adjustAimPower,
   computeAimIntent,
   resolveFoulFeedbackTarget,
@@ -173,6 +192,7 @@ import type {
   SnapshotMessage,
   TurnEndMessage,
   ChatMessage,
+  PushOutChoiceMessage,
   NetworkBallSnapshot,
 } from '../online/types';
 import { supabase } from '../lib/supabase';
@@ -219,8 +239,10 @@ export class PoolScene extends Phaser.Scene {
   private handSprite!: Phaser.GameObjects.Image;
   private cuePlacementValid = true;
   private breakCuePlacementConfirmed = false;
+  private gameRuleset: GameRuleset = 'eight-ball';
   private state: GameState = createGameState(BALLS.length);
   private rules: EightBallState = createEightBallState();
+  private nineBallRules: NineBallState = createNineBallState();
   private aimState: AimState | null = null;
   private cuePlacementState: CuePlacementState | null = null;
   private wasMoving = false;
@@ -236,6 +258,10 @@ export class PoolScene extends Phaser.Scene {
   private coinResult?: HTMLElement;
   private victoryRestartButton?: HTMLButtonElement;
   private aimCancelButton?: HTMLButtonElement;
+  private pushOutPanel?: HTMLElement;
+  private pushOutDeclareButton?: HTMLButtonElement;
+  private pushOutTakeButton?: HTMLButtonElement;
+  private pushOutPassButton?: HTMLButtonElement;
   private dailyCheckInButton?: HTMLButtonElement;
   private cueShopOverlay?: HTMLElement;
   private cueShopCloseButton?: HTMLButtonElement;
@@ -271,6 +297,7 @@ export class PoolScene extends Phaser.Scene {
   private selectedSpin: Vector = SPIN_PRESETS.center;
   private spinPadPointerId: number | null = null;
   private ballPrevPositions = new Map<number, Vector>();
+  private nineBallPushOutDeclared = false;
   private language: Language = getInitialLanguage(navigator.language);
   private restartHandler = (): void => {
     if (this.gameMode === 'online') {
@@ -288,6 +315,15 @@ export class PoolScene extends Phaser.Scene {
   };
   private aimCancelHandler = (): void => {
     this.cancelAim();
+  };
+  private pushOutDeclareHandler = (): void => {
+    this.declareNineBallPushOut();
+  };
+  private pushOutTakeHandler = (): void => {
+    this.acceptNineBallPushOutChoice();
+  };
+  private pushOutPassHandler = (): void => {
+    this.passNineBallPushOutChoice();
   };
   private dailyCheckInHandler = (): void => {
     this.claimDailyCheckIn();
@@ -411,12 +447,14 @@ export class PoolScene extends Phaser.Scene {
     if (registryMode) {
       this.gameMode = registryMode;
     }
+    this.gameRuleset = normalizeGameRuleset(this.game.registry.get('gameRuleset'));
     this.aiDifficulty = normalizeAIDifficulty(this.game.registry.get('aiDifficulty'), 'normal');
     this.aiController = new AIController({ difficulty: this.aiDifficulty });
     this.createTextures();
     this.wallet = readPlayerWallet(this.storage());
     this.state = createGameState(BALLS.length, null);
     this.rules = createEightBallState();
+    this.nineBallRules = createNineBallState();
     this.drawRoom();
     this.drawTable();
     this.createHandTexture();
@@ -443,7 +481,9 @@ export class PoolScene extends Phaser.Scene {
     this.bindChatUI();
 
     if (this.gameMode === 'challenge') {
-      this.showChallengeSelect();
+      const challengeLevelId = this.game.registry.get('challengeLevelId') as number | undefined;
+      const level = CHALLENGE_LEVELS.find((item) => item.id === challengeLevelId) ?? CHALLENGE_LEVELS[0];
+      this.startChallengeLevel(level);
     }
 
     if (this.gameMode === 'online') {
@@ -457,6 +497,9 @@ export class PoolScene extends Phaser.Scene {
       this.languageButton?.removeEventListener('click', this.languageHandler);
       this.victoryRestartButton?.removeEventListener('click', this.victoryRestartHandler);
       this.aimCancelButton?.removeEventListener('click', this.aimCancelHandler);
+      this.pushOutDeclareButton?.removeEventListener('click', this.pushOutDeclareHandler);
+      this.pushOutTakeButton?.removeEventListener('click', this.pushOutTakeHandler);
+      this.pushOutPassButton?.removeEventListener('click', this.pushOutPassHandler);
       this.unbindEconomyUI();
       this.challengeBtn?.removeEventListener('click', this.challengeBtnHandler);
       document.querySelector<HTMLButtonElement>('#challenge-back')?.removeEventListener('click', this.challengeBackHandler);
@@ -559,20 +602,36 @@ export class PoolScene extends Phaser.Scene {
     this.targetBalls = [];
 
     this.cueBall = this.createBall(CUE_START, 'cue-ball', 'cue');
-    const rackPositions = createTriangleRack(RACK_CENTER, BALLS.length);
-    rackPositions.forEach((position, index) => {
-      this.targetBalls.push(this.createBall(position, `target-ball-${index}`, 'target', index + 1));
+    const rackBallCount = this.rackBallCount();
+    const rack = this.createRackBallStarts(rackBallCount);
+    rack.forEach(({ id, position }) => {
+      this.targetBalls.push(this.createBall(position, `target-ball-${id - 1}`, 'target', id));
     });
 
     this.physicsEngine.rack([
       { id: 0, kind: 'cue', position: CUE_START },
-      ...rackPositions.map((position, index) => ({
-        id: index + 1,
+      ...rack.map(({ id, position }) => ({
+        id,
         kind: 'target' as const,
         position,
-        label: index + 1,
+        label: id,
       })),
     ]);
+  }
+
+  private createRackBallStarts(count: number): Array<{ id: number; position: Vector }> {
+    if (this.gameRuleset === 'nine-ball') {
+      return createNineBallRack(RACK_CENTER);
+    }
+
+    return createTriangleRack(RACK_CENTER, count).map((position, index) => ({
+      id: index + 1,
+      position,
+    }));
+  }
+
+  private rackBallCount(): number {
+    return this.gameRuleset === 'nine-ball' ? 9 : BALLS.length;
   }
 
   private createBall(position: Vector, texture: string, kind: BallKind, ballId = 0): PoolBall {
@@ -664,7 +723,7 @@ export class PoolScene extends Phaser.Scene {
         } else {
           this.placeBallInHandCueBall(point);
           if (this.cuePlacementValid) {
-            this.rules = clearEightBallBallInHand(this.rules);
+            this.clearActiveBallInHand();
             this.updateHud();
             this.cuePlacementState = null;
             this.forbiddenIcon.setVisible(false);
@@ -738,6 +797,13 @@ export class PoolScene extends Phaser.Scene {
   private bindAimAssistUI(): void {
     this.aimCancelButton = document.querySelector<HTMLButtonElement>('#aim-cancel') ?? undefined;
     this.aimCancelButton?.addEventListener('click', this.aimCancelHandler);
+    this.pushOutPanel = document.querySelector<HTMLElement>('#nine-ball-pushout-panel') ?? undefined;
+    this.pushOutDeclareButton = document.querySelector<HTMLButtonElement>('#nine-ball-pushout-declare') ?? undefined;
+    this.pushOutTakeButton = document.querySelector<HTMLButtonElement>('#nine-ball-pushout-take') ?? undefined;
+    this.pushOutPassButton = document.querySelector<HTMLButtonElement>('#nine-ball-pushout-pass') ?? undefined;
+    this.pushOutDeclareButton?.addEventListener('click', this.pushOutDeclareHandler);
+    this.pushOutTakeButton?.addEventListener('click', this.pushOutTakeHandler);
+    this.pushOutPassButton?.addEventListener('click', this.pushOutPassHandler);
     this.updateAimHud();
   }
 
@@ -775,7 +841,6 @@ export class PoolScene extends Phaser.Scene {
 
     if (title) title.textContent = copy.challenge.title;
     if (backBtn) backBtn.textContent = copy.challenge.back;
-    this.challengeSelectOverlay.hidden = false;
 
     await this.challengeProgressSaveQueue.catch(() => undefined);
     const progress = await readProgressSupabase(supabase);
@@ -830,6 +895,7 @@ export class PoolScene extends Phaser.Scene {
     this.hideChallengeSelect();
     this.hideChallengeResult();
     this.gameMode = 'challenge';
+    this.gameRuleset = 'eight-ball';
     this.currentLevel = level;
     this.challengeState = createChallengeState(level);
     this.localMatchTracker = createLocalMatchTracker();
@@ -837,6 +903,7 @@ export class PoolScene extends Phaser.Scene {
 
     this.aiThinking = false;
     this.aiDecision = null;
+    this.nineBallPushOutDeclared = false;
     this.aimState = null;
     this.cuePlacementState = null;
     this.aimLine?.clear();
@@ -863,6 +930,7 @@ export class PoolScene extends Phaser.Scene {
     const targets = level.balls.filter(b => b.id !== 0);
     this.state = restartGame(targets.length, null);
     this.rules = createEightBallState();
+    this.nineBallRules = createNineBallState();
     targets.forEach((def, index) => {
       this.targetBalls.push(
         this.createBall(def.position, `target-ball-${index}`, 'target', def.id)
@@ -1111,7 +1179,7 @@ export class PoolScene extends Phaser.Scene {
     if (!this.victoryOverlay || !this.victoryTitle || !this.victoryDetail) return;
     const copy = getCopy(this.language);
     const isZh = this.language === 'zh';
-    const winner = this.rules.winner !== null ? this.rules.winner + 1 : 1;
+    const winner = this.activeWinner() !== null ? this.activeWinner()! + 1 : 1;
     const localWon = this.localPlayerWonCurrentMatch();
     this.settleMatchCoins(localWon);
     this.settleGrowthForMatch(localWon);
@@ -1379,11 +1447,7 @@ export class PoolScene extends Phaser.Scene {
   }
 
   private localPlayerWonCurrentMatch(): boolean {
-    if (this.gameMode === 'online' && this.roomInfo) {
-      const myIndex: 0 | 1 = this.roomInfo.isHost ? 0 : 1;
-      return this.rules.winner === myIndex;
-    }
-    return this.rules.winner === 0;
+    return this.activeGameOverWinnerForLocal();
   }
 
   private formatCoinResultText(): string {
@@ -1641,8 +1705,8 @@ export class PoolScene extends Phaser.Scene {
     return (
       !this.strikeLocked &&
       !this.cuePlacementState &&
-      !this.rules.cueBallInHand &&
-      !this.rules.gameOver &&
+      !this.activeCueBallInHand() &&
+      !this.activeGameOver() &&
       !this.aiThinking &&
       !this.isAITurn() &&
       !this.isOnlineOpponentTurn() &&
@@ -1655,8 +1719,8 @@ export class PoolScene extends Phaser.Scene {
       !this.strikeLocked &&
       this.state.strokes === 0 &&
       (this.gameMode !== 'challenge' || !this.breakCuePlacementConfirmed) &&
-      !this.rules.cueBallInHand &&
-      !this.rules.gameOver &&
+      !this.activeCueBallInHand() &&
+      !this.activeGameOver() &&
       !this.isAITurn() &&
       !this.isOnlineOpponentTurn() &&
       this.physicsEngine.isSettled()
@@ -1664,7 +1728,7 @@ export class PoolScene extends Phaser.Scene {
   }
 
   private canPlaceBallInHandCueBall(): boolean {
-    return !this.strikeLocked && this.rules.cueBallInHand && !this.rules.gameOver && !this.isAITurn() && !this.isOnlineOpponentTurn() && this.physicsEngine.isSettled();
+    return !this.strikeLocked && this.activeCueBallInHand() && !this.activeGameOver() && !this.isAITurn() && !this.isOnlineOpponentTurn() && this.physicsEngine.isSettled();
   }
 
   private isCuePlacementStart(point: Vector): boolean {
@@ -1794,9 +1858,9 @@ export class PoolScene extends Phaser.Scene {
         }
       },
     });
-    this.localMatchTracker = recordPlayerStroke(this.localMatchTracker, this.rules.currentPlayer);
+    this.localMatchTracker = recordPlayerStroke(this.localMatchTracker, this.activeCurrentPlayer());
     this.state = recordStroke(this.state);
-    this.rules = startEightBallShot(this.rules);
+    this.startRulesShot();
     this.shotClockRemaining = SHOT_CLOCK_SECONDS;
     this.updateHud();
   }
@@ -1989,7 +2053,7 @@ export class PoolScene extends Phaser.Scene {
       }
       if (event.type === 'cushion') {
         if (this.gameMode !== 'challenge') {
-          this.rules = recordEightBallCushion(this.rules, event.ballId);
+          this.recordRulesCushion(event.ballId);
         }
         this.audio.play('rail');
         continue;
@@ -2020,7 +2084,7 @@ export class PoolScene extends Phaser.Scene {
         this.audio.play('pocket');
         continue;
       }
-      this.rules = recordEightBallPocket(this.rules, event.ballId);
+      this.recordRulesPocket(event.ballId);
       this.audio.play('pocket');
       this.updateHud();
     }
@@ -2035,12 +2099,12 @@ export class PoolScene extends Phaser.Scene {
       if (this.shouldIgnoreObjectBallContact(otherBallId)) {
         return;
       }
-      this.rules = recordEightBallFirstContact(this.rules, otherBallId);
+      this.recordRulesFirstContact(otherBallId);
     } else if (otherBallId === 0 && ballId !== 0) {
       if (this.shouldIgnoreObjectBallContact(ballId)) {
         return;
       }
-      this.rules = recordEightBallFirstContact(this.rules, ballId);
+      this.recordRulesFirstContact(ballId);
     }
   }
 
@@ -2068,7 +2132,7 @@ export class PoolScene extends Phaser.Scene {
         continue;
       }
 
-      if (snapshot.id !== 0 && this.rules.pocketedBallIds.includes(snapshot.id) && !snapshot.pocketed) {
+      if (snapshot.id !== 0 && this.activePocketedBallIds().includes(snapshot.id) && !snapshot.pocketed) {
         this.physicsEngine.pocketBall(snapshot.id);
         ball.pocketed = true;
         ball.setVisible(false);
@@ -2221,34 +2285,36 @@ export class PoolScene extends Phaser.Scene {
       return;
     }
 
-    if (this.rules.shot.pocketedBallIds.includes(0)) {
+    if (this.activeShotPocketedBallIds().includes(0)) {
       this.physicsEngine.resetCueBall(CUE_START);
       this.syncBallsFromPhysics(this.physicsEngine.getBalls());
     }
-    const playerBeforeResolve = this.rules.currentPlayer;
-    const foulBeforeResolve = this.rules.shot;
-    this.rules = resolveEightBallShot(this.rules);
-    if (this.rules.lastFoul) {
-      this.showFoulFeedback(this.rules.lastFoul, foulBeforeResolve.firstContactBallId);
+    const playerBeforeResolve = this.activeCurrentPlayer();
+    const foulBeforeResolve = this.activeFirstContactBallId();
+    this.resolveActiveShot();
+    this.spotNineBallIfNeeded();
+    const lastFoul = this.activeLastFoul();
+    if (lastFoul) {
+      this.showFoulFeedback(lastFoul, foulBeforeResolve);
     }
 
-    if (this.rules.gameOver && this.rules.messageKey === 'eightBallLoss') {
+    if (this.activeGameOver() && this.rules.messageKey === 'eightBallLoss') {
       this.shotClockRemaining = 0;
     }
 
-    if (!this.rules.gameOver && this.rules.currentPlayer !== playerBeforeResolve) {
+    if (!this.activeGameOver() && this.activeCurrentPlayer() !== playerBeforeResolve) {
       this.shotClockRemaining = SHOT_CLOCK_SECONDS;
-    } else if (!this.rules.gameOver && !this.rules.cueBallInHand) {
+    } else if (!this.activeGameOver() && !this.activeCueBallInHand()) {
       this.shotClockRemaining = SHOT_CLOCK_SECONDS;
     }
     this.updateHud();
 
-    if (!this.rules.gameOver && this.isAITurn() && !this.aiThinking) {
+    if (!this.activeGameOver() && this.isAITurn() && !this.aiThinking) {
       this.scheduleAITurn();
     }
   }
 
-  private showFoulFeedback(reason: EightBallFoulReason, firstContactBallId: number | null): void {
+  private showFoulFeedback(reason: EightBallFoulReason | NineBallFoulReason, firstContactBallId: number | null): void {
     this.lastFoulFeedback = resolveFoulFeedbackTarget(
       reason,
       this.cuePosition(),
@@ -2257,6 +2323,57 @@ export class PoolScene extends Phaser.Scene {
     );
     this.foulFeedbackUntil = this.time.now + FOUL_FEEDBACK_MS;
     this.renderFoulFeedback();
+  }
+
+  private spotNineBallIfNeeded(): void {
+    if (this.gameRuleset !== 'nine-ball' || this.nineBallRules.gameOver) {
+      return;
+    }
+    if (this.nineBallRules.pocketedBallIds.includes(9)) {
+      return;
+    }
+
+    const nineBall = this.targetBalls.find((ball) => ball.ballId === 9);
+    if (!nineBall?.pocketed && !this.pocketAnimatingBalls.has(9)) {
+      return;
+    }
+
+    if (this.tweens && nineBall) {
+      this.tweens.killTweensOf(nineBall);
+    }
+
+    const spot = this.nineBallSpot();
+    this.physicsEngine.resetBall(9, spot);
+    if (nineBall) {
+      nineBall.pocketed = false;
+      nineBall.setPosition(spot.x, spot.y);
+      nineBall.setVisible(true);
+      nineBall.setScale(1);
+      nineBall.setAlpha(1);
+      nineBall.setDepth(DEPTH.ball);
+    }
+    this.pocketAnimatingBalls.delete(9);
+    this.ballPocketMap.delete(9);
+    this.syncBallsFromPhysics(this.physicsEngine.getBalls(), { animatePocketed: false });
+  }
+
+  private nineBallSpot(): Vector {
+    const horizontalGap = BALL_RADIUS * 2.08;
+    for (let step = 0; step < 8; step += 1) {
+      const spot = {
+        x: Math.min(RACK_CENTER.x + horizontalGap * step, PLAY_AREA.right - BALL_RADIUS),
+        y: RACK_CENTER.y,
+      };
+      const blocked = this.targetBalls.some((ball) => {
+        if (ball.ballId === 9 || ball.pocketed) return false;
+        return Math.hypot(ball.x - spot.x, ball.y - spot.y) < BALL_RADIUS * 2 + 1;
+      });
+      if (!blocked) {
+        return spot;
+      }
+    }
+
+    return { x: PLAY_AREA.right - BALL_RADIUS, y: RACK_CENTER.y };
   }
 
   private renderFoulFeedback(): void {
@@ -2301,11 +2418,11 @@ export class PoolScene extends Phaser.Scene {
       this.cuePlacementState = null;
       this.aimLine.clear();
       this.cueGraphics.clear();
-      this.rules = recordEightBallTimeoutFoul(this.rules);
+      this.recordActiveTimeoutFoul();
       this.shotClockRemaining = SHOT_CLOCK_SECONDS;
       this.updateHud();
 
-      if (!this.rules.gameOver && this.isAITurn() && !this.aiThinking) {
+      if (!this.activeGameOver() && this.isAITurn() && !this.aiThinking) {
         this.scheduleAITurn();
       }
       return;
@@ -2317,7 +2434,7 @@ export class PoolScene extends Phaser.Scene {
   private shouldRunShotClock(): boolean {
     if (this.gameMode === 'online') return false;
     return (
-      !this.rules.gameOver &&
+      !this.activeGameOver() &&
       !this.strikeLocked &&
       !this.isAITurn() &&
       this.physicsEngine.isSettled()
@@ -2325,11 +2442,11 @@ export class PoolScene extends Phaser.Scene {
   }
 
   private isAITurn(): boolean {
-    return this.gameMode === 'ai' && this.rules.currentPlayer === 1;
+    return this.gameMode === 'ai' && this.activeCurrentPlayer() === 1;
   }
 
   private scheduleAITurn(): void {
-    if (this.aiThinking || this.rules.gameOver) return;
+    if (this.aiThinking || this.activeGameOver()) return;
     this.aiThinking = true;
     this.updateHud();
     setTimeout(() => {
@@ -2339,7 +2456,12 @@ export class PoolScene extends Phaser.Scene {
 
   private executeAITurn(): void {
     const ballPositions = this.getTableBallPositions();
-    const decision = this.aiController.computeDecision(ballPositions, this.rules);
+    const decision = this.aiController.computeDecision(
+      ballPositions,
+      this.rules,
+      this.gameRuleset,
+      this.nineBallRules,
+    );
 
     if (!decision) {
       this.aiThinking = false;
@@ -2352,7 +2474,7 @@ export class PoolScene extends Phaser.Scene {
     if (decision.placementPosition) {
       this.physicsEngine.resetCueBall(decision.placementPosition);
       this.syncBallsFromPhysics(this.physicsEngine.getBalls());
-      this.rules = clearEightBallBallInHand(this.rules);
+      this.clearActiveBallInHand();
     }
 
     this.showAIAimLine(decision);
@@ -2390,9 +2512,9 @@ export class PoolScene extends Phaser.Scene {
       },
     });
 
-    this.localMatchTracker = recordPlayerStroke(this.localMatchTracker, this.rules.currentPlayer);
+    this.localMatchTracker = recordPlayerStroke(this.localMatchTracker, this.activeCurrentPlayer());
     this.state = recordStroke(this.state);
-    this.rules = startEightBallShot(this.rules);
+    this.startRulesShot();
     this.shotClockRemaining = SHOT_CLOCK_SECONDS;
     this.updateHud();
   }
@@ -2438,6 +2560,7 @@ export class PoolScene extends Phaser.Scene {
   private restartRack(): void {
     this.aiThinking = false;
     this.aiDecision = null;
+    this.nineBallPushOutDeclared = false;
     this.aimState = null;
     this.cuePlacementState = null;
     this.aimLine?.clear();
@@ -2450,8 +2573,9 @@ export class PoolScene extends Phaser.Scene {
     this.breakCuePlacementConfirmed = false;
     this.ballPrevPositions.clear();
     this.createBalls();
-    this.state = restartGame(BALLS.length, null);
+    this.state = restartGame(this.rackBallCount(), null);
     this.rules = createEightBallState();
+    this.nineBallRules = createNineBallState();
     this.localMatchTracker = createLocalMatchTracker();
     this.shotClockRemaining = SHOT_CLOCK_SECONDS;
     this.wasMoving = false;
@@ -2485,9 +2609,10 @@ export class PoolScene extends Phaser.Scene {
       return;
     }
     const messageText = this.formatCurrentMessageText();
-    const currentPlayer = this.rules.players[this.rules.currentPlayer];
-    const opponentPlayer = this.rules.players[this.rules.currentPlayer === 0 ? 1 : 0];
-    const remainingObjectBalls = getRemainingEightBallCount(this.rules);
+    const currentPlayerIndex = this.activeCurrentPlayer();
+    const currentPlayer = this.rules.players[currentPlayerIndex];
+    const opponentPlayer = this.rules.players[currentPlayerIndex === 0 ? 1 : 0];
+    const remainingObjectBalls = this.remainingObjectBallCount();
     document.documentElement.lang = this.language === 'zh' ? 'zh-CN' : 'en';
     document.title = copy.documentTitle;
 
@@ -2512,16 +2637,16 @@ export class PoolScene extends Phaser.Scene {
     const spinLabel = document.querySelector('#spin-label');
     const message = document.querySelector('#message');
 
-    if (eyebrow) eyebrow.textContent = copy.eyebrow;
+    if (eyebrow) eyebrow.textContent = this.matchEyebrowLabel(copy);
     if (title) title.textContent = copy.title;
-    if (playerLabel) playerLabel.textContent = copy.hud.currentPlayer(this.rules.currentPlayer + 1);
-    if (opponentLabel) opponentLabel.textContent = copy.hud.currentPlayer(this.rules.currentPlayer === 0 ? 2 : 1);
+    if (playerLabel) playerLabel.textContent = copy.hud.currentPlayer(currentPlayerIndex + 1);
+    if (opponentLabel) opponentLabel.textContent = copy.hud.currentPlayer(currentPlayerIndex === 0 ? 2 : 1);
     if (playerOneName) playerOneName.textContent = copy.hud.playerName(1);
     if (playerTwoName) playerTwoName.textContent = copy.hud.playerName(2);
-    if (playerOneTurn) playerOneTurn.textContent = this.rules.currentPlayer === 0 ? copy.hud.activeTurn : copy.hud.waitingTurn;
-    if (playerTwoTurn) playerTwoTurn.textContent = this.rules.currentPlayer === 1 ? copy.hud.activeTurn : copy.hud.waitingTurn;
-    if (playerOneGroup) playerOneGroup.textContent = copy.hud.playerGroup(this.rules.players[0].group);
-    if (playerTwoGroup) playerTwoGroup.textContent = copy.hud.playerGroup(this.rules.players[1].group);
+    if (playerOneTurn) playerOneTurn.textContent = currentPlayerIndex === 0 ? copy.hud.activeTurn : copy.hud.waitingTurn;
+    if (playerTwoTurn) playerTwoTurn.textContent = currentPlayerIndex === 1 ? copy.hud.activeTurn : copy.hud.waitingTurn;
+    if (playerOneGroup) playerOneGroup.textContent = this.gameRuleset === 'nine-ball' ? copy.hud.openTargets : copy.hud.playerGroup(this.rules.players[0].group);
+    if (playerTwoGroup) playerTwoGroup.textContent = this.gameRuleset === 'nine-ball' ? copy.hud.openTargets : copy.hud.playerGroup(this.rules.players[1].group);
     if (playerOneTargetLabel) playerOneTargetLabel.textContent = copy.hud.targetBalls;
     if (playerTwoTargetLabel) playerTwoTargetLabel.textContent = copy.hud.targetBalls;
     if (pocketedBallLabel) pocketedBallLabel.textContent = copy.hud.pocketedBalls;
@@ -2530,7 +2655,7 @@ export class PoolScene extends Phaser.Scene {
     if (this.restartButton) this.restartButton.textContent = this.gameMode === 'online' ? '认输' : copy.hud.restart;
     if (mode) {
       mode.hidden = false;
-      mode.textContent = copy.hud.eightBallMode;
+      mode.textContent = this.gameRuleset === 'nine-ball' ? copy.hud.nineBallMode : copy.hud.eightBallMode;
     }
     if (groupStatus) groupStatus.textContent = copy.hud.playerGroup(currentPlayer.group);
     if (strokes) {
@@ -2552,7 +2677,7 @@ export class PoolScene extends Phaser.Scene {
     if (this.gameMode === 'ai') {
       const difficultyLabel = copy.ai.difficulty[this.aiDifficulty];
       if (playerTwoName) playerTwoName.textContent = copy.ai.playerNameWithDifficulty(difficultyLabel);
-      if (mode) mode.textContent = `${copy.hud.modeAi} · ${difficultyLabel}`;
+      if (mode) mode.textContent = `${copy.hud.modeAi} · ${difficultyLabel} · ${this.rulesetLabel()}`;
     }
     if (this.gameMode === 'online' && this.roomInfo) {
       const hostName = this.roomInfo.isHost ? this.roomInfo.myNickname : this.roomInfo.opponentNickname;
@@ -2568,12 +2693,12 @@ export class PoolScene extends Phaser.Scene {
     }
 
     this.updateSpinControl();
-    this.renderDomBallList('#pocketed-ball-strip', getPocketedDisplayBallIds(this.rules), copy.hud.noPocketedBalls);
-    this.renderDomBallList('#player-one-targets', getPlayerTargetDisplayBallIds(this.rules, 0), copy.hud.openTargets);
-    this.renderDomBallList('#player-two-targets', getPlayerTargetDisplayBallIds(this.rules, 1), copy.hud.openTargets);
+    this.renderDomBallList('#pocketed-ball-strip', this.pocketedDisplayBallIds(), copy.hud.noPocketedBalls);
+    this.renderDomBallList('#player-one-targets', this.targetDisplayBallIds(0), copy.hud.openTargets);
+    this.renderDomBallList('#player-two-targets', this.targetDisplayBallIds(1), copy.hud.openTargets);
     this.updateShotClockHud();
     this.updateOnlineNetworkHud();
-    if (this.rules.gameOver && this.gameMode !== 'online') {
+    if (this.activeGameOver() && this.gameMode !== 'online') {
       this.showVictoryScreen();
     }
   }
@@ -2594,6 +2719,16 @@ export class PoolScene extends Phaser.Scene {
     networkStatus.hidden = false;
     networkStatus.dataset.status = health.status;
     networkStatus.textContent = this.formatNetworkStatusText(health.status, health.remainingProtectionSeconds);
+  }
+
+  private matchEyebrowLabel(copy: GameCopy): string {
+    if (this.gameMode === 'ai') {
+      return copy.hud.modeAi;
+    }
+    if (this.gameMode === 'online') {
+      return this.language === 'zh' ? '联网对战' : 'Online Battle';
+    }
+    return copy.eyebrow;
   }
 
   private formatNetworkStatusText(status: string, remainingProtectionSeconds: number | null): string {
@@ -2628,7 +2763,7 @@ export class PoolScene extends Phaser.Scene {
   }
 
   private activeHudPlayer(): 0 | 1 | null {
-    if (this.rules.gameOver) {
+    if (this.activeGameOver()) {
       return null;
     }
 
@@ -2644,7 +2779,7 @@ export class PoolScene extends Phaser.Scene {
       return null;
     }
 
-    return this.rules.currentPlayer;
+    return this.activeCurrentPlayer();
   }
 
   private updatePlayerClockCard(card: HTMLElement | null, active: boolean, progress: number): void {
@@ -2712,6 +2847,7 @@ export class PoolScene extends Phaser.Scene {
     if (cancelButton) {
       cancelButton.hidden = !active;
     }
+    this.updateNineBallPushOutControl();
 
     const percent = intent ? Math.round(intent.power * 100) : 0;
     if (powerValue) {
@@ -2732,6 +2868,85 @@ export class PoolScene extends Phaser.Scene {
         shotState.textContent = this.language === 'zh' ? '力度过轻，松开会取消' : 'Too soft: release cancels';
       }
     }
+  }
+
+  private updateNineBallPushOutControl(): void {
+    if (!this.pushOutPanel) {
+      return;
+    }
+
+    const canUsePushOut =
+      this.gameRuleset === 'nine-ball' &&
+      this.gameMode !== 'challenge' &&
+      !this.activeGameOver() &&
+      !this.isAITurn() &&
+      !this.isOnlineOpponentTurn() &&
+      this.physicsEngine.isSettled();
+    const canDeclare = canUsePushOut && this.nineBallRules.pushOutAvailable && !this.nineBallRules.pushOutDecision;
+    const canChoose = canUsePushOut && this.nineBallRules.pushOutDecision !== null;
+
+    this.pushOutPanel.hidden = !canDeclare && !canChoose && !this.nineBallPushOutDeclared;
+    if (this.pushOutDeclareButton) {
+      this.pushOutDeclareButton.hidden = canChoose;
+      this.pushOutDeclareButton.disabled = !canDeclare || this.nineBallPushOutDeclared;
+      this.pushOutDeclareButton.textContent = this.nineBallPushOutDeclared
+        ? (this.language === 'zh' ? '已声明 Push Out' : 'Push Out declared')
+        : 'Push Out';
+    }
+    if (this.pushOutTakeButton) {
+      this.pushOutTakeButton.hidden = !canChoose;
+    }
+    if (this.pushOutPassButton) {
+      this.pushOutPassButton.hidden = !canChoose;
+    }
+  }
+
+  private declareNineBallPushOut(): void {
+    if (
+      this.gameRuleset !== 'nine-ball' ||
+      !this.nineBallRules.pushOutAvailable ||
+      this.nineBallRules.pushOutDecision ||
+      !this.canAim()
+    ) {
+      return;
+    }
+
+    this.nineBallPushOutDeclared = true;
+    this.updateHud();
+  }
+
+  private acceptNineBallPushOutChoice(): void {
+    if (this.gameRuleset !== 'nine-ball' || !this.nineBallRules.pushOutDecision || !this.canAim()) {
+      return;
+    }
+
+    this.nineBallRules = acceptNineBallPushOut(this.nineBallRules);
+    this.syncEightBallCurrentPlayer();
+    this.sendPushOutChoice(true);
+    this.updateHud();
+  }
+
+  private passNineBallPushOutChoice(): void {
+    if (this.gameRuleset !== 'nine-ball' || !this.nineBallRules.pushOutDecision || !this.canAim()) {
+      return;
+    }
+
+    this.nineBallRules = passNineBallPushOut(this.nineBallRules);
+    this.syncEightBallCurrentPlayer();
+    this.sendPushOutChoice(false);
+    this.updateHud();
+  }
+
+  private sendPushOutChoice(accepted: boolean): void {
+    if (this.gameMode !== 'online' || !this.onlineChannel) {
+      return;
+    }
+
+    this.onlineChannel.send({
+      type: 'push_out_choice',
+      accepted,
+      nextPlayer: this.nineBallRules.currentPlayer,
+    });
   }
 
   private selectedSpinPreset(): CueSpinPreset | null {
@@ -2778,6 +2993,134 @@ export class PoolScene extends Phaser.Scene {
     return empty;
   }
 
+  private activeCurrentPlayer(): 0 | 1 {
+    return this.gameRuleset === 'nine-ball' ? this.nineBallRules.currentPlayer : this.rules.currentPlayer;
+  }
+
+  private activeCueBallInHand(): boolean {
+    return this.gameRuleset === 'nine-ball' ? this.nineBallRules.cueBallInHand : this.rules.cueBallInHand;
+  }
+
+  private activeGameOver(): boolean {
+    return this.gameRuleset === 'nine-ball' ? this.nineBallRules.gameOver : this.rules.gameOver;
+  }
+
+  private activeWinner(): 0 | 1 | null {
+    return this.gameRuleset === 'nine-ball' ? this.nineBallRules.winner : this.rules.winner;
+  }
+
+  private activeLastFoul(): EightBallFoulReason | NineBallFoulReason | null {
+    return this.gameRuleset === 'nine-ball' ? this.nineBallRules.lastFoul : this.rules.lastFoul;
+  }
+
+  private activeShotPocketedBallIds(): number[] {
+    return this.gameRuleset === 'nine-ball'
+      ? this.nineBallRules.shot.pocketedBallIds
+      : this.rules.shot.pocketedBallIds;
+  }
+
+  private activeFirstContactBallId(): number | null {
+    return this.gameRuleset === 'nine-ball'
+      ? this.nineBallRules.shot.firstContactBallId
+      : this.rules.shot.firstContactBallId;
+  }
+
+  private activePocketedBallIds(): number[] {
+    return this.gameRuleset === 'nine-ball'
+      ? this.nineBallRules.pocketedBallIds
+      : this.rules.pocketedBallIds;
+  }
+
+  private startRulesShot(forcePushOut = false): void {
+    if (this.gameRuleset === 'nine-ball') {
+      this.nineBallRules = startNineBallShot(this.nineBallRules, { pushOut: forcePushOut || this.nineBallPushOutDeclared });
+      this.nineBallPushOutDeclared = false;
+      return;
+    }
+    this.rules = startEightBallShot(this.rules);
+  }
+
+  private recordRulesFirstContact(ballId: number): void {
+    if (this.gameRuleset === 'nine-ball') {
+      this.nineBallRules = recordNineBallFirstContact(this.nineBallRules, ballId);
+      return;
+    }
+    this.rules = recordEightBallFirstContact(this.rules, ballId);
+  }
+
+  private recordRulesCushion(ballId: number): void {
+    if (this.gameRuleset === 'nine-ball') {
+      this.nineBallRules = recordNineBallCushion(this.nineBallRules, ballId);
+      return;
+    }
+    this.rules = recordEightBallCushion(this.rules, ballId);
+  }
+
+  private recordRulesPocket(ballId: number): void {
+    if (this.gameRuleset === 'nine-ball') {
+      this.nineBallRules = recordNineBallPocket(this.nineBallRules, ballId);
+      return;
+    }
+    this.rules = recordEightBallPocket(this.rules, ballId);
+  }
+
+  private resolveActiveShot(): void {
+    if (this.gameRuleset === 'nine-ball') {
+      this.nineBallRules = resolveNineBallShot(this.nineBallRules);
+      this.syncEightBallCurrentPlayer();
+      return;
+    }
+    this.rules = resolveEightBallShot(this.rules);
+  }
+
+  private recordActiveTimeoutFoul(): void {
+    if (this.gameRuleset === 'nine-ball') {
+      this.nineBallRules = recordNineBallTimeoutFoul(this.nineBallRules);
+      this.syncEightBallCurrentPlayer();
+      return;
+    }
+    this.rules = recordEightBallTimeoutFoul(this.rules);
+  }
+
+  private clearActiveBallInHand(): void {
+    if (this.gameRuleset === 'nine-ball') {
+      this.nineBallRules = clearNineBallBallInHand(this.nineBallRules);
+      this.syncEightBallCurrentPlayer();
+      return;
+    }
+    this.rules = clearEightBallBallInHand(this.rules);
+  }
+
+  private syncEightBallCurrentPlayer(): void {
+    if (this.rules.currentPlayer !== this.nineBallRules.currentPlayer) {
+      this.rules = { ...this.rules, currentPlayer: this.nineBallRules.currentPlayer };
+    }
+  }
+
+  private remainingObjectBallCount(): number {
+    return this.gameRuleset === 'nine-ball'
+      ? getRemainingNineBallCount(this.nineBallRules)
+      : getRemainingEightBallCount(this.rules);
+  }
+
+  private pocketedDisplayBallIds(): number[] {
+    return this.gameRuleset === 'nine-ball'
+      ? getPocketedNineBallDisplayBallIds(this.nineBallRules)
+      : getPocketedDisplayBallIds(this.rules);
+  }
+
+  private targetDisplayBallIds(player: 0 | 1): number[] {
+    return this.gameRuleset === 'nine-ball'
+      ? getNineBallTargetDisplayBallIds(this.nineBallRules)
+      : getPlayerTargetDisplayBallIds(this.rules, player);
+  }
+
+  private rulesetLabel(): string {
+    return this.language === 'zh'
+      ? (this.gameRuleset === 'nine-ball' ? '9 球' : '8 球')
+      : (this.gameRuleset === 'nine-ball' ? '9-Ball' : '8-Ball');
+  }
+
   // --- Online Mode ---
 
   private isOnlineOpponentTurn(): boolean {
@@ -2800,6 +3143,8 @@ export class PoolScene extends Phaser.Scene {
     this.onlineChannel.join({
       roomId: this.roomInfo.roomId,
       userId: this.roomInfo.myUserId,
+      opponentId: this.roomInfo.opponentId,
+      isHost: this.roomInfo.isHost,
       callbacks: {
         onMessage: (msg) => this.handleOnlineMessage(msg),
         onPresence: (event) => this.handleOnlinePresence(event),
@@ -2866,6 +3211,10 @@ export class PoolScene extends Phaser.Scene {
       this.handleOpponentTurnEnd(msg);
       return;
     }
+    if (msg.type === 'push_out_choice') {
+      this.handlePushOutChoice(msg);
+      return;
+    }
     if (msg.type === 'game_over') {
       const myIndex = this.roomInfo!.isHost ? 0 : 1;
       const iWin = msg.winner === myIndex;
@@ -2920,10 +3269,32 @@ export class PoolScene extends Phaser.Scene {
       contactOffset: msg.contactOffset,
     });
     this.wasMoving = true;
-    this.localMatchTracker = recordPlayerStroke(this.localMatchTracker, this.rules.currentPlayer);
+    this.localMatchTracker = recordPlayerStroke(this.localMatchTracker, this.activeCurrentPlayer());
     this.state = recordStroke(this.state);
-    this.rules = startEightBallShot(this.rules);
+    this.startRulesShot(msg.pushOut === true);
     this.audio.play('cue');
+  }
+
+  private handlePushOutChoice(msg: PushOutChoiceMessage): void {
+    if (this.gameRuleset !== 'nine-ball') {
+      return;
+    }
+
+    this.nineBallRules = {
+      ...(msg.accepted ? acceptNineBallPushOut(this.nineBallRules) : passNineBallPushOut(this.nineBallRules)),
+      currentPlayer: msg.nextPlayer,
+    };
+    this.syncEightBallCurrentPlayer();
+    if (!this.onlineState || !this.roomInfo) {
+      this.updateHud();
+      return;
+    }
+
+    const myIndex: 0 | 1 = this.roomInfo.isHost ? 0 : 1;
+    this.onlineState = msg.nextPlayer === myIndex
+      ? transitionToMyTurn(this.onlineState)
+      : transitionToOpponentTurn(this.onlineState);
+    this.updateHud();
   }
 
   private handleOpponentSnapshot(msg: SnapshotMessage): void {
@@ -2980,6 +3351,9 @@ export class PoolScene extends Phaser.Scene {
 
   private formatCurrentMessageText(): string {
     const copy = getCopy(this.language);
+    if (this.gameRuleset === 'nine-ball') {
+      return this.formatNineBallMessageText();
+    }
     const rawMessageValues =
       this.rules.messageKey === 'eightBallReady' && !this.rules.messageValues
         ? { player: this.rules.currentPlayer + 1 }
@@ -3004,6 +3378,37 @@ export class PoolScene extends Phaser.Scene {
     return formatMessage(copy.message[this.rules.messageKey], messageValues);
   }
 
+  private formatNineBallMessageText(): string {
+    const copy = getCopy(this.language);
+    const rawMessageValues =
+      this.nineBallRules.messageKey === 'nineBallReady' && !this.nineBallRules.messageValues
+        ? { player: this.nineBallRules.currentPlayer + 1 }
+        : (this.nineBallRules.messageValues ?? {});
+    const messageValues = {
+      ...rawMessageValues,
+      player: this.formatPlayerMessageValue(rawMessageValues.player) ?? '',
+      winner: this.formatPlayerMessageValue(rawMessageValues.winner) ?? '',
+      loser: this.formatPlayerMessageValue(rawMessageValues.loser) ?? '',
+      reason: this.formatFoulReason(rawMessageValues.reason),
+    };
+    return formatMessage(copy.message[this.nineBallRules.messageKey], messageValues);
+  }
+
+  private formatFoulReason(reason: string | number | undefined): string | number {
+    if (
+      reason === 'cueBallPocketed' ||
+      reason === 'noFirstContact' ||
+      reason === 'wrongFirstContact' ||
+      reason === 'noCushionAfterContact' ||
+      reason === 'illegalBreak' ||
+      reason === 'shotClockExpired'
+    ) {
+      return getCopy(this.language).foulReason[reason];
+    }
+
+    return reason ?? '';
+  }
+
   private formatPlayerMessageValue(value: string | number | undefined): string | number | undefined {
     if (value !== 1 && value !== 2) {
       return value;
@@ -3025,6 +3430,16 @@ export class PoolScene extends Phaser.Scene {
     return getCopy(this.language).hud.currentPlayer(player);
   }
 
+  private activeGameOverWinnerForLocal(): boolean {
+    const winner = this.activeWinner();
+    if (winner === null) return false;
+    if (this.gameMode === 'online' && this.roomInfo) {
+      const myIndex: 0 | 1 = this.roomInfo.isHost ? 0 : 1;
+      return winner === myIndex;
+    }
+    return winner === 0;
+  }
+
   private sendOnlineShot(direction: Vector, power: number, contactOffset: Vector, cueBallPos: Vector): void {
     if (!this.onlineChannel || !this.onlineState) return;
     const ballsSnapshot: NetworkBallSnapshot[] = this.physicsEngine.getNetworkSnapshot();
@@ -3034,6 +3449,7 @@ export class PoolScene extends Phaser.Scene {
       power,
       contactOffset,
       cueBallPos,
+      pushOut: this.gameRuleset === 'nine-ball' ? this.nineBallRules.shot.pushOut : undefined,
       ballsSnapshot,
     });
     this.logOnlineAuditEvent('shot_sent', {
@@ -3095,26 +3511,25 @@ export class PoolScene extends Phaser.Scene {
     if (this.onlineState.phase !== 'watching_my_shot') return;
     this.alignRulesCurrentPlayerWithOnlineShooter('me');
     this.sendOnlineResult();
-    const pocketedBallIds = this.rules.shot.pocketedBallIds.slice();
+    const pocketedBallIds = this.activeShotPocketedBallIds().slice();
     if (pocketedBallIds.includes(0)) {
       this.physicsEngine.resetCueBall(CUE_START);
       this.syncBallsFromPhysics(this.physicsEngine.getBalls());
     }
-    const playerBeforeResolve = this.rules.currentPlayer;
-    this.rules = resolveEightBallShot(this.rules);
+    const playerBeforeResolve = this.activeCurrentPlayer();
+    this.resolveActiveShot();
     const myIndex: 0 | 1 = this.roomInfo!.isHost ? 0 : 1;
     const opponentIndex: 0 | 1 = this.roomInfo!.isHost ? 1 : 0;
-    const foul = this.rules.cueBallInHand;
-    const gameOver = this.rules.gameOver;
+    const foul = this.activeCueBallInHand();
+    const gameOver = this.activeGameOver();
     let winner: 0 | 1 | null = null;
     let nextPlayer: 0 | 1 = myIndex;
     if (gameOver) {
-      const eightBallLoss = this.rules.messageKey === 'eightBallLoss';
-      winner = eightBallLoss ? opponentIndex : myIndex;
+      winner = this.activeWinner() ?? myIndex;
     } else {
-      nextPlayer = this.rules.currentPlayer === playerBeforeResolve ? myIndex : opponentIndex;
+      nextPlayer = this.activeCurrentPlayer() === playerBeforeResolve ? myIndex : opponentIndex;
     }
-    this.sendOnlineTurnEnd(foul, this.rules.cueBallInHand, nextPlayer, pocketedBallIds, gameOver, winner);
+    this.sendOnlineTurnEnd(foul, this.activeCueBallInHand(), nextPlayer, pocketedBallIds, gameOver, winner);
     if (gameOver) {
       this.onlineState = transitionToGameOver(this.onlineState, winner!, 'normal');
       this.showOnlineGameOver(winner === myIndex, 'normal');
@@ -3170,33 +3585,28 @@ export class PoolScene extends Phaser.Scene {
         this.syncBallsFromPhysics(this.physicsEngine.getBalls());
       }
       for (const ballId of msg.pocketedBallIds) {
-        this.rules = recordEightBallPocket(this.rules, ballId);
+        this.recordRulesPocket(ballId);
         if (ballId !== 0) {
           this.physicsEngine.pocketBall(ballId);
         }
       }
-      const groupBeforeTurnEnd = this.rules.players[shooterIndex].group;
+      const groupBeforeTurnEnd = this.gameRuleset === 'eight-ball' ? this.rules.players[shooterIndex].group : null;
       if (!msg.foul) {
-        this.rules = this.assignOnlineGroupsFromPocketed(this.rules, shooterIndex, msg.pocketedBallIds);
+        if (this.gameRuleset === 'eight-ball') {
+          this.rules = this.assignOnlineGroupsFromPocketed(this.rules, shooterIndex, msg.pocketedBallIds);
+        }
       }
       const groupsAssignedFromTurnEnd =
-        groupBeforeTurnEnd === null && this.rules.players[shooterIndex].group !== null;
-      this.rules = resolveEightBallShot(this.rules);
-      this.rules = this.applyAuthoritativeTurnEnd(this.rules, msg, shooterIndex, groupsAssignedFromTurnEnd);
+        this.gameRuleset === 'eight-ball' &&
+        groupBeforeTurnEnd === null &&
+        this.rules.players[shooterIndex].group !== null;
+      this.resolveActiveShot();
+      this.spotNineBallIfNeeded();
+      this.applyAuthoritativeTurnEndForActiveRules(msg, shooterIndex, groupsAssignedFromTurnEnd);
       if (msg.gameOver) {
         const winner = msg.winner ?? 0;
         const loser: 0 | 1 = winner === 0 ? 1 : 0;
-        this.rules = {
-          ...this.rules,
-          gameOver: true,
-          winner,
-          loser,
-          cueBallInHand: false,
-          shot: this.createEmptyEightBallShot(),
-          lastFoul: null,
-          messageKey: winner === shooterIndex ? 'eightBallWin' : 'eightBallLoss',
-          messageValues: { winner: winner + 1, loser: loser + 1 },
-        };
+        this.markActiveGameOverFromOnline(winner, loser, shooterIndex);
         const iWin = msg.winner === myIndex;
         this.onlineState = transitionToGameOver(this.onlineState, winner, 'normal');
         this.opponentTurnEndApplied = true;
@@ -3255,6 +3665,80 @@ export class PoolScene extends Phaser.Scene {
     };
   }
 
+  private applyAuthoritativeTurnEndForActiveRules(
+    msg: TurnEndMessage,
+    shooterIndex: 0 | 1,
+    groupsAssignedFromTurnEnd: boolean,
+  ): void {
+    if (this.gameRuleset === 'nine-ball') {
+      this.applyAuthoritativeNineBallTurnEnd(msg, shooterIndex);
+      return;
+    }
+    this.rules = this.applyAuthoritativeTurnEnd(this.rules, msg, shooterIndex, groupsAssignedFromTurnEnd);
+  }
+
+  private applyAuthoritativeNineBallTurnEnd(msg: TurnEndMessage, shooterIndex: 0 | 1): void {
+    if (msg.foul) {
+      const lastFoul = this.nineBallRules.lastFoul ?? (msg.cueBallInHand ? 'noFirstContact' : null);
+      this.nineBallRules = {
+        ...this.nineBallRules,
+        currentPlayer: msg.nextPlayer,
+        cueBallInHand: msg.cueBallInHand,
+        shot: this.createEmptyNineBallShot(),
+        lastFoul,
+        messageKey: msg.cueBallInHand ? 'nineBallFoul' : this.nineBallRules.messageKey,
+        messageValues: msg.cueBallInHand
+          ? { player: msg.nextPlayer + 1, reason: lastFoul ?? 'noFirstContact' }
+          : this.nineBallRules.messageValues,
+      };
+      this.syncEightBallCurrentPlayer();
+      return;
+    }
+
+    const shooterKeptTurn = msg.nextPlayer === shooterIndex;
+    const pushOutDecision = this.nineBallRules.pushOutDecision;
+    this.nineBallRules = {
+      ...this.nineBallRules,
+      currentPlayer: msg.nextPlayer,
+      cueBallInHand: false,
+      shot: this.createEmptyNineBallShot(),
+      lastFoul: null,
+      messageKey: pushOutDecision ? 'nineBallPushOutChoice' : shooterKeptTurn ? 'nineBallKeepTurn' : 'nineBallTurnPass',
+      messageValues: { player: (pushOutDecision ? msg.nextPlayer : shooterKeptTurn ? shooterIndex : msg.nextPlayer) + 1 },
+    };
+    this.syncEightBallCurrentPlayer();
+  }
+
+  private markActiveGameOverFromOnline(winner: 0 | 1, loser: 0 | 1, shooterIndex: 0 | 1): void {
+    if (this.gameRuleset === 'nine-ball') {
+      this.nineBallRules = {
+        ...this.nineBallRules,
+        gameOver: true,
+        winner,
+        loser,
+        cueBallInHand: false,
+        shot: this.createEmptyNineBallShot(),
+        lastFoul: null,
+        messageKey: 'nineBallWin',
+        messageValues: { winner: winner + 1 },
+      };
+      this.syncEightBallCurrentPlayer();
+      return;
+    }
+
+    this.rules = {
+      ...this.rules,
+      gameOver: true,
+      winner,
+      loser,
+      cueBallInHand: false,
+      shot: this.createEmptyEightBallShot(),
+      lastFoul: null,
+      messageKey: winner === shooterIndex ? 'eightBallWin' : 'eightBallLoss',
+      messageValues: { winner: winner + 1, loser: loser + 1 },
+    };
+  }
+
   private assignOnlineGroupsFromPocketed(
     state: EightBallState,
     shooterIndex: 0 | 1,
@@ -3293,6 +3777,15 @@ export class PoolScene extends Phaser.Scene {
     };
   }
 
+  private createEmptyNineBallShot(): NineBallState['shot'] {
+    return {
+      firstContactBallId: null,
+      pocketedBallIds: [],
+      cushionContactBallIds: [],
+      pushOut: false,
+    };
+  }
+
   private alignRulesCurrentPlayerWithOnlineShooter(shooter: 'me' | 'opponent'): void {
     if (this.gameMode !== 'online' || !this.roomInfo) {
       return;
@@ -3300,6 +3793,13 @@ export class PoolScene extends Phaser.Scene {
 
     const myIndex: 0 | 1 = this.roomInfo.isHost ? 0 : 1;
     const shooterIndex: 0 | 1 = shooter === 'me' ? myIndex : myIndex === 0 ? 1 : 0;
+    if (this.gameRuleset === 'nine-ball') {
+      if (this.nineBallRules.currentPlayer !== shooterIndex) {
+        this.nineBallRules = { ...this.nineBallRules, currentPlayer: shooterIndex };
+        this.syncEightBallCurrentPlayer();
+      }
+      return;
+    }
     if (this.rules.currentPlayer !== shooterIndex) {
       this.rules = { ...this.rules, currentPlayer: shooterIndex };
     }
@@ -3315,7 +3815,7 @@ export class PoolScene extends Phaser.Scene {
   }
 
   private isObjectBallAlreadyPocketed(ballId: number): boolean {
-    return ballId !== 0 && this.rules.pocketedBallIds.includes(ballId);
+    return ballId !== 0 && this.activePocketedBallIds().includes(ballId);
   }
 
   private shouldProtectObjectBallFromSnapshot(ballId: number): boolean {
@@ -3348,7 +3848,7 @@ export class PoolScene extends Phaser.Scene {
     this.cuePlacementState = null;
     this.aimLine.clear();
     this.cueGraphics.clear();
-    this.rules = recordEightBallTimeoutFoul(this.rules);
+    this.recordActiveTimeoutFoul();
     const myIndex: 0 | 1 = this.roomInfo!.isHost ? 0 : 1;
     const opponentIndex: 0 | 1 = this.roomInfo!.isHost ? 1 : 0;
     this.sendOnlineTurnEnd(true, true, opponentIndex, [], false, null);

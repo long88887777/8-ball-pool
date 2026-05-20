@@ -39,10 +39,12 @@ Deno.serve(async (req: Request) => {
 
   const adminClient = createClient(supabaseUrl, serviceRoleKey);
   const currentUserId = user.id;
+  const payload = await readJson(req);
+  const ruleset = payload?.ruleset === "nine-ball" ? "nine-ball" : "eight-ball";
 
   const { data: opponents, error: findError } = await adminClient.rpc(
     "match_find_opponent",
-    { current_user_id: currentUserId },
+    { current_user_id: currentUserId, desired_ruleset: ruleset },
   );
 
   if (findError) {
@@ -60,6 +62,7 @@ Deno.serve(async (req: Request) => {
         host_id: opponent.user_id,
         guest_id: currentUserId,
         status: "playing",
+        game_ruleset: ruleset,
       });
 
     if (roomError) {
@@ -68,7 +71,7 @@ Deno.serve(async (req: Request) => {
 
     const { error: updateError } = await adminClient
       .from("matchmaking_queue")
-      .update({ status: "matched", matched_with: currentUserId, room_id: roomCode })
+      .update({ status: "matched", matched_with: currentUserId, room_id: roomCode, game_ruleset: ruleset })
       .eq("id", opponent.id);
 
     if (updateError) {
@@ -79,12 +82,13 @@ Deno.serve(async (req: Request) => {
       status: "matched",
       roomId: roomCode,
       opponentId: opponent.user_id,
+      ruleset,
     });
   }
 
   const { data: existing } = await adminClient
     .from("matchmaking_queue")
-    .select("id, status, room_id, matched_with")
+    .select("id, status, room_id, matched_with, game_ruleset")
     .eq("user_id", currentUserId)
     .single();
 
@@ -94,6 +98,7 @@ Deno.serve(async (req: Request) => {
         status: "matched",
         roomId: existing.room_id,
         opponentId: existing.matched_with,
+        ruleset: existing.game_ruleset,
       });
     }
 
@@ -102,7 +107,7 @@ Deno.serve(async (req: Request) => {
 
   const { data: newEntry, error: insertError } = await adminClient
     .from("matchmaking_queue")
-    .insert({ user_id: currentUserId, status: "waiting" })
+    .insert({ user_id: currentUserId, status: "waiting", game_ruleset: ruleset })
     .select("id")
     .single();
 
@@ -113,10 +118,17 @@ Deno.serve(async (req: Request) => {
   return json({ status: "waiting", queueId: newEntry.id });
 });
 
+async function readJson(req: Request): Promise<{ ruleset?: unknown } | null> {
+  try {
+    return await req.json();
+  } catch {
+    return null;
+  }
+}
+
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
     headers: { ...corsHeaders, "Content-Type": "application/json" },
   });
 }
-

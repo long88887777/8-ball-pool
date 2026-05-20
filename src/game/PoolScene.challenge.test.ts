@@ -95,6 +95,43 @@ type ChallengeSceneHarness = {
   startChallengeLevel: (level: ChallengeLevel) => void;
 };
 
+type ChallengeCreateHarness = ChallengeSceneHarness & {
+  create: () => void;
+  game: {
+    registry: {
+      get: ReturnType<typeof vi.fn>;
+    };
+    loop: { delta: number };
+  };
+  createTextures: ReturnType<typeof vi.fn>;
+  drawRoom: ReturnType<typeof vi.fn>;
+  drawTable: ReturnType<typeof vi.fn>;
+  createHandTexture: ReturnType<typeof vi.fn>;
+  createBalls: ReturnType<typeof vi.fn>;
+  bindRestart: ReturnType<typeof vi.fn>;
+  bindLanguage: ReturnType<typeof vi.fn>;
+  bindSpinControl: ReturnType<typeof vi.fn>;
+  bindKeyboardAim: ReturnType<typeof vi.fn>;
+  bindAimAssistUI: ReturnType<typeof vi.fn>;
+  bindEconomyUI: ReturnType<typeof vi.fn>;
+  bindChallengeUI: ReturnType<typeof vi.fn>;
+  bindVictoryOverlay: ReturnType<typeof vi.fn>;
+  bindChatUI: ReturnType<typeof vi.fn>;
+  updateHud: ReturnType<typeof vi.fn>;
+  createForbiddenIcon: ReturnType<typeof vi.fn>;
+  loadPlayerWallet: ReturnType<typeof vi.fn>;
+  loadGrowthData: ReturnType<typeof vi.fn>;
+  startChallengeLevel: ReturnType<typeof vi.fn>;
+  initOnlineMode: ReturnType<typeof vi.fn>;
+  add: {
+    image: ReturnType<typeof vi.fn>;
+    graphics: ReturnType<typeof vi.fn>;
+  };
+  events: {
+    once: ReturnType<typeof vi.fn>;
+  };
+};
+
 type ChallengeResultHarness = {
   language: 'en' | 'zh';
   challengeResultOverlay?: HTMLElement;
@@ -177,6 +214,49 @@ function physicsBall(id: number, pocketed: boolean) {
 }
 
 describe('PoolScene challenge rules', () => {
+  it('starts the selected challenge level immediately when the scene boots from level select', () => {
+    const scene = new PoolScene() as unknown as ChallengeCreateHarness;
+    const graphics = { setDepth: vi.fn(() => graphics) };
+    const image = { setDepth: vi.fn(() => image), setVisible: vi.fn(() => image) };
+    const forbiddenIcon = { setVisible: vi.fn(() => forbiddenIcon) };
+
+    scene.game.registry.get = vi.fn((key: string) => {
+      if (key === 'initialMode') return 'challenge';
+      if (key === 'challengeLevelId') return 2;
+      return undefined;
+    });
+    scene.createTextures = vi.fn();
+    scene.drawRoom = vi.fn();
+    scene.drawTable = vi.fn();
+    scene.createHandTexture = vi.fn();
+    scene.createBalls = vi.fn();
+    scene.bindInput = vi.fn();
+    scene.bindRestart = vi.fn();
+    scene.bindLanguage = vi.fn();
+    scene.bindSpinControl = vi.fn();
+    scene.bindKeyboardAim = vi.fn();
+    scene.bindAimAssistUI = vi.fn();
+    scene.bindEconomyUI = vi.fn();
+    scene.bindChallengeUI = vi.fn();
+    scene.bindVictoryOverlay = vi.fn();
+    scene.bindChatUI = vi.fn();
+    scene.updateHud = vi.fn();
+    scene.createForbiddenIcon = vi.fn(() => forbiddenIcon);
+    scene.loadPlayerWallet = vi.fn();
+    scene.loadGrowthData = vi.fn();
+    scene.startChallengeLevel = vi.fn();
+    scene.initOnlineMode = vi.fn();
+    scene.add = {
+      image: vi.fn(() => image),
+      graphics: vi.fn(() => graphics),
+    };
+    scene.events = { once: vi.fn() };
+
+    scene.create();
+
+    expect(scene.startChallengeLevel).toHaveBeenCalledWith(CHALLENGE_LEVELS[1]);
+  });
+
   it('starts every challenge level with break-line cue placement available', () => {
     const scene = createChallengeHarness();
     const level = CHALLENGE_LEVELS[0];

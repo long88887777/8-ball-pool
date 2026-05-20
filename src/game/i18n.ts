@@ -1,4 +1,5 @@
 import type { EightBallFoulReason } from './eightBallRules';
+import type { NineBallMessageKey } from './nineBallRules';
 
 export type Language = 'en' | 'zh';
 export type LocalizedBallGroup = 'solids' | 'stripes' | null;
@@ -53,6 +54,7 @@ export type GameCopy = {
   hud: {
     mode: string;
     eightBallMode: string;
+    nineBallMode: string;
     modeLabel: string;
     modePvp: string;
     modeAi: string;
@@ -71,7 +73,7 @@ export type GameCopy = {
     waitingTurn: string;
     restart: string;
   };
-  foulReason: Record<EightBallFoulReason, string>;
+  foulReason: Record<EightBallFoulReason | 'illegalBreak', string>;
   message: {
     ready: string;
     shotInMotion: string;
@@ -90,7 +92,7 @@ export type GameCopy = {
     eightBallBallInHand: MessageTemplate;
     eightBallWin: MessageTemplate;
     eightBallLoss: MessageTemplate;
-  };
+  } & Record<NineBallMessageKey, MessageTemplate>;
 };
 
 const COPY: Record<Language, GameCopy> = {
@@ -142,6 +144,7 @@ const COPY: Record<Language, GameCopy> = {
     hud: {
       mode: 'Clear Table',
       eightBallMode: 'Local 8-Ball',
+      nineBallMode: 'Local 9-Ball',
       modeLabel: 'Mode',
       modePvp: 'PVP',
       modeAi: 'VS AI',
@@ -169,6 +172,7 @@ const COPY: Record<Language, GameCopy> = {
       noFirstContact: 'cue ball did not contact a target ball',
       wrongFirstContact: 'wrong target ball was hit first',
       noCushionAfterContact: 'no ball reached a cushion after contact',
+      illegalBreak: 'illegal break',
       shotClockExpired: 'shot clock expired',
     },
     message: {
@@ -189,6 +193,20 @@ const COPY: Record<Language, GameCopy> = {
       eightBallBallInHand: '{player}: place the cue ball, then shoot.',
       eightBallWin: '{winner} wins.',
       eightBallLoss: '{loser} loses. {winner} wins.',
+      nineBallReady: '{player}: play the lowest ball first.',
+      nineBallShotInMotion: 'Shot in motion.',
+      nineBallKeepTurn: '{player} made a legal ball and shoots again.',
+      nineBallTurnPass: 'No ball made. {player} shoots.',
+      nineBallFoul: 'Foul: {reason}. {player} has ball in hand.',
+      nineBallTimeoutFoul: 'Shot clock expired. {player} has ball in hand.',
+      nineBallBallInHand: '{player}: place the cue ball, then shoot.',
+      nineBallWin: '{winner} wins by pocketing the 9.',
+      nineBallThreeFoulWarning: '{shooter} is on two consecutive fouls. {player} has ball in hand.',
+      nineBallThreeFoulLoss: '{loser} loses on three consecutive fouls. {winner} wins.',
+      nineBallPushOutAvailable: 'No ball made. {player} may play a push out.',
+      nineBallPushOutChoice: 'Push out played. {player} may take the shot or pass it back.',
+      nineBallPushOutPassedBack: '{player} takes the shot after the push out is passed back.',
+      nineBallPushOutAccepted: '{player} accepts the table after the push out.',
     },
   },
   zh: {
@@ -239,6 +257,7 @@ const COPY: Record<Language, GameCopy> = {
     hud: {
       mode: '清台练习',
       eightBallMode: '本地双人 8 球',
+      nineBallMode: '本地双人 9 球',
       modeLabel: '模式',
       modePvp: '双人对战',
       modeAi: '人机对战',
@@ -266,6 +285,7 @@ const COPY: Record<Language, GameCopy> = {
       noFirstContact: '白球没有碰到目标球',
       wrongFirstContact: '先碰到错误目标球',
       noCushionAfterContact: '碰到目标球后没有球碰库边',
+      illegalBreak: '开球不合法',
       shotClockExpired: '击球超时',
     },
     message: {
@@ -286,6 +306,20 @@ const COPY: Record<Language, GameCopy> = {
       eightBallBallInHand: '{player}：摆放白球后击球。',
       eightBallWin: '{winner} 获胜。',
       eightBallLoss: '{loser} 输掉本局，{winner} 获胜。',
+      nineBallReady: '{player}：先碰最小号码球。',
+      nineBallShotInMotion: '击球进行中。',
+      nineBallKeepTurn: '{player} 合法进球，继续击球。',
+      nineBallTurnPass: '未进球，{player} 击球。',
+      nineBallFoul: '犯规：{reason}，{player} 获得自由球。',
+      nineBallTimeoutFoul: '击球超时，{player} 获得自由球。',
+      nineBallBallInHand: '{player}：摆放白球后击球。',
+      nineBallWin: '{winner} 打进 9 号球获胜。',
+      nineBallThreeFoulWarning: '{shooter} 已连续两次犯规，{player} 获得自由球。',
+      nineBallThreeFoulLoss: '{loser} 连续三次犯规输掉本局，{winner} 获胜。',
+      nineBallPushOutAvailable: '未进球，{player} 可选择 Push Out。',
+      nineBallPushOutChoice: '已 Push Out，{player} 可选择继续打或交回。',
+      nineBallPushOutPassedBack: '{player} 接回 Push Out 后的球局。',
+      nineBallPushOutAccepted: '{player} 接受 Push Out 后的球局。',
     },
   },
 };

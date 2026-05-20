@@ -1,9 +1,11 @@
 import { BALL_RADIUS, POCKETS, PLAY_AREA, type Vector } from '../constants';
 import type { BallGroup } from '../eightBallRules';
+import type { GameRuleset } from '../gameRules';
 import type { ShotCandidate } from './types';
 
 const SOLIDS = [1, 2, 3, 4, 5, 6, 7];
 const STRIPES = [9, 10, 11, 12, 13, 14, 15];
+const NINE_BALLS = [1, 2, 3, 4, 5, 6, 7, 8, 9];
 const SPIN_VARIANTS: Vector[] = [
   { x: 0, y: 0 },
   { x: 0, y: 0.7 },
@@ -13,7 +15,16 @@ const SPIN_VARIANTS: Vector[] = [
 ];
 const CLUSTER_RADIUS = BALL_RADIUS * 5;
 
-export function getAILegalTargets(group: BallGroup | null, pocketedBallIds: number[]): number[] {
+export function getAILegalTargets(
+  group: BallGroup | null,
+  pocketedBallIds: number[],
+  ruleset: GameRuleset = 'eight-ball',
+): number[] {
+  if (ruleset === 'nine-ball') {
+    const next = NINE_BALLS.find((id) => !pocketedBallIds.includes(id));
+    return next === undefined ? [] : [next];
+  }
+
   if (group === null) {
     return [...SOLIDS, ...STRIPES].filter((id) => !pocketedBallIds.includes(id));
   }
@@ -51,11 +62,12 @@ export function generateShotCandidates(
   ballPositions: Map<number, Vector>,
   aiGroup: BallGroup | null,
   pocketedBallIds: number[],
+  ruleset: GameRuleset = 'eight-ball',
 ): ShotCandidate[] {
   const cuePos = ballPositions.get(0);
   if (!cuePos) return [];
 
-  const legalTargets = getAILegalTargets(aiGroup, pocketedBallIds);
+  const legalTargets = getAILegalTargets(aiGroup, pocketedBallIds, ruleset);
   const candidates: ShotCandidate[] = [];
 
   const obstacles = Array.from(ballPositions.entries())
@@ -228,11 +240,12 @@ export function generateKickShots(
   ballPositions: Map<number, Vector>,
   aiGroup: BallGroup | null,
   pocketedBallIds: number[],
+  ruleset: GameRuleset = 'eight-ball',
 ): ShotCandidate[] {
   const cuePos = ballPositions.get(0);
   if (!cuePos) return [];
 
-  const legalTargets = getAILegalTargets(aiGroup, pocketedBallIds);
+  const legalTargets = getAILegalTargets(aiGroup, pocketedBallIds, ruleset);
   const candidates: ShotCandidate[] = [];
 
   for (const targetId of legalTargets) {
@@ -352,11 +365,15 @@ export function generateClusterBreakShots(
   ballPositions: Map<number, Vector>,
   aiGroup: BallGroup | null,
   pocketedBallIds: number[],
+  ruleset: GameRuleset = 'eight-ball',
 ): ShotCandidate[] {
   const cuePos = ballPositions.get(0);
   if (!cuePos) return [];
 
-  const groupBalls = aiGroup === 'solids' ? SOLIDS : aiGroup === 'stripes' ? STRIPES : [...SOLIDS, ...STRIPES];
+  const groupBalls =
+    ruleset === 'nine-ball'
+      ? getAILegalTargets(aiGroup, pocketedBallIds, ruleset)
+      : aiGroup === 'solids' ? SOLIDS : aiGroup === 'stripes' ? STRIPES : [...SOLIDS, ...STRIPES];
   const remaining = groupBalls.filter((id) => !pocketedBallIds.includes(id));
 
   const clusterCenters: { center: Vector; ballIds: number[] }[] = [];
@@ -388,7 +405,7 @@ export function generateClusterBreakShots(
   const obstacles = Array.from(ballPositions.entries())
     .filter(([id]) => id !== 0)
     .map(([, pos]) => pos);
-  const legalTargets = getAILegalTargets(aiGroup, pocketedBallIds);
+  const legalTargets = getAILegalTargets(aiGroup, pocketedBallIds, ruleset);
 
   for (const cluster of clusterCenters) {
     for (const targetId of cluster.ballIds) {

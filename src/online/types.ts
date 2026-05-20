@@ -1,7 +1,10 @@
+import type { GameRuleset } from '../game/gameRules';
+
 export interface MatchResult {
   status: 'matched';
   roomId: string;
   opponentId: string;
+  ruleset?: GameRuleset;
 }
 
 export interface WaitingResult {
@@ -18,6 +21,7 @@ export interface RoomInfo {
   myNickname: string;
   opponentNickname: string;
   myUserId: string;
+  ruleset: GameRuleset;
 }
 
 export interface QueueRecord {
@@ -26,6 +30,7 @@ export interface QueueRecord {
   status: 'waiting' | 'matched';
   matched_with: string | null;
   room_id: string | null;
+  game_ruleset?: GameRuleset;
   created_at: string;
 }
 
@@ -34,6 +39,7 @@ export interface RoomRecord {
   host_id: string;
   guest_id: string | null;
   status: 'waiting' | 'playing' | 'finished';
+  game_ruleset?: GameRuleset;
   created_at: string;
 }
 
@@ -88,6 +94,7 @@ export type ShotMessage = MessageBase & {
   power: number;
   contactOffset: { x: number; y: number };
   cueBallPos: { x: number; y: number };
+  pushOut?: boolean;
   ballsSnapshot?: NetworkBallSnapshot[];
 };
 
@@ -140,6 +147,12 @@ export type ChatMessage = MessageBase & {
   text: string;
 };
 
+export type PushOutChoiceMessage = MessageBase & {
+  type: 'push_out_choice';
+  accepted: boolean;
+  nextPlayer: 0 | 1;
+};
+
 export type OnlineMessage =
   | ShotMessage
   | ResultMessage
@@ -150,4 +163,5 @@ export type OnlineMessage =
   | RematchResponseMessage
   | RematchStartMessage
   | ChatMessage
+  | PushOutChoiceMessage
   | SnapshotMessage;

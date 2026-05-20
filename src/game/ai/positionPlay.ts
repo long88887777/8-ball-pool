@@ -1,4 +1,5 @@
 import { BALL_RADIUS, POCKETS, type Vector } from '../constants';
+import type { GameRuleset } from '../gameRules';
 import type { PositionTarget, ShotCandidate } from './types';
 import { isPathClear, isOnTable } from './shotGenerator';
 
@@ -11,10 +12,14 @@ export function computeNextTarget(
   currentTargetId: number,
   legalTargets: number[],
   pocketedBallIds: number[],
+  ruleset: GameRuleset = 'eight-ball',
 ): PositionTarget | null {
   const nextTargets = legalTargets.filter(
     (id) => id !== currentTargetId && !pocketedBallIds.includes(id),
   );
+  if (ruleset === 'nine-ball' && nextTargets.length > 1) {
+    nextTargets.sort((a, b) => a - b);
+  }
   if (nextTargets.length === 0) return null;
 
   const obstacles: Vector[] = [];
@@ -90,6 +95,7 @@ export function generatePositionAwareShots(
   pocketIndex: number,
   legalTargets: number[],
   pocketedBallIds: number[],
+  ruleset: GameRuleset = 'eight-ball',
 ): ShotCandidate[] {
   const cuePos = ballPositions.get(0);
   const targetPos = ballPositions.get(targetBallId);
@@ -115,7 +121,7 @@ export function generatePositionAwareShots(
   const direction = { x: toGhostX / toGhostLen, y: toGhostY / toGhostLen };
 
   const nextTarget = computeNextTarget(
-    ballPositions, targetBallId, legalTargets, pocketedBallIds,
+    ballPositions, targetBallId, legalTargets, pocketedBallIds, ruleset,
   );
 
   let spinVariants: Vector[];

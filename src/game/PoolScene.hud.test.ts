@@ -16,6 +16,7 @@ import { PoolScene } from './PoolScene';
 import { createChallengeState } from './challenge/challengeState';
 import { CHALLENGE_LEVELS } from './challenge/levels';
 import { DEFAULT_PLAYER_WALLET } from './economy';
+import { createNineBallState } from './nineBallRules';
 
 type HudHarness = {
   gameMode: 'pvp' | 'ai' | 'challenge' | 'online';
@@ -30,6 +31,18 @@ type HudHarness = {
 type EconomyHudHarness = {
   wallet: typeof DEFAULT_PLAYER_WALLET;
   renderEconomyHud: () => void;
+};
+
+type MatchHudHarness = HudHarness & {
+  gameRuleset: 'eight-ball' | 'nine-ball';
+  nineBallRules: ReturnType<typeof createNineBallState>;
+  aiDifficulty: 'easy' | 'normal' | 'hard';
+  renderEconomyHud: ReturnType<typeof vi.fn>;
+  updateAimHud: ReturnType<typeof vi.fn>;
+  updateSpinControl: ReturnType<typeof vi.fn>;
+  renderDomBallList: ReturnType<typeof vi.fn>;
+  updateShotClockHud: ReturnType<typeof vi.fn>;
+  updateOnlineNetworkHud: ReturnType<typeof vi.fn>;
 };
 
 type ChallengeUiHarness = {
@@ -69,6 +82,46 @@ function createFakeButton(): HTMLButtonElement & { click: () => void } {
 }
 
 describe('PoolScene HUD', () => {
+  it('labels an AI nine-ball match as AI mode instead of local two-player mode', () => {
+    const scene = new PoolScene() as unknown as MatchHudHarness;
+    const previousDocument = globalThis.document;
+
+    const nodes: Record<string, HTMLElement> = {
+      '.match-panel': { hidden: false } as HTMLElement,
+      '#eyebrow': { textContent: '' } as HTMLElement,
+      '#mode': { hidden: true, textContent: '' } as HTMLElement,
+      '#strokes': { hidden: true, textContent: '' } as HTMLElement,
+      '#remaining': { hidden: true, textContent: '' } as HTMLElement,
+    };
+
+    scene.gameMode = 'ai';
+    scene.gameRuleset = 'nine-ball';
+    scene.language = 'zh';
+    scene.aiDifficulty = 'normal';
+    scene.nineBallRules = createNineBallState();
+    scene.renderEconomyHud = vi.fn();
+    scene.updateAimHud = vi.fn();
+    scene.updateSpinControl = vi.fn();
+    scene.renderDomBallList = vi.fn();
+    scene.updateShotClockHud = vi.fn();
+    scene.updateOnlineNetworkHud = vi.fn();
+
+    globalThis.document = {
+      documentElement: { lang: '' } as HTMLElement,
+      title: '',
+      querySelector: vi.fn((selector: string) => nodes[selector] ?? null),
+    } as unknown as Document;
+
+    try {
+      scene.updateHud();
+
+      expect(nodes['#eyebrow'].textContent).toBe('人机对战');
+      expect(nodes['#mode'].textContent).toBe('人机对战 · 熟练 · 9 球');
+    } finally {
+      globalThis.document = previousDocument;
+    }
+  });
+
   it('hides normal match labels and shows challenge HUD in challenge mode', () => {
     const scene = new PoolScene() as unknown as HudHarness;
     const level = CHALLENGE_LEVELS[0];
@@ -162,7 +215,7 @@ describe('PoolScene HUD', () => {
     }
   });
 
-  it('shows the challenge level select overlay before waiting for saved progress', () => {
+  it('keeps the challenge level select hidden until saved progress is ready', () => {
     const scene = new PoolScene() as unknown as ChallengeSelectHarness;
     const previousDocument = globalThis.document;
     const overlay = { hidden: true } as HTMLElement;
@@ -185,7 +238,7 @@ describe('PoolScene HUD', () => {
     try {
       void scene.showChallengeSelect();
 
-      expect(overlay.hidden).toBe(false);
+      expect(overlay.hidden).toBe(true);
     } finally {
       globalThis.document = previousDocument;
     }

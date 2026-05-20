@@ -16,7 +16,7 @@ export function createRootNode(
   aiGroup: BallGroup | null,
   pocketedBallIds: number[],
 ): MCTSNode {
-  const candidates = generateShotCandidates(state.ballPositions, aiGroup, pocketedBallIds);
+  const candidates = generateShotCandidates(state.ballPositions, aiGroup, pocketedBallIds, state.ruleset);
   const sorted = sortCandidates(candidates);
   return {
     state,
@@ -70,7 +70,12 @@ export function mctsSearch(
       const shot = node.untriedShots.pop()!;
       const simResult = simulateShot(node.state.ballPositions, shot.direction, shot.power, shot.spin);
       const childState = buildNextState(node.state, simResult, pocketedBallIds);
-      const childCandidates = generateShotCandidates(childState.ballPositions, aiGroup, childState.pocketedBallIds);
+      const childCandidates = generateShotCandidates(
+        childState.ballPositions,
+        aiGroup,
+        childState.pocketedBallIds,
+        childState.ruleset,
+      );
       const child: MCTSNode = {
         state: childState,
         shot,
@@ -129,7 +134,7 @@ function rollout(
   const ownPotted = lastSimResult.pocketedBalls.length > 0 && !lastSimResult.cueBallPocketed;
   if (!ownPotted) return baseScore;
 
-  const candidates = generateShotCandidates(state.ballPositions, aiGroup, state.pocketedBallIds);
+  const candidates = generateShotCandidates(state.ballPositions, aiGroup, state.pocketedBallIds, state.ruleset);
   if (candidates.length === 0) return baseScore;
 
   const top = candidates.slice(0, Math.min(10, candidates.length));
@@ -169,6 +174,7 @@ function buildNextState(
     pocketedBallIds: newPocketed,
     currentPlayer: prevState.currentPlayer,
     playerGroups: prevState.playerGroups,
+    ruleset: prevState.ruleset,
   };
 }
 

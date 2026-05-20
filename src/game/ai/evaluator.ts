@@ -1,10 +1,12 @@
 import { BALL_RADIUS, PLAY_AREA, POCKETS, type Vector } from '../constants';
 import type { BallGroup, PlayerIndex } from '../eightBallRules';
+import type { GameRuleset } from '../gameRules';
 import type { TableState, FastSimResult, ShotCandidate } from './types';
 import { getAILegalTargets, isPathClear } from './shotGenerator';
 
 const SOLIDS = [1, 2, 3, 4, 5, 6, 7];
 const STRIPES = [9, 10, 11, 12, 13, 14, 15];
+const NINE_BALLS = [1, 2, 3, 4, 5, 6, 7, 8, 9];
 
 const WEIGHT_POTTED = 0.45;
 const WEIGHT_POSITION = 0.30;
@@ -17,6 +19,10 @@ export function evaluateState(
   aiPlayer: PlayerIndex,
   aiGroup: BallGroup | null,
 ): number {
+  if (stateBefore.ruleset === 'nine-ball') {
+    return evaluateNineBallState(stateBefore, simResult);
+  }
+
   const eightBallPotted = simResult.pocketedBalls.includes(8);
 
   if (eightBallPotted) {
@@ -249,8 +255,11 @@ export function detectClusters(
   ballPositions: Map<number, Vector>,
   aiGroup: BallGroup | null,
   pocketedBallIds: number[],
+  ruleset: GameRuleset = 'eight-ball',
 ): Vector[] {
-  const groupBalls = aiGroup === 'solids' ? SOLIDS : aiGroup === 'stripes' ? STRIPES : [...SOLIDS, ...STRIPES];
+  const groupBalls = ruleset === 'nine-ball'
+    ? NINE_BALLS
+    : aiGroup === 'solids' ? SOLIDS : aiGroup === 'stripes' ? STRIPES : [...SOLIDS, ...STRIPES];
   const remaining = groupBalls.filter((id) => !pocketedBallIds.includes(id));
 
   const clusters: Vector[] = [];
@@ -287,6 +296,7 @@ export function evaluateBreakout(
     stateBefore.ballPositions,
     aiGroup,
     stateBefore.pocketedBallIds,
+    stateBefore.ruleset,
   );
   if (clustersBefore.length === 0) return 0;
 
@@ -294,8 +304,31 @@ export function evaluateBreakout(
     simResult.ballPositions,
     aiGroup,
     [...stateBefore.pocketedBallIds, ...simResult.pocketedBalls],
+    stateBefore.ruleset,
   );
 
   const improvement = clustersBefore.length - clustersAfter.length;
   return Math.max(0, improvement * 0.15);
+}
+
+function evaluateNineBallState(stateBefore: TableState, simResult: FastSimResult): number {
+  if (simResult.cueBallPocketed || simResult.firstContact === null) {
+    return 0.05;
+  }
+
+  const lowest = NINE_BALLS.find((id) => !stateBefore.pocketedBallIds.includes(id));
+  if (simResult.firstContact !== lowest) {
+    return 0.05;
+  }
+
+  if (simResult.pocketedBalls.includes(9)) {
+    return 1;
+  }
+
+  const legalPocketed = simResult.pocketedBalls.some((id) => id !== 0);
+  if (legalPocketed) {
+    return 0.72;
+  }
+
+  return simResult.cushionAfterContact ? 0.38 : 0.2;
 }

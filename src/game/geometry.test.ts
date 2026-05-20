@@ -3,6 +3,7 @@ import { BALL_RADIUS, CUE_START, PLAY_AREA, POCKETS, TABLE } from './constants';
 import {
   clampShotPower,
   clampBreakCuePosition,
+  createNineBallRack,
   createTriangleRack,
   breakLineX,
   getCuePullback,
@@ -94,6 +95,41 @@ describe('geometry helpers', () => {
     for (let i = 0; i < rack.length; i += 1) {
       for (let j = i + 1; j < rack.length; j += 1) {
         expect(Math.hypot(rack[i].x - rack[j].x, rack[i].y - rack[j].y)).toBeGreaterThan(BALL_RADIUS * 2);
+      }
+    }
+  });
+
+  it('creates an American 9-ball diamond rack with the 1 up front and 9 in the center', () => {
+    const apex = { x: 740, y: 320 };
+    const rack = createNineBallRack(apex);
+
+    expect(rack).toHaveLength(9);
+    expect(rack.map((ball) => ball.id).sort((a, b) => a - b)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    expect(rack.find((ball) => ball.id === 1)?.position).toEqual(apex);
+    expect(rack.find((ball) => ball.id === 9)?.position).toEqual({
+      x: apex.x + BALL_RADIUS * 2.08 * 2,
+      y: apex.y,
+    });
+
+    const rowCounts = new Map<number, number>();
+    for (const ball of rack) {
+      const row = Math.round((ball.position.x - apex.x) / (BALL_RADIUS * 2.08));
+      rowCounts.set(row, (rowCounts.get(row) ?? 0) + 1);
+    }
+    expect(Array.from(rowCounts.entries()).sort(([a], [b]) => a - b)).toEqual([
+      [0, 1],
+      [1, 2],
+      [2, 3],
+      [3, 2],
+      [4, 1],
+    ]);
+
+    for (let i = 0; i < rack.length; i += 1) {
+      for (let j = i + 1; j < rack.length; j += 1) {
+        expect(Math.hypot(
+          rack[i].position.x - rack[j].position.x,
+          rack[i].position.y - rack[j].position.y,
+        )).toBeGreaterThan(BALL_RADIUS * 2);
       }
     }
   });

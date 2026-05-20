@@ -182,6 +182,7 @@ function createOnlineSceneHarness(options: { useRealSync?: boolean } = {}): Shot
     myNickname: '小红',
     opponentNickname: '小明',
     myUserId: 'self-1',
+    ruleset: 'eight-ball',
   };
   scene.onlineChannel = null;
   scene.onlineState = transitionToOpponentTurn({

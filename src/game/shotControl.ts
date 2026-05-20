@@ -1,5 +1,6 @@
 import { TABLE, type Vector } from './constants';
 import type { EightBallFoulReason } from './eightBallRules';
+import type { NineBallFoulReason } from './nineBallRules';
 import { clampShotPower } from './geometry';
 
 export type AimIntent = {
@@ -62,7 +63,7 @@ export function adjustAimPower(cue: Vector, aimPoint: Vector, deltaDistance: num
 }
 
 export function resolveFoulFeedbackTarget(
-  reason: EightBallFoulReason,
+  reason: EightBallFoulReason | NineBallFoulReason,
   cuePosition: Vector,
   firstContactBallId: number | null,
   ballPositions: Map<number, Vector>,

@@ -105,6 +105,34 @@ export function createTriangleRack(apex: Vector, count: number): Vector[] {
   return positions;
 }
 
+export type RackBallStart = {
+  id: number;
+  position: Vector;
+};
+
+export function createNineBallRack(apex: Vector): RackBallStart[] {
+  const horizontalGap = BALL_RADIUS * 2.08;
+  const verticalGap = BALL_RADIUS * 2.12;
+  const rowCounts = [1, 2, 3, 2, 1];
+  const ballIdsByRow = [
+    [1],
+    [2, 3],
+    [4, 9, 5],
+    [6, 7],
+    [8],
+  ];
+
+  return rowCounts.flatMap((count, row) =>
+    Array.from({ length: count }, (_, column) => ({
+      id: ballIdsByRow[row][column],
+      position: {
+        x: apex.x + row * horizontalGap,
+        y: apex.y + (column - (count - 1) / 2) * verticalGap,
+      },
+    })),
+  );
+}
+
 export function getCuePullback(power: number): number {
   const clamped = Math.max(0, Math.min(power, 1));
   return CUE.minPullback + (CUE.maxPullback - CUE.minPullback) * clamped;

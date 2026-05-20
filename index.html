@@ -157,6 +157,35 @@
       </div>
     </section>
 
+    <section id="ruleset-menu" class="ruleset-overlay" hidden aria-label="Ruleset selection">
+      <div class="ruleset-dialog">
+        <div class="ruleset-header">
+          <button id="ruleset-back" class="ruleset-back" type="button" aria-label="Back">‹</button>
+          <div>
+            <p class="eyebrow">Ruleset</p>
+            <h2 id="ruleset-title">选择玩法</h2>
+          </div>
+        </div>
+        <p id="ruleset-hint" class="ruleset-hint">选择玩法后开始对局</p>
+        <div class="ruleset-options">
+          <button class="ruleset-option" data-ruleset="nine-ball" type="button">
+            <span class="ruleset-ball ruleset-ball-nine">9</span>
+            <span>
+              <strong>九球模式</strong>
+              <small>9-Ball</small>
+            </span>
+          </button>
+          <button class="ruleset-option" data-ruleset="eight-ball" type="button">
+            <span class="ruleset-ball ruleset-ball-eight">8</span>
+            <span>
+              <strong>八球模式</strong>
+              <small>8-Ball</small>
+            </span>
+          </button>
+        </div>
+      </div>
+    </section>
+
     <section id="growth-panel" class="growth-panel-overlay" hidden>
       <div class="growth-panel-dialog">
         <div class="growth-panel-header">
@@ -219,7 +248,21 @@
       <div class="mm-dialog">
         <button id="mm-close" class="mm-close" type="button" aria-label="Close">&times;</button>
 
-        <div id="mm-menu" class="mm-panel">
+        <div id="mm-ruleset" class="mm-panel">
+          <h2 class="mm-title">选择联网玩法</h2>
+          <div class="mm-options">
+            <button class="mm-option-btn" data-mm-ruleset="nine-ball" type="button">
+              <span class="mm-option-icon">9</span>
+              <span>九球模式</span>
+            </button>
+            <button class="mm-option-btn" data-mm-ruleset="eight-ball" type="button">
+              <span class="mm-option-icon">8</span>
+              <span>八球模式</span>
+            </button>
+          </div>
+        </div>
+
+        <div id="mm-menu" class="mm-panel" hidden>
           <h2 class="mm-title">联网对战</h2>
           <div class="mm-options">
             <button id="mm-quick" class="mm-option-btn" type="button">
@@ -267,6 +310,14 @@
         </div>
       </div>
     </div>
+
+    <section id="challenge-select" class="challenge-overlay" hidden>
+      <div class="challenge-dialog challenge-select-dialog">
+        <h2 id="challenge-title">挑战模式</h2>
+        <div id="challenge-grid" class="challenge-grid"></div>
+        <button id="challenge-back" type="button">返回</button>
+      </div>
+    </section>
 
     <main class="game-shell" hidden>
       <section class="game-header" aria-label="Game status">
@@ -374,6 +425,11 @@
             <button id="aim-cancel" class="aim-cancel-btn" type="button" hidden>取消</button>
           </div>
         </div>
+        <div id="nine-ball-pushout-panel" class="pushout-panel" hidden>
+          <button id="nine-ball-pushout-declare" type="button">Push Out</button>
+          <button id="nine-ball-pushout-take" type="button">继续打</button>
+          <button id="nine-ball-pushout-pass" type="button">交回</button>
+        </div>
         <div class="spin-status">
           <span id="spin-label">Cue Spin</span>
           <strong id="spin-state">Center</strong>
@@ -417,14 +473,6 @@
             </div>
           </div>
           <p id="rematch-countdown" class="rematch-countdown" hidden></p>
-        </div>
-      </section>
-
-      <section id="challenge-select" class="challenge-overlay" hidden>
-        <div class="challenge-dialog">
-          <h2 id="challenge-title">挑战模式</h2>
-          <div id="challenge-grid" class="challenge-grid"></div>
-          <button id="challenge-back" type="button">返回</button>
         </div>
       </section>
 

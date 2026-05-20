@@ -1,12 +1,35 @@
 import { supabase } from '../lib/supabase';
+import { normalizeGameRuleset, type GameRuleset } from '../game/gameRules';
 import type { MatchResponse, RoomInfo, QueueRecord, RoomRecord } from './types';
 
 type MatchCallback = (info: RoomInfo) => void;
+type MatchmakingPanel = 'ruleset' | 'menu' | 'searching' | 'hosting' | 'joining' | 'success';
+
+export type MatchmakingState = {
+  panel: MatchmakingPanel;
+  ruleset: GameRuleset;
+};
 
 let currentSubscription: ReturnType<typeof supabase.channel> | null = null;
 let roomTimeout: ReturnType<typeof setTimeout> | null = null;
 let pollInterval: ReturnType<typeof setInterval> | null = null;
 let matchResolved = false;
+let matchmakingState: MatchmakingState = createMatchmakingState();
+
+export function createMatchmakingState(ruleset: GameRuleset = 'eight-ball'): MatchmakingState {
+  return {
+    panel: 'ruleset',
+    ruleset,
+  };
+}
+
+export function selectMatchmakingRuleset(state: MatchmakingState, ruleset: GameRuleset): MatchmakingState {
+  return {
+    ...state,
+    panel: 'menu',
+    ruleset,
+  };
+}
 
 async function fetchNickname(userId: string): Promise<string> {
   const { data } = await supabase
@@ -22,6 +45,19 @@ function showPanel(panelId: string): void {
   panels.forEach((p) => (p.hidden = true));
   const target = document.getElementById(panelId);
   if (target) target.hidden = false;
+  matchmakingState = {
+    ...matchmakingState,
+    panel: normalizePanelId(panelId),
+  };
+}
+
+function normalizePanelId(panelId: string): MatchmakingPanel {
+  if (panelId === 'mm-ruleset') return 'ruleset';
+  if (panelId === 'mm-menu') return 'menu';
+  if (panelId === 'mm-searching') return 'searching';
+  if (panelId === 'mm-hosting') return 'hosting';
+  if (panelId === 'mm-joining') return 'joining';
+  return 'success';
 }
 
 function generateRoomCode(): string {
@@ -72,6 +108,7 @@ async function startQuickMatch(onMatch: MatchCallback): Promise<void> {
     .neq('status', 'waiting');
 
   const res = await supabase.functions.invoke('match-players', {
+    body: { ruleset: matchmakingState.ruleset },
     headers: { Authorization: `Bearer ${session.access_token}` },
   });
 
@@ -85,6 +122,7 @@ async function startQuickMatch(onMatch: MatchCallback): Promise<void> {
       opponentId: data.opponentId,
       isHost: false,
       myUserId,
+      ruleset: normalizeGameRuleset(data.ruleset),
     });
     return;
   }
@@ -95,16 +133,18 @@ async function startQuickMatch(onMatch: MatchCallback): Promise<void> {
       opponentId,
       isHost: true,
       myUserId,
+      ruleset: matchmakingState.ruleset,
     });
   };
 
   pollInterval = setInterval(async () => {
     const { data } = await supabase
       .from('matchmaking_queue')
-      .select('status, room_id, matched_with')
+      .select('status, room_id, matched_with, game_ruleset')
       .eq('user_id', myUserId)
       .single();
     if (data && data.status === 'matched' && data.room_id && data.matched_with) {
+      matchmakingState = { ...matchmakingState, ruleset: normalizeGameRuleset(data.game_ruleset) };
       handleQueueMatch(data.room_id, data.matched_with);
     }
   }, 2000);
@@ -146,6 +186,7 @@ async function startCreateRoom(onMatch: MatchCallback): Promise<void> {
       id: code,
       host_id: myUserId,
       status: 'waiting',
+      game_ruleset: matchmakingState.ruleset,
     });
     if (!error) {
       roomId = code;
@@ -170,6 +211,7 @@ async function startCreateRoom(onMatch: MatchCallback): Promise<void> {
       opponentId: guestId,
       isHost: true,
       myUserId,
+      ruleset: matchmakingState.ruleset,
     });
   };
 
@@ -239,6 +281,11 @@ async function startJoinRoom(code: string, onMatch: MatchCallback): Promise<void
     return;
   }
 
+  matchmakingState = {
+    ...matchmakingState,
+    ruleset: normalizeGameRuleset(room.game_ruleset),
+  };
+
   const { data: updated, error } = await supabase
     .from('rooms')
     .update({ guest_id: myUserId, status: 'playing' })
@@ -258,6 +305,7 @@ async function startJoinRoom(code: string, onMatch: MatchCallback): Promise<void
     opponentId: room.host_id,
     isHost: false,
     myUserId,
+    ruleset: normalizeGameRuleset(room.game_ruleset),
   });
 }
 
@@ -287,6 +335,14 @@ function closeModal(): void {
 export function initMatchmaking(onMatch: MatchCallback): void {
   const modal = document.getElementById('matchmaking-modal')!;
   const backdrop = modal.querySelector('.mm-backdrop')!;
+
+  document.querySelectorAll<HTMLButtonElement>('[data-mm-ruleset]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const ruleset = btn.dataset.mmRuleset === 'nine-ball' ? 'nine-ball' : 'eight-ball';
+      matchmakingState = selectMatchmakingRuleset(matchmakingState, ruleset);
+      showPanel('mm-menu');
+    });
+  });
 
   document.getElementById('mm-quick')!.addEventListener('click', () => {
     startQuickMatch(onMatch);
@@ -330,10 +386,11 @@ export function initMatchmaking(onMatch: MatchCallback): void {
   });
 }
 
-export function openMatchModal(): void {
+export function openMatchModal(ruleset?: GameRuleset): void {
   const modal = document.getElementById('matchmaking-modal');
   if (modal) {
+    matchmakingState = createMatchmakingState(ruleset);
     modal.hidden = false;
-    showPanel('mm-menu');
+    showPanel(ruleset ? 'mm-menu' : 'mm-ruleset');
   }
 }

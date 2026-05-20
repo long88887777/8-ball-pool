@@ -1,12 +1,13 @@
 import Phaser from 'phaser';
 import { PoolScene } from './game/PoolScene';
+import { type GameRuleset } from './game/gameRules';
 import { normalizeAIDifficulty, type AIDifficulty } from './game/ai/difficulty';
 import { supabase } from './lib/supabase';
 import { initAuthPage, showAuthPage, hideAuthPage } from './auth/authPage';
 import { initMatchmaking, openMatchModal } from './online/matchmaking';
 import type { RoomInfo } from './online/types';
 import { CHALLENGE_LEVELS } from './game/challenge/levels';
-import { readProgressSupabase } from './game/challenge/progress';
+import { isLevelUnlocked, readProgressSupabase } from './game/challenge/progress';
 import { summarizeChallengeStars } from './game/growth/challengeSummary';
 import { readDailyTaskStateSupabase, readPlayerStatsSupabase } from './game/growth/persistence';
 import { getRankProgress, summarizeStats, type PlayerStats } from './game/growth/stats';
@@ -35,6 +36,13 @@ import {
   type RechargePackage,
   type SupabaseRechargeClient,
 } from './game/recharge';
+import {
+  createModeSelectionState,
+  selectGameMode,
+  selectRuleset,
+  type MenuGameMode,
+  type ModeSelectionState,
+} from './menuFlow';
 import './styles.css';
 
 type GameMode = 'pvp' | 'ai' | 'challenge' | 'online';
@@ -49,6 +57,7 @@ let rechargeOrders: RechargeOrder[] = [];
 let selectedRechargePackageId: string | null = null;
 let pendingRechargeOrder: CreatedRechargeOrder | null = null;
 let rechargeBusy = false;
+let modeSelectionState: ModeSelectionState = createModeSelectionState();
 
 const rechargeClient = supabase as unknown as SupabaseRechargeClient;
 
@@ -57,13 +66,18 @@ function selectedAIDifficulty(): AIDifficulty {
   return normalizeAIDifficulty(selected?.value, 'normal');
 }
 
-function startGame(mode: GameMode, roomInfo?: RoomInfo): void {
+function startGame(
+  mode: GameMode,
+  roomInfo?: RoomInfo,
+  ruleset: GameRuleset = roomInfo?.ruleset ?? 'eight-ball',
+  challengeLevelId?: number,
+): void {
   const menu = document.getElementById('main-menu');
   const shell = document.querySelector<HTMLElement>('.game-shell');
   const challengeSelect = document.getElementById('challenge-select');
   if (menu) menu.hidden = true;
   if (shell) shell.hidden = false;
-  if (challengeSelect) challengeSelect.hidden = mode !== 'challenge';
+  if (challengeSelect) challengeSelect.hidden = true;
   hideEconomyPanels();
 
   const config: Phaser.Types.Core.GameConfig = {
@@ -87,6 +101,8 @@ function startGame(mode: GameMode, roomInfo?: RoomInfo): void {
     callbacks: {
       preBoot: (game) => {
         game.registry.set('initialMode', mode);
+        game.registry.set('gameRuleset', ruleset);
+        if (challengeLevelId !== undefined) game.registry.set('challengeLevelId', challengeLevelId);
         if (mode === 'ai') game.registry.set('aiDifficulty', selectedAIDifficulty());
         if (roomInfo) game.registry.set('roomInfo', roomInfo);
       },
@@ -104,22 +120,141 @@ function backToMenu(): void {
   const menu = document.getElementById('main-menu');
   const shell = document.querySelector<HTMLElement>('.game-shell');
   const pauseOverlay = document.getElementById('pause-overlay');
+  const challengeSelect = document.getElementById('challenge-select');
   if (menu) menu.hidden = false;
   if (shell) shell.hidden = true;
   if (pauseOverlay) pauseOverlay.hidden = true;
+  if (challengeSelect) challengeSelect.hidden = true;
   void loadGrowthOverview();
+}
+
+function showRulesetMenu(mode: MenuGameMode): void {
+  modeSelectionState = selectGameMode(modeSelectionState, mode);
+  const selector = document.getElementById('ruleset-menu');
+  const title = document.getElementById('ruleset-title');
+  const hint = document.getElementById('ruleset-hint');
+  if (title) {
+    title.textContent = mode === 'online' ? '联网对战' : mode === 'ai' ? '人机对战' : '双人对战';
+  }
+  if (hint) {
+    hint.textContent = mode === 'online' ? '选择玩法后进入匹配菜单' : '选择玩法后开始对局';
+  }
+  if (selector) selector.hidden = false;
+}
+
+function hideRulesetMenu(): void {
+  const selector = document.getElementById('ruleset-menu');
+  if (selector) selector.hidden = true;
+}
+
+function handleRulesetSelection(ruleset: GameRuleset): void {
+  const pendingMode = modeSelectionState.pendingMode;
+  const result = selectRuleset(modeSelectionState, ruleset);
+  modeSelectionState = result;
+  hideRulesetMenu();
+
+  if (result.start) {
+    startGame(result.start.mode, undefined, result.start.ruleset);
+    return;
+  }
+
+  if (pendingMode === 'online') {
+    openMatchModal(ruleset);
+  }
+}
+
+async function showChallengeSelect(): Promise<void> {
+  modeSelectionState = selectGameMode(modeSelectionState, 'challenge');
+  hideRulesetMenu();
+  hideEconomyPanels();
+
+  const menu = document.getElementById('main-menu');
+  const shell = document.querySelector<HTMLElement>('.game-shell');
+  const overlay = document.getElementById('challenge-select');
+  const title = document.getElementById('challenge-title');
+  const grid = document.getElementById('challenge-grid');
+  const backBtn = document.getElementById('challenge-back');
+  if (!overlay || !grid) return;
+
+  if (menu) menu.hidden = true;
+  if (shell) shell.hidden = true;
+  overlay.hidden = true;
+  if (title) title.textContent = '挑战模式';
+  if (backBtn) backBtn.textContent = '返回';
+
+  const progress = await readProgressSupabase(supabase);
+  grid.replaceChildren(...CHALLENGE_LEVELS.map((level) => {
+    const unlocked = isLevelUnlocked(progress, level.id);
+    const result = progress.levels[String(level.id)];
+    const card = document.createElement('button');
+    card.type = 'button';
+    card.className = `challenge-card${unlocked ? '' : ' is-locked'}`;
+    card.disabled = !unlocked;
+
+    const number = document.createElement('div');
+    number.className = 'challenge-card-number';
+    number.textContent = String(level.id);
+
+    const name = document.createElement('div');
+    name.className = 'challenge-card-name';
+    name.textContent = level.name.zh;
+
+    const stars = document.createElement('div');
+    stars.className = 'challenge-card-stars';
+    if (result) {
+      stars.innerHTML = Array.from({ length: 3 }, (_, i) =>
+        `<span class="${i < result.stars ? 'star-gold' : 'star-gray'}">★</span>`,
+      ).join('');
+    } else if (!unlocked) {
+      stars.textContent = '🔒';
+    }
+
+    card.append(number, name, stars);
+    if (unlocked) {
+      card.addEventListener('click', () => startChallengeLevel(level.id));
+    }
+    return card;
+  }));
+  overlay.hidden = false;
+}
+
+function hideChallengeSelect(): void {
+  const overlay = document.getElementById('challenge-select');
+  if (overlay) overlay.hidden = true;
+}
+
+function returnFromChallengeSelect(): void {
+  if (currentGame) return;
+  hideChallengeSelect();
+  const menu = document.getElementById('main-menu');
+  if (menu) menu.hidden = false;
+  void loadGrowthOverview();
+}
+
+function startChallengeLevel(levelId: number): void {
+  hideChallengeSelect();
+  startGame('challenge', undefined, 'eight-ball', levelId);
 }
 
 document.querySelectorAll<HTMLButtonElement>('.menu-btn').forEach((btn) => {
   btn.addEventListener('click', () => {
     const mode = btn.dataset.mode as GameMode;
-    if (mode === 'online') {
-      openMatchModal();
+    if (mode === 'ai' || mode === 'pvp' || mode === 'online') {
+      showRulesetMenu(mode);
       return;
     }
-    startGame(mode);
+    void showChallengeSelect();
   });
 });
+
+document.querySelectorAll<HTMLButtonElement>('[data-ruleset]').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    handleRulesetSelection(btn.dataset.ruleset === 'nine-ball' ? 'nine-ball' : 'eight-ball');
+  });
+});
+
+document.getElementById('ruleset-back')?.addEventListener('click', hideRulesetMenu);
+document.getElementById('challenge-back')?.addEventListener('click', returnFromChallengeSelect);
 
 document.getElementById('btn-back')?.addEventListener('click', backToMenu);
 window.addEventListener('pool:return-to-menu', backToMenu);
@@ -603,7 +738,7 @@ async function init(): Promise<void> {
   initAuthPage(onAuthSuccess, onGuest);
 
   initMatchmaking((roomInfo: RoomInfo) => {
-    startGame('online', roomInfo);
+    startGame('online', roomInfo, roomInfo.ruleset);
   });
 
   if (session) {

@@ -1,5 +1,6 @@
 import type { Vector } from '../constants';
 import type { BallGroup, PlayerIndex } from '../eightBallRules';
+import type { GameRuleset } from '../gameRules';
 
 export type ShotType = 'pot' | 'safety' | 'kick' | 'break_cluster';
 
@@ -18,6 +19,7 @@ export type TableState = {
   pocketedBallIds: number[];
   currentPlayer: PlayerIndex;
   playerGroups: [BallGroup | null, BallGroup | null];
+  ruleset?: GameRuleset;
 };
 
 export type FastSimResult = {

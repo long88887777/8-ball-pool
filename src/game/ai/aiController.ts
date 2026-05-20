@@ -1,5 +1,7 @@
 import { BALL_RADIUS, PLAY_AREA, POCKETS, type Vector } from '../constants';
 import type { BallGroup, EightBallState, PlayerIndex } from '../eightBallRules';
+import type { GameRuleset } from '../gameRules';
+import type { NineBallState } from '../nineBallRules';
 import type { AIDecision, MCTSConfig, ShotCandidate, TableState } from './types';
 import { mctsSearch } from './mcts';
 import { generateShotCandidates, generateKickShots, generateClusterBreakShots, getAILegalTargets, isPathClear, isOnTable } from './shotGenerator';
@@ -48,16 +50,19 @@ export class AIController {
   computeDecision(
     ballPositions: Map<number, Vector>,
     rules: EightBallState,
+    ruleset: GameRuleset = 'eight-ball',
+    nineBallRules?: NineBallState,
   ): AIDecision | null {
-    const aiPlayer: PlayerIndex = rules.currentPlayer;
-    const aiGroup: BallGroup | null = rules.players[aiPlayer].group;
-    const pocketedBallIds = rules.pocketedBallIds;
+    const aiPlayer: PlayerIndex = ruleset === 'nine-ball' && nineBallRules ? nineBallRules.currentPlayer : rules.currentPlayer;
+    const aiGroup: BallGroup | null = ruleset === 'nine-ball' ? null : rules.players[aiPlayer].group;
+    const pocketedBallIds = ruleset === 'nine-ball' && nineBallRules ? nineBallRules.pocketedBallIds : rules.pocketedBallIds;
+    const cueBallInHand = ruleset === 'nine-ball' && nineBallRules ? nineBallRules.cueBallInHand : rules.cueBallInHand;
 
     let positions = ballPositions;
     let placementPosition: Vector | undefined;
 
-    if (rules.cueBallInHand) {
-      placementPosition = computeBestPlacement(ballPositions, aiGroup, pocketedBallIds);
+    if (cueBallInHand) {
+      placementPosition = computeBestPlacement(ballPositions, aiGroup, pocketedBallIds, ruleset);
       positions = new Map(ballPositions);
       positions.set(0, placementPosition);
     }
@@ -67,6 +72,7 @@ export class AIController {
       pocketedBallIds,
       currentPlayer: aiPlayer,
       playerGroups: [rules.players[0].group, rules.players[1].group],
+      ruleset,
     };
 
     const directShot = this.findBestConfirmedPot(state, aiPlayer, aiGroup, pocketedBallIds);
@@ -105,7 +111,7 @@ export class AIController {
     aiGroup: BallGroup | null,
     pocketedBallIds: number[],
   ): ShotCandidate | null {
-    const candidates = generateShotCandidates(state.ballPositions, aiGroup, pocketedBallIds);
+    const candidates = generateShotCandidates(state.ballPositions, aiGroup, pocketedBallIds, state.ruleset);
     const potCandidates = candidates.filter((c) => c.type === 'pot');
     if (potCandidates.length === 0) return null;
 
@@ -132,7 +138,7 @@ export class AIController {
     if (confirmedPots.length === 0) return null;
 
     // Phase 2: Generate position-aware candidates for confirmed pots
-    const legalTargets = getAILegalTargets(aiGroup, pocketedBallIds);
+    const legalTargets = getAILegalTargets(aiGroup, pocketedBallIds, state.ruleset);
     let bestShot: ShotCandidate | null = null;
     let bestScore = -Infinity;
 
@@ -143,6 +149,7 @@ export class AIController {
         pocketIndex,
         legalTargets,
         pocketedBallIds,
+        state.ruleset,
       );
 
       const nextTarget = computeNextTarget(
@@ -150,6 +157,7 @@ export class AIController {
         targetBallId,
         legalTargets,
         pocketedBallIds,
+        state.ruleset,
       );
       const idealZone = nextTarget ? nextTarget.idealZone : null;
       const zoneRadius = nextTarget ? nextTarget.zoneRadius : 50;
@@ -197,7 +205,7 @@ export class AIController {
     aiGroup: BallGroup | null,
     pocketedBallIds: number[],
   ): { shot: ShotCandidate; score: number } | null {
-    const kickCandidates = generateKickShots(state.ballPositions, aiGroup, pocketedBallIds);
+    const kickCandidates = generateKickShots(state.ballPositions, aiGroup, pocketedBallIds, state.ruleset);
     if (kickCandidates.length === 0) return null;
 
     let bestShot: ShotCandidate | null = null;
@@ -237,7 +245,7 @@ export class AIController {
     aiGroup: BallGroup | null,
     pocketedBallIds: number[],
   ): { shot: ShotCandidate; score: number } | null {
-    const breakCandidates = generateClusterBreakShots(state.ballPositions, aiGroup, pocketedBallIds);
+    const breakCandidates = generateClusterBreakShots(state.ballPositions, aiGroup, pocketedBallIds, state.ruleset);
     if (breakCandidates.length === 0) return null;
 
     let bestShot: ShotCandidate | null = null;
@@ -280,7 +288,7 @@ export class AIController {
     aiGroup: BallGroup | null,
     pocketedBallIds: number[],
   ): ShotCandidate | null {
-    const candidates = generateShotCandidates(state.ballPositions, aiGroup, pocketedBallIds);
+    const candidates = generateShotCandidates(state.ballPositions, aiGroup, pocketedBallIds, state.ruleset);
     if (candidates.length === 0) return null;
 
     const top = candidates.slice(0, 20);
@@ -324,13 +332,14 @@ export function computeBestPlacement(
   ballPositions: Map<number, Vector>,
   aiGroup: BallGroup | null,
   pocketedBallIds: number[],
+  ruleset: GameRuleset = 'eight-ball',
 ): Vector {
   const existingBalls: Vector[] = [];
   for (const [id, pos] of ballPositions) {
     if (id !== 0) existingBalls.push(pos);
   }
 
-  const idealPlacements = computeIdealPlacements(ballPositions, aiGroup, pocketedBallIds, existingBalls);
+  const idealPlacements = computeIdealPlacements(ballPositions, aiGroup, pocketedBallIds, existingBalls, ruleset);
 
   if (idealPlacements.length > 0) {
     const positionsWithCue = new Map(ballPositions);
@@ -339,7 +348,7 @@ export function computeBestPlacement(
 
     for (const { point, shotDifficulty } of idealPlacements) {
       positionsWithCue.set(0, point);
-      const candidates = generateShotCandidates(positionsWithCue, aiGroup, pocketedBallIds);
+      const candidates = generateShotCandidates(positionsWithCue, aiGroup, pocketedBallIds, ruleset);
       const potCandidates = candidates.filter((c) => c.type === 'pot');
       if (potCandidates.length === 0) continue;
 
@@ -369,7 +378,7 @@ export function computeBestPlacement(
     if (bestScore > 0) return bestPoint;
   }
 
-  return gridFallbackPlacement(ballPositions, aiGroup, pocketedBallIds, existingBalls);
+  return gridFallbackPlacement(ballPositions, aiGroup, pocketedBallIds, existingBalls, ruleset);
 }
 
 function computeIdealPlacements(
@@ -377,8 +386,9 @@ function computeIdealPlacements(
   aiGroup: BallGroup | null,
   pocketedBallIds: number[],
   existingBalls: Vector[],
+  ruleset: GameRuleset,
 ): { point: Vector; shotDifficulty: number }[] {
-  const legalTargets = getAILegalTargets(aiGroup, pocketedBallIds);
+  const legalTargets = getAILegalTargets(aiGroup, pocketedBallIds, ruleset);
   const results: { point: Vector; shotDifficulty: number }[] = [];
 
   const obstacles = existingBalls;
@@ -461,6 +471,7 @@ function gridFallbackPlacement(
   aiGroup: BallGroup | null,
   pocketedBallIds: number[],
   existingBalls: Vector[],
+  ruleset: GameRuleset,
 ): Vector {
   const minX = PLAY_AREA.left + BALL_RADIUS;
   const maxX = PLAY_AREA.right - BALL_RADIUS;
@@ -486,7 +497,7 @@ function gridFallbackPlacement(
 
   for (const point of validPoints) {
     positionsWithCue.set(0, point);
-    const candidates = generateShotCandidates(positionsWithCue, aiGroup, pocketedBallIds);
+    const candidates = generateShotCandidates(positionsWithCue, aiGroup, pocketedBallIds, ruleset);
     const potCandidates = candidates.filter((c) => c.type === 'pot');
 
     if (potCandidates.length === 0) {
