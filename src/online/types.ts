@@ -122,7 +122,7 @@ export type HeartbeatMessage = MessageBase & { type: 'heartbeat' };
 
 export type GameOverMessage = MessageBase & {
   type: 'game_over';
-  reason: 'disconnect' | 'surrender';
+  reason: 'disconnect' | 'surrender' | 'return_to_menu';
   winner: 0 | 1;
 };
 

@@ -53,6 +53,18 @@ describe('nine-ball rules', () => {
     expect(state.pushOutAvailable).toBe(true);
   });
 
+  it('keeps the breaker at the table when a nine-ball break pockets an object ball even if the rack collision report names another object ball first', () => {
+    let state = startNineBallShot(createNineBallState());
+    state = recordNineBallFirstContact(state, 4);
+    state = recordNineBallPocket(state, 4);
+    state = resolveNineBallShot(state);
+
+    expect(state.currentPlayer).toBe(0);
+    expect(state.cueBallInHand).toBe(false);
+    expect(state.lastFoul).toBeNull();
+    expect(state.messageKey).toBe('nineBallKeepTurn');
+  });
+
   it('passes the turn when the lowest ball is hit first and a ball reaches a cushion', () => {
     let state = createNineBallState();
     state = startNineBallShot(state);

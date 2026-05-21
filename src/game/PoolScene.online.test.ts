@@ -15,6 +15,7 @@ vi.mock('phaser', () => ({
 import { CUE_START } from './constants';
 import { PoolScene } from './PoolScene';
 import { createEightBallState, resolveEightBallShot, startEightBallShot } from './eightBallRules';
+import { createNineBallState, resolveNineBallShot, startNineBallShot, type NineBallState } from './nineBallRules';
 import { createGameState } from './state';
 import { transitionToMyTurn, transitionToOpponentTurn, type OnlineState } from '../online/onlineState';
 import type { MatchAuditEventType, RoomInfo } from '../online/types';
@@ -49,7 +50,7 @@ type ShotHandlerHarness = {
     gameOver: boolean;
     winner: 0 | 1 | null;
   }) => void;
-  handlePhysicsEvents: (events: Array<{ type: 'collision' | 'cushion'; ballId: number; otherBallId?: number; speed: number }>) => void;
+  handlePhysicsEvents: (events: Array<{ type: 'collision' | 'cushion' | 'pocket'; ballId: number; otherBallId?: number; speed?: number; pocketIndex?: number }>) => void;
   handleOnlineSettled: () => void;
   applyPendingOpponentResult: () => void;
   formatCurrentMessageText: () => string;
@@ -57,6 +58,10 @@ type ShotHandlerHarness = {
   canAim: () => boolean;
   restartHandler: () => void;
   reportOnlineLeave: () => void;
+  forfeitOnlineMatchToMenu: () => void;
+  victoryRestartHandler: () => void;
+  bindChatUI: () => void;
+  unbindChatUI: () => void;
   sendOnlineResult: () => void;
   restartRack: ReturnType<typeof vi.fn>;
   showOnlineGameOver: (iWin: boolean, reason: string) => void;
@@ -70,10 +75,12 @@ type ShotHandlerHarness = {
   victoryTitle?: HTMLElement;
   victoryDetail?: HTMLElement;
   victoryOverlay?: HTMLElement;
+  victoryRestartButton?: HTMLButtonElement;
   coinResult?: HTMLElement;
   settleMatchCoins: (won: boolean) => void;
   formatCoinResultText: () => string;
   setElementHidden: (selector: string, hidden: boolean) => void;
+  leaveOnlineMatch: ReturnType<typeof vi.fn>;
   supabaseClient: { from: ReturnType<typeof vi.fn> };
   gameMode: 'pvp' | 'ai' | 'challenge' | 'online';
   language: 'en' | 'zh';
@@ -84,6 +91,7 @@ type ShotHandlerHarness = {
   targetBalls: FakeBall[];
   state: ReturnType<typeof createGameState>;
   rules: ReturnType<typeof createEightBallState>;
+  nineBallRules: NineBallState;
   pendingResult: {
     type: 'result';
     ts: number;
@@ -114,6 +122,7 @@ type ShotHandlerHarness = {
   syncBallsFromPhysics: ((snapshots: Array<{ id: number; kind: 'cue' | 'target'; position: { x: number; y: number }; state: string; pocketed: boolean }>) => void) & ReturnType<typeof vi.fn>;
   startPocketAnimation: ReturnType<typeof vi.fn>;
   audio: { play: ReturnType<typeof vi.fn> };
+  gameRuleset: 'eight-ball' | 'nine-ball';
 };
 
 type FakeBall = {
@@ -170,10 +179,63 @@ function createFakeCard(): {
   return card;
 }
 
+function createFakeButton(): HTMLButtonElement & { click: () => void } {
+  const listeners = new Map<string, EventListener[]>();
+  return {
+    hidden: false,
+    textContent: '',
+    addEventListener: vi.fn((type: string, listener: EventListener) => {
+      listeners.set(type, [...(listeners.get(type) ?? []), listener]);
+    }),
+    removeEventListener: vi.fn((type: string, listener: EventListener) => {
+      listeners.set(type, (listeners.get(type) ?? []).filter((item) => item !== listener));
+    }),
+    cloneNode: vi.fn(() => createFakeButton()),
+    parentNode: { replaceChild: vi.fn() },
+    getBoundingClientRect: () => ({ top: 8, left: 12, bottom: 32 }),
+    click: () => {
+      for (const listener of listeners.get('click') ?? []) {
+        listener(new Event('click'));
+      }
+    },
+  } as unknown as HTMLButtonElement & { click: () => void };
+}
+
+function createFakeInput(): HTMLInputElement {
+  return {
+    value: '',
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+    cloneNode: vi.fn(() => createFakeInput()),
+    focus: vi.fn(),
+    parentNode: { replaceChild: vi.fn() },
+  } as unknown as HTMLInputElement;
+}
+
+function createFakeElement(children: Record<string, HTMLElement> = {}): HTMLElement {
+  return {
+    hidden: true,
+    textContent: '',
+    innerHTML: '',
+    style: { top: '', left: '' },
+    dataset: {},
+    appendChild: vi.fn(),
+    querySelector: vi.fn((selector: string) => children[selector] ?? null),
+    cloneNode: vi.fn(() => createFakeElement(children)),
+    addEventListener: vi.fn(),
+    parentNode: { replaceChild: vi.fn() },
+    offsetParent: {
+      getBoundingClientRect: () => ({ top: 0, left: 0 }),
+    },
+    getBoundingClientRect: () => ({ top: 8, left: 12, bottom: 32 }),
+  } as unknown as HTMLElement;
+}
+
 function createOnlineSceneHarness(options: { useRealSync?: boolean } = {}): ShotHandlerHarness {
   const scene = new PoolScene() as unknown as ShotHandlerHarness;
 
   scene.gameMode = 'online';
+  scene.gameRuleset = 'eight-ball';
   scene.language = 'zh';
   scene.roomInfo = {
     roomId: 'room-1',
@@ -205,6 +267,7 @@ function createOnlineSceneHarness(options: { useRealSync?: boolean } = {}): Shot
   scene.targetBalls = Array.from({ length: 15 }, (_, index) => createFakeBall(index + 1));
   scene.state = createGameState(15);
   scene.rules = createEightBallState();
+  scene.nineBallRules = createNineBallState();
   scene.pendingResult = null;
   scene.pendingTurnEnd = null;
   scene.ballPocketMap = new Map();
@@ -225,6 +288,7 @@ function createOnlineSceneHarness(options: { useRealSync?: boolean } = {}): Shot
   scene.startPocketAnimation = vi.fn();
   scene.audio = { play: vi.fn() };
   scene.restartRack = vi.fn();
+  scene.leaveOnlineMatch = vi.fn();
   scene.showOnlineGameOver = vi.fn() as unknown as ShotHandlerHarness['showOnlineGameOver'];
   scene.updateHud = vi.fn();
   scene.updateOnlineStats = vi.fn();
@@ -247,6 +311,25 @@ describe('PoolScene online turn state', () => {
 
     expect(scene.rules.lastFoul).not.toBe('noCushionAfterContact');
     expect(scene.rules.cueBallInHand).toBe(false);
+  });
+
+  it('keeps a nine-ball breaker at the table after the one ball is hit first and an object ball drops', () => {
+    const scene = createOnlineSceneHarness();
+    scene.gameMode = 'pvp';
+    scene.gameRuleset = 'nine-ball';
+    scene.nineBallRules = startNineBallShot(createNineBallState());
+
+    scene.handlePhysicsEvents([
+      { type: 'collision', ballId: 0, otherBallId: 1, speed: 1 },
+      { type: 'collision', ballId: 0, otherBallId: 3, speed: 0.4 },
+      { type: 'pocket', ballId: 3, pocketIndex: 0 },
+    ]);
+    scene.nineBallRules = resolveNineBallShot(scene.nineBallRules);
+
+    expect(scene.nineBallRules.currentPlayer).toBe(0);
+    expect(scene.nineBallRules.cueBallInHand).toBe(false);
+    expect(scene.nineBallRules.lastFoul).toBeNull();
+    expect(scene.nineBallRules.messageKey).toBe('nineBallKeepTurn');
   });
 
   it('records opponent shots so the observer does not stay in break placement mode', () => {
@@ -701,6 +784,118 @@ describe('PoolScene online turn state', () => {
       reason: 'self_surrender',
       metadata: { winner: 1 },
     });
+    expect(scene.restartRack).not.toHaveBeenCalled();
+  });
+
+  it('forfeits to menu without offering a rematch when returning from an online match', () => {
+    const scene = createOnlineSceneHarness();
+    const send = vi.fn();
+    scene.onlineChannel = { send };
+    scene.onlineState = transitionToMyTurn(scene.onlineState);
+    scene.showOnlineGameOver = (PoolScene.prototype as unknown as ShotHandlerHarness).showOnlineGameOver;
+    scene.settleMatchCoins = vi.fn();
+    scene.formatCoinResultText = vi.fn(() => '');
+    scene.setElementHidden = vi.fn();
+    scene.victoryTitle = { textContent: '' } as HTMLElement;
+    scene.victoryDetail = { textContent: '' } as HTMLElement;
+    scene.victoryOverlay = { hidden: true } as HTMLElement;
+    scene.victoryRestartButton = { textContent: '' } as HTMLButtonElement;
+    scene.coinResult = { textContent: '' } as HTMLElement;
+
+    scene.forfeitOnlineMatchToMenu();
+
+    expect(send).toHaveBeenCalledWith({ type: 'game_over', reason: 'return_to_menu', winner: 1 });
+    expect(scene.onlineState.phase).toBe('game_over');
+    expect(scene.victoryRestartButton.textContent).toBe('确定');
+    expect(scene.setElementHidden).toHaveBeenCalledWith('#rematch-actions', true);
+    expect(scene.setElementHidden).toHaveBeenCalledWith('#victory-actions', false);
+  });
+
+  it('keeps chat buttons wired after scene cleanup and a second bind', () => {
+    const previousDocument = globalThis.document;
+    const chatTriggerP1 = createFakeButton();
+    const chatTriggerP2 = createFakeButton();
+    const popover = createFakeElement();
+    const input = createFakeInput();
+    const emojiButton = createFakeButton();
+    const emojiList = createFakeElement();
+    const sendButton = createFakeButton();
+    const myBubble = createFakeElement({
+      '.chat-msg-sender-inline': createFakeElement(),
+      '.chat-msg-text-inline': createFakeElement(),
+    });
+    const opponentBubble = createFakeElement({
+      '.chat-msg-sender-inline': createFakeElement(),
+      '.chat-msg-text-inline': createFakeElement(),
+    });
+    const nodes: Record<string, HTMLElement> = {
+      '#chat-trigger-p1': chatTriggerP1,
+      '#chat-trigger-p2': chatTriggerP2,
+      '#chat-popover': popover,
+      '#chat-popover-input': input,
+      '#chat-popover-emoji': emojiButton,
+      '#chat-popover-emojis': emojiList,
+      '#chat-popover-send': sendButton,
+      '#chat-my-bubble': myBubble,
+      '#chat-opponent-bubble': opponentBubble,
+    };
+    globalThis.document = {
+      querySelector: vi.fn((selector: string) => nodes[selector] ?? null),
+      createElement: vi.fn(() => createFakeButton()),
+    } as unknown as Document;
+
+    try {
+      const scene = createOnlineSceneHarness();
+      scene.bindChatUI();
+      scene.unbindChatUI();
+      scene.bindChatUI();
+
+      popover.hidden = true;
+      chatTriggerP1.click();
+
+      expect(popover.hidden).toBe(false);
+      expect(input.focus).toHaveBeenCalled();
+    } finally {
+      globalThis.document = previousDocument;
+    }
+  });
+
+  it('shows a return-to-menu win as a final confirmation instead of rematch actions', () => {
+    const scene = createOnlineSceneHarness();
+    const title = { textContent: '' };
+    const detail = { textContent: '' };
+    const overlay = { hidden: true };
+    scene.showOnlineGameOver = (PoolScene.prototype as unknown as ShotHandlerHarness).showOnlineGameOver;
+    scene.victoryTitle = title as HTMLElement;
+    scene.victoryDetail = detail as HTMLElement;
+    scene.victoryOverlay = overlay as HTMLElement;
+    scene.victoryRestartButton = { textContent: '' } as HTMLButtonElement;
+    scene.coinResult = { textContent: '' } as HTMLElement;
+    scene.settleMatchCoins = vi.fn();
+    scene.formatCoinResultText = vi.fn(() => '');
+    scene.setElementHidden = vi.fn();
+
+    scene.showOnlineGameOver(true, 'return_to_menu');
+
+    expect(title.textContent).toBe('You Win!');
+    expect(detail.textContent).toContain('returned to the main menu');
+    expect(scene.victoryRestartButton.textContent).toBe('确定');
+    expect(scene.setElementHidden).toHaveBeenCalledWith('#rematch-actions', true);
+    expect(scene.setElementHidden).toHaveBeenCalledWith('#victory-actions', false);
+  });
+
+  it('leaves the online match when confirming a return-to-menu final result', () => {
+    const scene = createOnlineSceneHarness();
+    scene.onlineState = {
+      ...transitionToMyTurn(scene.onlineState),
+      phase: 'game_over',
+      winner: 1,
+      gameOverReason: 'return_to_menu',
+    };
+
+    scene.victoryRestartHandler();
+
+    expect(scene.leaveOnlineMatch).toHaveBeenCalledOnce();
     expect(scene.restartRack).not.toHaveBeenCalled();
   });
 

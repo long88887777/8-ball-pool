@@ -128,6 +128,19 @@ function backToMenu(): void {
   void loadGrowthOverview();
 }
 
+function requestBackToMenu(): void {
+  const scene = currentGame?.scene.getScene('PoolScene') as PoolScene | undefined;
+  const isOnlineMatch = currentGame?.registry.get('initialMode') === 'online';
+  if (isOnlineMatch) {
+    const confirmed = window.confirm('返回主菜单将视为认输，确定要返回吗？');
+    if (!confirmed) {
+      return;
+    }
+    scene?.forfeitOnlineMatchToMenu();
+  }
+  backToMenu();
+}
+
 function showRulesetMenu(mode: MenuGameMode): void {
   modeSelectionState = selectGameMode(modeSelectionState, mode);
   const selector = document.getElementById('ruleset-menu');
@@ -256,7 +269,7 @@ document.querySelectorAll<HTMLButtonElement>('[data-ruleset]').forEach((btn) => 
 document.getElementById('ruleset-back')?.addEventListener('click', hideRulesetMenu);
 document.getElementById('challenge-back')?.addEventListener('click', returnFromChallengeSelect);
 
-document.getElementById('btn-back')?.addEventListener('click', backToMenu);
+document.getElementById('btn-back')?.addEventListener('click', requestBackToMenu);
 window.addEventListener('pool:return-to-menu', backToMenu);
 
 document.getElementById('btn-pause')?.addEventListener('click', () => {

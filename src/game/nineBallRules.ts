@@ -323,6 +323,11 @@ function resolvePushOutShot(state: NineBallState, currentPlayer: PlayerIndex, op
 
 function getShotFoul(state: NineBallState): NineBallFoulReason | null {
   if (state.shot.pocketedBallIds.includes(0)) return 'cueBallPocketed';
+
+  if (isBreakShot(state) && isBreakWithPocketedNonNineObjectBall(state)) {
+    return null;
+  }
+
   const firstContact = state.shot.firstContactBallId;
   if (firstContact === null) return 'noFirstContact';
   if (firstContact !== getLowestRemainingNineBallIdBeforeShot(state)) return 'wrongFirstContact';
@@ -416,6 +421,10 @@ function isBreakShot(state: NineBallState): boolean {
 function isLegalBreak(state: NineBallState): boolean {
   const objectBallsPocketed = state.shot.pocketedBallIds.some((ballId) => ballId !== 0);
   return objectBallsPocketed || state.shot.cushionContactBallIds.filter((ballId) => ballId !== 0).length >= 4;
+}
+
+function isBreakWithPocketedNonNineObjectBall(state: NineBallState): boolean {
+  return state.shot.pocketedBallIds.some((ballId) => ballId !== 0 && ballId !== 9);
 }
 
 function isLegalBreakWithoutPocket(state: NineBallState): boolean {

@@ -10,7 +10,7 @@ import {
   TABLE,
   type Vector,
 } from '../constants';
-import { createTriangleRack } from '../geometry';
+import { createNineBallRack, createTriangleRack } from '../geometry';
 import { ProfessionalPoolEngine } from './engine';
 import type { PhysicsBallStart } from './types';
 
@@ -22,6 +22,18 @@ function starts(): PhysicsBallStart[] {
       kind: 'target' as const,
       position,
       label: index + 1,
+    })),
+  ];
+}
+
+function nineBallStarts(): PhysicsBallStart[] {
+  return [
+    { id: 0, kind: 'cue', position: CUE_START },
+    ...createNineBallRack(RACK_CENTER).map(({ id, position }) => ({
+      id,
+      kind: 'target' as const,
+      position,
+      label: id,
     })),
   ];
 }
@@ -1015,5 +1027,32 @@ describe('ProfessionalPoolEngine', () => {
 
     expect(firstContactBallId).not.toBeNull();
     expect(cushionAfterContact || pocketedNonCue).toBe(true);
+  });
+
+  it('reports the apex one ball as the first cue contact on a nine-ball break', () => {
+    const engine = new ProfessionalPoolEngine();
+    engine.rack(nineBallStarts());
+    engine.strikeCueBall({ direction: { x: 1, y: 0 }, power: 0.9 });
+
+    let firstContactBallId: number | null = null;
+    let result = engine.step(1 / 60);
+    for (let frame = 0; frame < 1400 && !result.settled && firstContactBallId === null; frame += 1) {
+      for (const event of result.events) {
+        if (event.type !== 'collision' || event.otherBallId === undefined) {
+          continue;
+        }
+        if (event.ballId === 0 && event.otherBallId !== 0) {
+          firstContactBallId = event.otherBallId;
+          break;
+        }
+        if (event.otherBallId === 0 && event.ballId !== 0) {
+          firstContactBallId = event.ballId;
+          break;
+        }
+      }
+      result = engine.step(1 / 60);
+    }
+
+    expect(firstContactBallId).toBe(1);
   });
 });

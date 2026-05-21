@@ -311,6 +311,10 @@ export class PoolScene extends Phaser.Scene {
     this.restartRack();
   };
   private victoryRestartHandler = (): void => {
+    if (this.onlineState?.gameOverReason === 'return_to_menu') {
+      this.leaveOnlineMatch();
+      return;
+    }
     this.restartRack();
   };
   private aimCancelHandler = (): void => {
@@ -375,6 +379,24 @@ export class PoolScene extends Phaser.Scene {
   };
   private rematchDeclineHandler = (): void => {
     this.respondToRematch(false);
+  };
+  private chatTriggerP1Handler = (): void => {
+    this.toggleChatPopover(this.chatTriggerP1);
+  };
+  private chatTriggerP2Handler = (): void => {
+    this.toggleChatPopover(this.chatTriggerP2);
+  };
+  private chatSendHandler = (): void => {
+    this.sendChatMessage();
+  };
+  private chatInputKeydownHandler = (e: KeyboardEvent): void => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      this.sendChatMessage();
+    }
+  };
+  private chatEmojiToggleHandler = (): void => {
+    this.chatPopoverEmojis.hidden = !this.chatPopoverEmojis.hidden;
   };
   private languageHandler = (): void => {
     this.language = this.language === 'en' ? 'zh' : 'en';
@@ -3224,7 +3246,7 @@ export class PoolScene extends Phaser.Scene {
         metadata: { winner: msg.winner },
       });
       this.showOnlineGameOver(iWin, msg.reason);
-      void this.updateOnlineStats(iWin, msg.reason);
+      void this.updateOnlineStats(iWin, this.statsReasonFromGameOverReason(msg.reason));
       return;
     }
     if (msg.type === 'rematch_request') {
@@ -3858,21 +3880,31 @@ export class PoolScene extends Phaser.Scene {
   }
 
   private surrenderOnlineMatch(): void {
+    this.finishOnlineForfeit('surrender');
+  }
+
+  public forfeitOnlineMatchToMenu(): void {
+    this.finishOnlineForfeit('return_to_menu');
+  }
+
+  private finishOnlineForfeit(reason: 'surrender' | 'return_to_menu'): void {
     if (!this.onlineState || this.onlineState.phase === 'game_over' || !this.roomInfo) return;
+    const onlineState = this.onlineState;
+    const roomInfo = this.roomInfo;
     this.aimState = null;
     this.cuePlacementState = null;
     this.aimLine?.clear();
     this.cueGraphics?.clear();
-    const myIndex: 0 | 1 = this.roomInfo.isHost ? 0 : 1;
+    const myIndex: 0 | 1 = roomInfo.isHost ? 0 : 1;
     const winner: 0 | 1 = myIndex === 0 ? 1 : 0;
-    this.onlineChannel?.send({ type: 'game_over', reason: 'surrender', winner });
+    this.onlineChannel?.send({ type: 'game_over', reason, winner });
     this.logOnlineAuditEvent('surrender_sent', {
-      reason: 'self_surrender',
+      reason: reason === 'surrender' ? 'self_surrender' : 'self_return_to_menu',
       metadata: { winner },
     });
-    this.onlineState = transitionToGameOver(this.onlineState, winner, 'surrender');
-    this.showOnlineGameOver(false, 'surrender');
-    void this.updateOnlineStats(false, 'surrender');
+    this.onlineState = transitionToGameOver(onlineState, winner, reason);
+    this.showOnlineGameOver(false, reason);
+    void this.updateOnlineStats(false, this.statsReasonFromGameOverReason(reason));
   }
 
   private reportOnlineLeave(): void {
@@ -3956,7 +3988,7 @@ export class PoolScene extends Phaser.Scene {
     const opponentIndex: 0 | 1 = this.roomInfo!.isHost ? 1 : 0;
     this.lastGameLoser = iWin ? opponentIndex : myIndex;
     this.settleMatchCoins(iWin);
-    this.settleGrowthForMatch(iWin, reason === 'surrender' ? 'surrender' : reason === 'disconnect' ? 'disconnect' : 'normal');
+    this.settleGrowthForMatch(iWin, this.statsReasonFromGameOverReason(reason));
 
     if (this.victoryTitle) {
       this.victoryTitle.textContent = iWin ? 'You Win!' : 'You Lose';
@@ -3970,10 +4002,13 @@ export class PoolScene extends Phaser.Scene {
     if (this.victoryOverlay) {
       this.victoryOverlay.hidden = false;
     }
+    if (this.victoryRestartButton) {
+      this.victoryRestartButton.textContent = reason === 'return_to_menu' ? '确定' : 'New Rack';
+    }
 
     this.rematchPhase = 'idle';
     this.setElementHidden('#victory-actions', true);
-    if (reason === 'disconnect') {
+    if (reason === 'disconnect' || reason === 'return_to_menu') {
       this.setElementHidden('#rematch-actions', true);
       this.setElementHidden('#rematch-waiting', true);
       this.setElementHidden('#rematch-prompt', true);
@@ -3996,7 +4031,20 @@ export class PoolScene extends Phaser.Scene {
     if (reason === 'surrender') {
       return iWin ? 'Opponent surrendered.' : 'You surrendered.';
     }
+    if (reason === 'return_to_menu') {
+      return iWin ? 'Opponent returned to the main menu.' : 'You returned to the main menu.';
+    }
     return iWin ? 'You cleared the winning shot.' : 'Opponent cleared the winning shot.';
+  }
+
+  private statsReasonFromGameOverReason(reason: string): 'normal' | 'disconnect' | 'surrender' {
+    if (reason === 'disconnect') {
+      return 'disconnect';
+    }
+    if (reason === 'surrender' || reason === 'return_to_menu') {
+      return 'surrender';
+    }
+    return 'normal';
   }
 
   private setElementHidden(selector: string, hidden: boolean): void {
@@ -4255,18 +4303,16 @@ export class PoolScene extends Phaser.Scene {
     this.chatOpponentBubbleSender = this.chatOpponentBubble.querySelector<HTMLElement>('.chat-msg-sender-inline')!;
     this.chatOpponentBubbleText = this.chatOpponentBubble.querySelector<HTMLElement>('.chat-msg-text-inline')!;
 
-    this.chatTriggerP1.addEventListener('click', () => this.toggleChatPopover(this.chatTriggerP1));
-    this.chatTriggerP2.addEventListener('click', () => this.toggleChatPopover(this.chatTriggerP2));
-    this.chatPopoverSendBtn.addEventListener('click', () => this.sendChatMessage());
-    this.chatPopoverInput.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        this.sendChatMessage();
-      }
-    });
-    this.chatPopoverEmojiBtn.addEventListener('click', () => {
-      this.chatPopoverEmojis.hidden = !this.chatPopoverEmojis.hidden;
-    });
+    this.chatTriggerP1.removeEventListener('click', this.chatTriggerP1Handler);
+    this.chatTriggerP2.removeEventListener('click', this.chatTriggerP2Handler);
+    this.chatPopoverSendBtn.removeEventListener('click', this.chatSendHandler);
+    this.chatPopoverInput.removeEventListener('keydown', this.chatInputKeydownHandler);
+    this.chatPopoverEmojiBtn.removeEventListener('click', this.chatEmojiToggleHandler);
+    this.chatTriggerP1.addEventListener('click', this.chatTriggerP1Handler);
+    this.chatTriggerP2.addEventListener('click', this.chatTriggerP2Handler);
+    this.chatPopoverSendBtn.addEventListener('click', this.chatSendHandler);
+    this.chatPopoverInput.addEventListener('keydown', this.chatInputKeydownHandler);
+    this.chatPopoverEmojiBtn.addEventListener('click', this.chatEmojiToggleHandler);
 
     for (const emoji of PoolScene.CHAT_EMOJIS) {
       const btn = document.createElement('button');
@@ -4283,18 +4329,12 @@ export class PoolScene extends Phaser.Scene {
   }
 
   private unbindChatUI(): void {
-    const clone = (el: HTMLElement) => {
-      const cloned = el.cloneNode(true);
-      el.parentNode?.replaceChild(cloned, el);
-      return cloned;
-    };
-    clone(this.chatTriggerP1);
-    clone(this.chatTriggerP2);
-    clone(this.chatPopoverSendBtn);
-    clone(this.chatPopoverEmojiBtn);
+    this.chatTriggerP1.removeEventListener('click', this.chatTriggerP1Handler);
+    this.chatTriggerP2.removeEventListener('click', this.chatTriggerP2Handler);
+    this.chatPopoverSendBtn.removeEventListener('click', this.chatSendHandler);
+    this.chatPopoverEmojiBtn.removeEventListener('click', this.chatEmojiToggleHandler);
     this.chatPopoverEmojis.innerHTML = '';
-    const inputClone = this.chatPopoverInput.cloneNode(true);
-    this.chatPopoverInput.parentNode?.replaceChild(inputClone, this.chatPopoverInput);
+    this.chatPopoverInput.removeEventListener('keydown', this.chatInputKeydownHandler);
   }
 
   private toggleChatPopover(anchor?: HTMLElement): void {
