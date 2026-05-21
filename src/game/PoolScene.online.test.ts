@@ -81,6 +81,7 @@ type ShotHandlerHarness = {
   formatCoinResultText: () => string;
   setElementHidden: (selector: string, hidden: boolean) => void;
   leaveOnlineMatch: ReturnType<typeof vi.fn>;
+  bindVictoryOverlay: () => void;
   supabaseClient: { from: ReturnType<typeof vi.fn> };
   gameMode: 'pvp' | 'ai' | 'challenge' | 'online';
   language: 'en' | 'zh';
@@ -882,6 +883,41 @@ describe('PoolScene online turn state', () => {
     expect(scene.victoryRestartButton.textContent).toBe('确定');
     expect(scene.setElementHidden).toHaveBeenCalledWith('#rematch-actions', true);
     expect(scene.setElementHidden).toHaveBeenCalledWith('#victory-actions', false);
+  });
+
+  it('hides stale game-over overlay when a new scene binds the shared DOM overlay', () => {
+    const scene = createOnlineSceneHarness();
+    const previousDocument = globalThis.document;
+    const overlay = { hidden: false };
+    const title = { textContent: 'You Lose' };
+    const detail = { textContent: 'You returned to the main menu.' };
+    const restart = createFakeButton();
+    const nodes: Record<string, HTMLElement> = {
+      '#victory-overlay': overlay as HTMLElement,
+      '#victory-title': title as HTMLElement,
+      '#victory-detail': detail as HTMLElement,
+      '#coin-result': { textContent: '' } as HTMLElement,
+      '#victory-restart': restart,
+      '#rematch-request': createFakeButton(),
+      '#rematch-leave': createFakeButton(),
+      '#rematch-cancel': createFakeButton(),
+      '#rematch-accept': createFakeButton(),
+      '#rematch-decline': createFakeButton(),
+    };
+    globalThis.document = {
+      querySelector: vi.fn((selector: string) => nodes[selector] ?? null),
+    } as unknown as Document;
+    scene.bindVictoryOverlay = (PoolScene.prototype as unknown as ShotHandlerHarness).bindVictoryOverlay;
+
+    try {
+      scene.bindVictoryOverlay();
+
+      expect(overlay.hidden).toBe(true);
+      expect(title.textContent).toBe('You Lose');
+      expect(detail.textContent).toBe('You returned to the main menu.');
+    } finally {
+      globalThis.document = previousDocument;
+    }
   });
 
   it('leaves the online match when confirming a return-to-menu final result', () => {

@@ -1086,6 +1086,7 @@ export class PoolScene extends Phaser.Scene {
     this.victoryDetail = document.querySelector<HTMLElement>('#victory-detail') ?? undefined;
     this.coinResult = document.querySelector<HTMLElement>('#coin-result') ?? undefined;
     this.victoryRestartButton = document.querySelector<HTMLButtonElement>('#victory-restart') ?? undefined;
+    this.hideVictoryScreen();
     this.victoryRestartButton?.addEventListener('click', this.victoryRestartHandler);
 
     document.querySelector<HTMLButtonElement>('#rematch-request')?.addEventListener('click', this.rematchRequestHandler);
