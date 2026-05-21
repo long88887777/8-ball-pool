@@ -18,7 +18,7 @@ import { createEightBallState, resolveEightBallShot, startEightBallShot } from '
 import { createNineBallState, resolveNineBallShot, startNineBallShot, type NineBallState } from './nineBallRules';
 import { createGameState } from './state';
 import { transitionToMyTurn, transitionToOpponentTurn, type OnlineState } from '../online/onlineState';
-import type { MatchAuditEventType, RoomInfo } from '../online/types';
+import type { MatchAuditEventType, NetworkFoulReason, RoomInfo } from '../online/types';
 
 type ShotHandlerHarness = {
   handleOpponentShot: (msg: {
@@ -49,13 +49,16 @@ type ShotHandlerHarness = {
     pocketedBallIds: number[];
     gameOver: boolean;
     winner: 0 | 1 | null;
+    foulReason?: NetworkFoulReason;
   }) => void;
   handlePhysicsEvents: (events: Array<{ type: 'collision' | 'cushion' | 'pocket'; ballId: number; otherBallId?: number; speed?: number; pocketIndex?: number }>) => void;
   handleOnlineSettled: () => void;
+  handleOnlineTimeout: () => void;
   applyPendingOpponentResult: () => void;
   formatCurrentMessageText: () => string;
   updateShotClockHud: () => void;
   canAim: () => boolean;
+  canPlaceBallInHandCueBall: () => boolean;
   restartHandler: () => void;
   reportOnlineLeave: () => void;
   forfeitOnlineMatchToMenu: () => void;
@@ -66,7 +69,6 @@ type ShotHandlerHarness = {
   restartRack: ReturnType<typeof vi.fn>;
   showOnlineGameOver: (iWin: boolean, reason: string) => void;
   updateHud: ReturnType<typeof vi.fn>;
-  updateOnlineStats: ReturnType<typeof vi.fn>;
   logOnlineAuditEvent: (
     eventType: MatchAuditEventType,
     opts?: { reason?: string; metadata?: Record<string, unknown> },
@@ -82,11 +84,17 @@ type ShotHandlerHarness = {
   setElementHidden: (selector: string, hidden: boolean) => void;
   leaveOnlineMatch: ReturnType<typeof vi.fn>;
   bindVictoryOverlay: () => void;
-  supabaseClient: { from: ReturnType<typeof vi.fn> };
+  updateOnlineStats: (won: boolean, reason: 'normal' | 'disconnect' | 'surrender') => Promise<void>;
+  supabaseClient: { rpc: ReturnType<typeof vi.fn>; from: ReturnType<typeof vi.fn> };
+  matchStartedAt: number | null;
+  currentMatchId: string | null;
+  localMatchTracker: { playerStrokes: [number, number] };
   gameMode: 'pvp' | 'ai' | 'challenge' | 'online';
   language: 'en' | 'zh';
   roomInfo: RoomInfo | null;
   onlineChannel: { send: ReturnType<typeof vi.fn> } | null;
+  aimLine: { clear: ReturnType<typeof vi.fn> };
+  cueGraphics: { clear: ReturnType<typeof vi.fn> };
   onlineState: OnlineState;
   cueBall: FakeBall;
   targetBalls: FakeBall[];
@@ -107,6 +115,7 @@ type ShotHandlerHarness = {
     pocketedBallIds: number[];
     gameOver: boolean;
     winner: 0 | 1 | null;
+    foulReason?: NetworkFoulReason;
   } | null;
   ballPocketMap: Map<number, number>;
   wasMoving: boolean;
@@ -248,6 +257,8 @@ function createOnlineSceneHarness(options: { useRealSync?: boolean } = {}): Shot
     ruleset: 'eight-ball',
   };
   scene.onlineChannel = null;
+  scene.aimLine = { clear: vi.fn() };
+  scene.cueGraphics = { clear: vi.fn() };
   scene.onlineState = transitionToOpponentTurn({
     phase: 'waiting_opponent',
     turnTimer: 30,
@@ -292,7 +303,7 @@ function createOnlineSceneHarness(options: { useRealSync?: boolean } = {}): Shot
   scene.leaveOnlineMatch = vi.fn();
   scene.showOnlineGameOver = vi.fn() as unknown as ShotHandlerHarness['showOnlineGameOver'];
   scene.updateHud = vi.fn();
-  scene.updateOnlineStats = vi.fn();
+  scene.updateOnlineStats = vi.fn(async () => undefined);
   scene.logOnlineAuditEvent = vi.fn();
 
   return scene;
@@ -570,12 +581,39 @@ describe('PoolScene online turn state', () => {
       pocketedBallIds: [],
       gameOver: false,
       winner: null,
+      foulReason: 'shotClockExpired',
     };
 
     scene.applyPendingOpponentResult();
 
     expect(scene.rules.currentPlayer).toBe(1);
     expect(scene.onlineState.phase).toBe('my_turn');
+  });
+
+  it('applies an opponent shot-clock timeout turn_end without requiring shot/result messages first', () => {
+    const scene = createOnlineSceneHarness();
+    scene.roomInfo = { ...scene.roomInfo!, isHost: false };
+    scene.onlineState = transitionToOpponentTurn(scene.onlineState);
+    scene.physicsEngine.isSettled.mockReturnValue(true);
+
+    scene.handleOpponentTurnEnd({
+      type: 'turn_end',
+      ts: Date.now(),
+      foul: true,
+      cueBallInHand: true,
+      nextPlayer: 1,
+      pocketedBallIds: [],
+      gameOver: false,
+      winner: null,
+      foulReason: 'shotClockExpired',
+    });
+
+    expect(scene.rules.currentPlayer).toBe(1);
+    expect(scene.rules.cueBallInHand).toBe(true);
+    expect(scene.rules.lastFoul).toBe('shotClockExpired');
+    expect(scene.rules.messageKey).toBe('eightBallTimeoutFoul');
+    expect(scene.onlineState.phase).toBe('my_turn');
+    expect(scene.canPlaceBallInHandCueBall()).toBe(true);
   });
 
   it('pockets balls from authoritative turn_end immediately when result has not arrived yet', () => {
@@ -768,6 +806,34 @@ describe('PoolScene online turn state', () => {
     expect(scene.rules.players[1].group).toBe('stripes');
     expect(scene.rules.players[0].group).toBe('solids');
     expect(scene.rules.currentPlayer).toBe(1);
+  });
+
+  it('updates local rules to opponent ball-in-hand when my online shot clock expires', () => {
+    const scene = createOnlineSceneHarness();
+    const send = vi.fn();
+    scene.onlineChannel = { send };
+    scene.onlineState = transitionToMyTurn(scene.onlineState);
+    scene.rules = {
+      ...createEightBallState(),
+      currentPlayer: 0,
+    };
+
+    scene.handleOnlineTimeout();
+
+    expect(send).toHaveBeenCalledWith({
+      type: 'turn_end',
+      foul: true,
+      cueBallInHand: true,
+      nextPlayer: 1,
+      pocketedBallIds: [],
+      gameOver: false,
+      winner: null,
+      foulReason: 'shotClockExpired',
+    });
+    expect(scene.rules.currentPlayer).toBe(1);
+    expect(scene.rules.cueBallInHand).toBe(true);
+    expect(scene.rules.lastFoul).toBe('shotClockExpired');
+    expect(scene.onlineState.phase).toBe('opponent_turn');
   });
 
   it('turns the online primary button into surrender instead of restarting the rack', () => {
@@ -1025,7 +1091,7 @@ describe('PoolScene online turn state', () => {
     const insert = vi.fn(async () => ({ error: null }));
     const from = vi.fn(() => ({ insert }));
     scene.logOnlineAuditEvent = (PoolScene.prototype as unknown as ShotHandlerHarness).logOnlineAuditEvent;
-    scene.supabaseClient = { from };
+    scene.supabaseClient = { rpc: vi.fn(), from };
     scene.onlineState = { ...scene.onlineState, phase: 'my_turn' };
 
     await scene.logOnlineAuditEvent('turn_end_sent' as MatchAuditEventType, {
@@ -1043,6 +1109,31 @@ describe('PoolScene online turn state', () => {
       phase: 'my_turn',
       metadata: { nextPlayer: 1 },
     });
+  });
+
+  it('settles online matches through the room-scoped RPC so both players are updated once', async () => {
+    const scene = createOnlineSceneHarness();
+    const rpc = vi.fn(async () => ({ data: [{ match_id: 'match-1' }], error: null }));
+    const from = vi.fn();
+    scene.updateOnlineStats = (PoolScene.prototype as unknown as ShotHandlerHarness).updateOnlineStats;
+    scene.supabaseClient = { rpc, from };
+    scene.matchStartedAt = Date.parse('2026-05-22T00:00:00.000Z');
+    scene.localMatchTracker = { playerStrokes: [2, 3] };
+
+    await scene.updateOnlineStats(true, 'disconnect');
+
+    expect(rpc).toHaveBeenCalledWith('settle_online_match', {
+      p_room_id: 'room-1',
+      p_winner_id: 'self-1',
+      p_reason: 'disconnect',
+      p_started_at: '2026-05-22T00:00:00.000Z',
+      p_player1_strokes: 2,
+      p_player2_strokes: 3,
+      p_player1_cleared_table: false,
+      p_player2_cleared_table: false,
+    });
+    expect(scene.currentMatchId).toBe('match-1');
+    expect(from).not.toHaveBeenCalled();
   });
 
   it('applies snapshot when watching opponent shot and balls still in motion', () => {

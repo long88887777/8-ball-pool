@@ -43,6 +43,7 @@ import {
   type MenuGameMode,
   type ModeSelectionState,
 } from './menuFlow';
+import { showGameShellForNewGame } from './gameShellVisibility';
 import './styles.css';
 
 type GameMode = 'pvp' | 'ai' | 'challenge' | 'online';
@@ -72,12 +73,7 @@ function startGame(
   ruleset: GameRuleset = roomInfo?.ruleset ?? 'eight-ball',
   challengeLevelId?: number,
 ): void {
-  const menu = document.getElementById('main-menu');
-  const shell = document.querySelector<HTMLElement>('.game-shell');
-  const challengeSelect = document.getElementById('challenge-select');
-  if (menu) menu.hidden = true;
-  if (shell) shell.hidden = false;
-  if (challengeSelect) challengeSelect.hidden = true;
+  showGameShellForNewGame();
   hideEconomyPanels();
 
   const config: Phaser.Types.Core.GameConfig = {

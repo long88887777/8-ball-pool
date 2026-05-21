@@ -60,6 +60,14 @@ export type NetworkHealthStatus =
   | 'opponent_protected'
   | 'disconnected';
 
+export type NetworkFoulReason =
+  | 'cueBallPocketed'
+  | 'noFirstContact'
+  | 'wrongFirstContact'
+  | 'noCushionAfterContact'
+  | 'illegalBreak'
+  | 'shotClockExpired';
+
 export type MatchAuditEventType =
   | 'network_status'
   | 'presence_lost'
@@ -116,6 +124,7 @@ export type TurnEndMessage = MessageBase & {
   pocketedBallIds: number[];
   gameOver: boolean;
   winner: 0 | 1 | null;
+  foulReason?: NetworkFoulReason;
 };
 
 export type HeartbeatMessage = MessageBase & { type: 'heartbeat' };

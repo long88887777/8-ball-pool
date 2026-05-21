@@ -135,7 +135,7 @@ export function getNetworkHealth(state: OnlineState, now: number): NetworkHealth
 
   if (state.opponentPresenceLostAt !== null) {
     const elapsed = Math.max(0, now - state.opponentPresenceLostAt);
-    const remainingProtectionSeconds = Math.max(0, Math.ceil(state.protectionWindow - elapsed / 1000));
+    const remainingProtectionSeconds = Math.max(0, Math.ceil(state.disconnectTimeout - elapsed / 1000));
     if (remainingProtectionSeconds > 0) {
       return {
         status: 'opponent_protected',
@@ -182,7 +182,7 @@ export function getNetworkHealth(state: OnlineState, now: number): NetworkHealth
 
 export function checkDisconnect(state: OnlineState, now: number): boolean {
   if (state.opponentPresenceLostAt !== null) {
-    return now - state.opponentPresenceLostAt > state.protectionWindow * 1000;
+    return now - state.opponentPresenceLostAt > state.disconnectTimeout * 1000;
   }
   return now - state.lastOpponentHeartbeat > state.disconnectTimeout * 1000;
 }

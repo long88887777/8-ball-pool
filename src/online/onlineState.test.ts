@@ -155,7 +155,7 @@ describe('onlineState', () => {
       expect(checkDisconnect(state, now + 18000)).toBe(false);
     });
 
-    it('enters protection immediately when presence leaves, without immediate forfeit', () => {
+    it('enters a full disconnect-timeout protection window when presence leaves', () => {
       const now = Date.now();
       const state = markOpponentPresenceLost(
         recordChannelStatus(
@@ -169,8 +169,28 @@ describe('onlineState', () => {
       const health = getNetworkHealth(state, now);
 
       expect(health.status).toBe('opponent_protected');
-      expect(health.remainingProtectionSeconds).toBe(15);
+      expect(health.remainingProtectionSeconds).toBe(30);
       expect(checkDisconnect(state, now)).toBe(false);
+    });
+
+    it('does not forfeit presence-based disconnects before the full disconnect timeout', () => {
+      const now = Date.now();
+      const state = markOpponentPresenceLost(
+        recordChannelStatus(
+          createOnlineState({ isHost: true, turnTimeLimit: 30, disconnectTimeout: 30 }),
+          'stable',
+          now
+        ),
+        now
+      );
+
+      expect(checkDisconnect(state, now + 16000)).toBe(false);
+      expect(getNetworkHealth(state, now + 16000)).toEqual({
+        status: 'opponent_protected',
+        latencyMs: null,
+        remainingProtectionSeconds: 14,
+      });
+      expect(checkDisconnect(state, now + 31000)).toBe(true);
     });
 
     it('recordHeartbeat updates lastOpponentHeartbeat', () => {

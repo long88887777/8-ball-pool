@@ -194,6 +194,7 @@ import type {
   ChatMessage,
   PushOutChoiceMessage,
   NetworkBallSnapshot,
+  NetworkFoulReason,
 } from '../online/types';
 import { supabase } from '../lib/supabase';
 
@@ -228,6 +229,7 @@ const AIM_FINE_ROTATION_STEP = (0.35 * Math.PI) / 180;
 const AIM_FAST_ROTATION_STEP = (1.1 * Math.PI) / 180;
 const AIM_POWER_STEP = 5;
 const FOUL_FEEDBACK_MS = 1400;
+const EIGHT_BALL_BREAK_POWER_MULTIPLIER = 1.5;
 
 export class PoolScene extends Phaser.Scene {
   private cueBall!: PoolBall;
@@ -1892,13 +1894,20 @@ export class PoolScene extends Phaser.Scene {
     if (!aimIntent.direction) {
       return;
     }
+    const power = this.eightBallBreakPower(aimIntent.power);
     this.physicsEngine.strikeCueBall({
       direction: aimIntent.direction,
-      power: aimIntent.power,
+      power,
       contactOffset: this.selectedSpin,
     });
     this.wasMoving = true;
     this.audio.play('cue');
+  }
+
+  private eightBallBreakPower(power: number): number {
+    return this.gameRuleset === 'eight-ball' && this.rules.shotCount === 1
+      ? power * EIGHT_BALL_BREAK_POWER_MULTIPLIER
+      : power;
   }
 
   private renderAim(): void {
@@ -2522,9 +2531,10 @@ export class PoolScene extends Phaser.Scene {
       },
       onComplete: () => {
         this.cueGraphics.clear();
+        const power = this.eightBallBreakPower(shot.power);
         this.physicsEngine.strikeCueBall({
           direction: shot.direction,
-          power: shot.power,
+          power,
           contactOffset: shot.spin,
         });
         this.wasMoving = true;
@@ -3357,7 +3367,11 @@ export class PoolScene extends Phaser.Scene {
 
   private handleOpponentTurnEnd(msg: TurnEndMessage): void {
     if (!this.onlineState || this.opponentTurnEndApplied) return;
-    if (this.onlineState.phase !== 'watching_opponent_shot' && !this.opponentResultApplied) return;
+    const canApplyTurnEnd =
+      this.onlineState.phase === 'watching_opponent_shot' ||
+      this.opponentResultApplied ||
+      this.isNetworkTimeoutTurnEnd(msg);
+    if (!canApplyTurnEnd) return;
     this.logOnlineAuditEvent('turn_end_received', {
       reason: msg.gameOver ? 'game_over' : msg.foul ? 'foul' : 'turn_end',
       metadata: {
@@ -3465,11 +3479,12 @@ export class PoolScene extends Phaser.Scene {
 
   private sendOnlineShot(direction: Vector, power: number, contactOffset: Vector, cueBallPos: Vector): void {
     if (!this.onlineChannel || !this.onlineState) return;
+    const shotPower = this.eightBallBreakPower(power);
     const ballsSnapshot: NetworkBallSnapshot[] = this.physicsEngine.getNetworkSnapshot();
     this.onlineChannel.send({
       type: 'shot',
       direction,
-      power,
+      power: shotPower,
       contactOffset,
       cueBallPos,
       pushOut: this.gameRuleset === 'nine-ball' ? this.nineBallRules.shot.pushOut : undefined,
@@ -3477,7 +3492,7 @@ export class PoolScene extends Phaser.Scene {
     });
     this.logOnlineAuditEvent('shot_sent', {
       metadata: {
-        power,
+        power: shotPower,
         snapshotBallCount: ballsSnapshot.length,
       },
     });
@@ -3506,9 +3521,17 @@ export class PoolScene extends Phaser.Scene {
     });
   }
 
-  private sendOnlineTurnEnd(foul: boolean, cueBallInHand: boolean, nextPlayer: 0 | 1, pocketedBallIds: number[], gameOver: boolean, winner: 0 | 1 | null): void {
+  private sendOnlineTurnEnd(
+    foul: boolean,
+    cueBallInHand: boolean,
+    nextPlayer: 0 | 1,
+    pocketedBallIds: number[],
+    gameOver: boolean,
+    winner: 0 | 1 | null,
+    foulReason?: NetworkFoulReason,
+  ): void {
     if (!this.onlineChannel) return;
-    this.onlineChannel.send({
+    const message: Omit<TurnEndMessage, 'ts'> = {
       type: 'turn_end',
       foul,
       cueBallInHand,
@@ -3516,10 +3539,16 @@ export class PoolScene extends Phaser.Scene {
       pocketedBallIds,
       gameOver,
       winner,
-    });
+    };
+    if (foulReason) {
+      message.foulReason = foulReason;
+    }
+    this.onlineChannel.send(message);
     this.logOnlineAuditEvent('turn_end_sent', {
       reason: gameOver ? 'game_over' : foul ? 'foul' : 'turn_end',
-      metadata: { nextPlayer, pocketedBallIds, winner, cueBallInHand },
+      metadata: foulReason
+        ? { nextPlayer, pocketedBallIds, winner, cueBallInHand, foulReason }
+        : { nextPlayer, pocketedBallIds, winner, cueBallInHand },
     });
   }
 
@@ -3658,14 +3687,14 @@ export class PoolScene extends Phaser.Scene {
     groupsAssignedFromTurnEnd: boolean,
   ): EightBallState {
     if (msg.foul) {
-      const lastFoul = resolvedRules.lastFoul ?? (msg.cueBallInHand ? 'noFirstContact' : null);
+      const lastFoul = this.eightBallFoulReasonFromNetwork(msg.foulReason) ?? resolvedRules.lastFoul ?? (msg.cueBallInHand ? 'noFirstContact' : null);
       return {
         ...resolvedRules,
         currentPlayer: msg.nextPlayer,
         cueBallInHand: msg.cueBallInHand,
         shot: this.createEmptyEightBallShot(),
         lastFoul,
-        messageKey: msg.cueBallInHand ? 'eightBallFoul' : resolvedRules.messageKey,
+        messageKey: msg.foulReason === 'shotClockExpired' ? 'eightBallTimeoutFoul' : msg.cueBallInHand ? 'eightBallFoul' : resolvedRules.messageKey,
         messageValues: msg.cueBallInHand
           ? { player: msg.nextPlayer + 1, reason: lastFoul ?? 'noFirstContact' }
           : resolvedRules.messageValues,
@@ -3702,14 +3731,14 @@ export class PoolScene extends Phaser.Scene {
 
   private applyAuthoritativeNineBallTurnEnd(msg: TurnEndMessage, shooterIndex: 0 | 1): void {
     if (msg.foul) {
-      const lastFoul = this.nineBallRules.lastFoul ?? (msg.cueBallInHand ? 'noFirstContact' : null);
+      const lastFoul = msg.foulReason ?? this.nineBallRules.lastFoul ?? (msg.cueBallInHand ? 'noFirstContact' : null);
       this.nineBallRules = {
         ...this.nineBallRules,
         currentPlayer: msg.nextPlayer,
         cueBallInHand: msg.cueBallInHand,
         shot: this.createEmptyNineBallShot(),
         lastFoul,
-        messageKey: msg.cueBallInHand ? 'nineBallFoul' : this.nineBallRules.messageKey,
+        messageKey: msg.foulReason === 'shotClockExpired' ? 'nineBallTimeoutFoul' : msg.cueBallInHand ? 'nineBallFoul' : this.nineBallRules.messageKey,
         messageValues: msg.cueBallInHand
           ? { player: msg.nextPlayer + 1, reason: lastFoul ?? 'noFirstContact' }
           : this.nineBallRules.messageValues,
@@ -3730,6 +3759,23 @@ export class PoolScene extends Phaser.Scene {
       messageValues: { player: (pushOutDecision ? msg.nextPlayer : shooterKeptTurn ? shooterIndex : msg.nextPlayer) + 1 },
     };
     this.syncEightBallCurrentPlayer();
+  }
+
+  private isNetworkTimeoutTurnEnd(msg: TurnEndMessage): boolean {
+    return msg.foul && msg.cueBallInHand && msg.foulReason === 'shotClockExpired';
+  }
+
+  private eightBallFoulReasonFromNetwork(reason: NetworkFoulReason | undefined): EightBallFoulReason | null {
+    if (
+      reason === 'cueBallPocketed' ||
+      reason === 'noFirstContact' ||
+      reason === 'wrongFirstContact' ||
+      reason === 'noCushionAfterContact' ||
+      reason === 'shotClockExpired'
+    ) {
+      return reason;
+    }
+    return null;
   }
 
   private markActiveGameOverFromOnline(winner: 0 | 1, loser: 0 | 1, shooterIndex: 0 | 1): void {
@@ -3874,7 +3920,7 @@ export class PoolScene extends Phaser.Scene {
     this.recordActiveTimeoutFoul();
     const myIndex: 0 | 1 = this.roomInfo!.isHost ? 0 : 1;
     const opponentIndex: 0 | 1 = this.roomInfo!.isHost ? 1 : 0;
-    this.sendOnlineTurnEnd(true, true, opponentIndex, [], false, null);
+    this.sendOnlineTurnEnd(true, true, opponentIndex, [], false, null, 'shotClockExpired');
     this.onlineState = transitionToOpponentTurn(this.onlineState);
     this.shotClockRemaining = 30;
     this.updateHud();
@@ -4213,9 +4259,6 @@ export class PoolScene extends Phaser.Scene {
     won: boolean,
     reason: 'normal' | 'disconnect' | 'surrender',
   ): Promise<void> {
-    const stat = won ? 'wins' : 'losses';
-    await this.supabaseClient.rpc('increment_profile_stat', { stat_name: stat });
-
     if (!this.roomInfo) return;
 
     if (this.matchStartedAt !== null) {
@@ -4224,6 +4267,24 @@ export class PoolScene extends Phaser.Scene {
       const hostId = this.roomInfo.isHost ? myUserId : opponentId;
       const guestId = this.roomInfo.isHost ? opponentId : myUserId;
       const winnerId = won ? myUserId : opponentId;
+      const payload = {
+        p_room_id: this.roomInfo.roomId,
+        p_winner_id: winnerId,
+        p_reason: reason,
+        p_started_at: new Date(this.matchStartedAt).toISOString(),
+        p_player1_strokes: this.localMatchTracker.playerStrokes[0],
+        p_player2_strokes: this.localMatchTracker.playerStrokes[1],
+        p_player1_cleared_table: winnerId === hostId && reason === 'normal',
+        p_player2_cleared_table: winnerId === guestId && reason === 'normal',
+      };
+
+      const { data: settledData, error: settleError } = await this.supabaseClient.rpc('settle_online_match', payload);
+      if (!settleError) {
+        this.currentMatchId = this.readSettledMatchId(settledData) ?? this.currentMatchId;
+        return;
+      }
+
+      await this.supabaseClient.rpc('increment_profile_stat', { stat_name: won ? 'wins' : 'losses' });
 
       const { data } = await this.supabaseClient.from('matches').upsert(
         {
@@ -4246,6 +4307,17 @@ export class PoolScene extends Phaser.Scene {
     }
 
     await this.supabaseClient.from('rooms').update({ status: 'finished' }).eq('id', this.roomInfo.roomId);
+  }
+
+  private readSettledMatchId(data: unknown): string | null {
+    if (Array.isArray(data)) {
+      return this.readSettledMatchId(data[0]);
+    }
+    if (!data || typeof data !== 'object') {
+      return null;
+    }
+    const matchId = (data as { match_id?: unknown }).match_id;
+    return typeof matchId === 'string' ? matchId : null;
   }
 
   private cleanupOnlineMode(): void {
