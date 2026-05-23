@@ -42,6 +42,19 @@ supabase functions deploy create-recharge-order
 supabase functions deploy mock-pay-recharge-order
 ```
 
+## GitHub Actions deployment
+
+Pushes to `master` that change `supabase/**` trigger
+`.github/workflows/supabase-deploy.yml`. The workflow applies database
+migrations with `supabase db push` and deploys all Edge Functions listed above.
+
+Configure these GitHub repository secrets before relying on the workflow:
+
+```text
+SUPABASE_ACCESS_TOKEN
+SUPABASE_DB_PASSWORD
+```
+
 The frontend also needs these Vercel environment variables:
 
 ```text
