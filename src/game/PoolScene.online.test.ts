@@ -836,6 +836,83 @@ describe('PoolScene online turn state', () => {
     expect(scene.onlineState.phase).toBe('opponent_turn');
   });
 
+  it('charges a post-break shot-clock timeout to the online shooter even if rules currentPlayer is stale', () => {
+    const scene = createOnlineSceneHarness();
+    const send = vi.fn();
+    scene.onlineChannel = { send };
+    scene.roomInfo = { ...scene.roomInfo!, isHost: false };
+    scene.onlineState = transitionToMyTurn(scene.onlineState);
+    scene.rules = {
+      ...createEightBallState(),
+      currentPlayer: 0,
+      shotCount: 2,
+      players: [
+        { id: 0, group: 'solids' },
+        { id: 1, group: 'stripes' },
+      ],
+    };
+
+    scene.handleOnlineTimeout();
+
+    expect(send).toHaveBeenCalledWith({
+      type: 'turn_end',
+      foul: true,
+      cueBallInHand: true,
+      nextPlayer: 0,
+      pocketedBallIds: [],
+      gameOver: false,
+      winner: null,
+      foulReason: 'shotClockExpired',
+    });
+    expect(scene.rules.currentPlayer).toBe(0);
+    expect(scene.rules.cueBallInHand).toBe(true);
+    expect(scene.rules.lastFoul).toBe('shotClockExpired');
+    expect(scene.rules.messageValues).toEqual({ player: 1 });
+    expect(scene.onlineState.phase).toBe('opponent_turn');
+  });
+
+  it('charges a post-break nine-ball timeout to the online shooter even if rules currentPlayer is stale', () => {
+    const scene = createOnlineSceneHarness();
+    const send = vi.fn();
+    scene.onlineChannel = { send };
+    scene.roomInfo = { ...scene.roomInfo!, isHost: false };
+    scene.gameRuleset = 'nine-ball';
+    scene.onlineState = transitionToMyTurn(scene.onlineState);
+    scene.nineBallRules = {
+      ...createNineBallState(),
+      currentPlayer: 0,
+      shotCount: 2,
+    };
+    scene.rules = {
+      ...scene.rules,
+      currentPlayer: 0,
+    };
+
+    scene.handleOnlineTimeout();
+
+    expect(send).toHaveBeenCalledWith({
+      type: 'turn_end',
+      foul: true,
+      cueBallInHand: true,
+      nextPlayer: 0,
+      pocketedBallIds: [],
+      gameOver: false,
+      winner: null,
+      foulReason: 'shotClockExpired',
+    });
+    expect(scene.nineBallRules.currentPlayer).toBe(0);
+    expect(scene.rules.currentPlayer).toBe(0);
+    expect(scene.nineBallRules.cueBallInHand).toBe(true);
+    expect(scene.nineBallRules.lastFoul).toBe('shotClockExpired');
+    expect(scene.nineBallRules.consecutiveFouls).toEqual([0, 1]);
+    expect(scene.nineBallRules.messageValues).toEqual({
+      player: 1,
+      shooter: 2,
+      reason: 'shotClockExpired',
+    });
+    expect(scene.onlineState.phase).toBe('opponent_turn');
+  });
+
   it('turns the online primary button into surrender instead of restarting the rack', () => {
     const scene = createOnlineSceneHarness();
     const send = vi.fn();

@@ -3917,6 +3917,7 @@ export class PoolScene extends Phaser.Scene {
     this.cuePlacementState = null;
     this.aimLine.clear();
     this.cueGraphics.clear();
+    this.alignRulesCurrentPlayerWithOnlineShooter('me');
     this.recordActiveTimeoutFoul();
     const myIndex: 0 | 1 = this.roomInfo!.isHost ? 0 : 1;
     const opponentIndex: 0 | 1 = this.roomInfo!.isHost ? 1 : 0;
