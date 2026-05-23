@@ -68,6 +68,7 @@ type ShotHandlerHarness = {
   unbindChatUI: () => void;
   syncOnlineChatTriggers: () => void;
   sendOnlineResult: () => void;
+  performRematch: (breaker: 0 | 1) => void;
   restartRack: ReturnType<typeof vi.fn>;
   showOnlineGameOver: (iWin: boolean, reason: string) => void;
   updateHud: ReturnType<typeof vi.fn>;
@@ -1199,6 +1200,29 @@ describe('PoolScene online turn state', () => {
 
     expect(scene.leaveOnlineMatch).toHaveBeenCalledOnce();
     expect(scene.restartRack).not.toHaveBeenCalled();
+  });
+
+  it('keeps the stable channel status when starting a rematch on the existing connection', () => {
+    const scene = createOnlineSceneHarness();
+    const previousDocument = globalThis.document;
+    scene.onlineState = {
+      ...scene.onlineState,
+      phase: 'game_over',
+      realtimeStatus: 'stable',
+      lastOpponentHeartbeat: Date.now() - 1000,
+    };
+
+    globalThis.document = {
+      querySelector: vi.fn(() => null),
+    } as unknown as Document;
+
+    try {
+      scene.performRematch(0);
+
+      expect(scene.onlineState.realtimeStatus).toBe('stable');
+    } finally {
+      globalThis.document = previousDocument;
+    }
   });
 
   it('shows a protection countdown instead of ending immediately when opponent heartbeat is late', () => {

@@ -4223,11 +4223,18 @@ export class PoolScene extends Phaser.Scene {
 
     if (this.gameMode === 'online' && this.onlineState && this.roomInfo) {
       const myIndex: 0 | 1 = this.roomInfo.isHost ? 0 : 1;
+      const previousRealtimeStatus = this.onlineState.realtimeStatus;
+      const previousRealtimeStatusUpdatedAt = this.onlineState.realtimeStatusUpdatedAt;
       this.onlineState = createOnlineState({
         isHost: this.roomInfo.isHost,
         turnTimeLimit: 30,
         disconnectTimeout: 30,
       });
+      this.onlineState = recordChannelStatus(
+        this.onlineState,
+        previousRealtimeStatus,
+        previousRealtimeStatusUpdatedAt,
+      );
       if (breaker === myIndex) {
         this.onlineState = transitionToMyTurn(this.onlineState);
       } else {
