@@ -229,7 +229,7 @@ const AIM_FINE_ROTATION_STEP = (0.35 * Math.PI) / 180;
 const AIM_FAST_ROTATION_STEP = (1.1 * Math.PI) / 180;
 const AIM_POWER_STEP = 5;
 const FOUL_FEEDBACK_MS = 1400;
-const EIGHT_BALL_BREAK_POWER_MULTIPLIER = 1.5;
+const OPENING_BREAK_POWER_MULTIPLIER = 1.5;
 
 export class PoolScene extends Phaser.Scene {
   private cueBall!: PoolBall;
@@ -1894,7 +1894,7 @@ export class PoolScene extends Phaser.Scene {
     if (!aimIntent.direction) {
       return;
     }
-    const power = this.eightBallBreakPower(aimIntent.power);
+    const power = this.openingBreakPower(aimIntent.power);
     this.physicsEngine.strikeCueBall({
       direction: aimIntent.direction,
       power,
@@ -1904,10 +1904,11 @@ export class PoolScene extends Phaser.Scene {
     this.audio.play('cue');
   }
 
-  private eightBallBreakPower(power: number): number {
-    return this.gameRuleset === 'eight-ball' && this.rules.shotCount === 1
-      ? power * EIGHT_BALL_BREAK_POWER_MULTIPLIER
-      : power;
+  private openingBreakPower(power: number): number {
+    const isOpeningBreak =
+      (this.gameRuleset === 'eight-ball' && this.rules.shotCount === 1) ||
+      (this.gameRuleset === 'nine-ball' && this.nineBallRules.shotCount === 1);
+    return isOpeningBreak ? power * OPENING_BREAK_POWER_MULTIPLIER : power;
   }
 
   private renderAim(): void {
@@ -2531,7 +2532,7 @@ export class PoolScene extends Phaser.Scene {
       },
       onComplete: () => {
         this.cueGraphics.clear();
-        const power = this.eightBallBreakPower(shot.power);
+        const power = this.openingBreakPower(shot.power);
         this.physicsEngine.strikeCueBall({
           direction: shot.direction,
           power,
@@ -3479,7 +3480,7 @@ export class PoolScene extends Phaser.Scene {
 
   private sendOnlineShot(direction: Vector, power: number, contactOffset: Vector, cueBallPos: Vector): void {
     if (!this.onlineChannel || !this.onlineState) return;
-    const shotPower = this.eightBallBreakPower(power);
+    const shotPower = this.openingBreakPower(power);
     const ballsSnapshot: NetworkBallSnapshot[] = this.physicsEngine.getNetworkSnapshot();
     this.onlineChannel.send({
       type: 'shot',

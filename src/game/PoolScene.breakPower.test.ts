@@ -15,6 +15,7 @@ vi.mock('phaser', () => ({
 import { CUE_START, type Vector } from './constants';
 import { PoolScene } from './PoolScene';
 import { createEightBallState, startEightBallShot, type EightBallState } from './eightBallRules';
+import { createNineBallState, startNineBallShot, type NineBallState } from './nineBallRules';
 import type { AimIntent } from './shotControl';
 import { createGameState, recordStroke, type GameState } from './state';
 import { createOnlineState, transitionToMyTurn, type OnlineState } from '../online/onlineState';
@@ -24,6 +25,7 @@ type BreakPowerHarness = {
   gameRuleset: 'eight-ball' | 'nine-ball';
   state: GameState;
   rules: EightBallState;
+  nineBallRules: NineBallState;
   selectedSpin: Vector;
   wasMoving: boolean;
   physicsEngine: {
@@ -44,6 +46,7 @@ function createOpeningBreakScene(): BreakPowerHarness {
   scene.gameRuleset = 'eight-ball';
   scene.state = recordStroke(createGameState(15));
   scene.rules = startEightBallShot(createEightBallState());
+  scene.nineBallRules = startNineBallShot(createNineBallState());
   scene.selectedSpin = { x: 0, y: 0 };
   scene.wasMoving = false;
   scene.physicsEngine = {
@@ -107,5 +110,27 @@ describe('PoolScene eight-ball break power', () => {
         snapshotBallCount: 0,
       },
     });
+  });
+});
+
+describe('PoolScene nine-ball break power', () => {
+  it('uses 150% power for the first nine-ball break impulse', () => {
+    const scene = createOpeningBreakScene();
+    scene.gameRuleset = 'nine-ball';
+
+    scene.applyCueImpulse(createIntent(0.8));
+
+    const shot = scene.physicsEngine.strikeCueBall.mock.calls[0][0];
+    expect(shot.power).toBeCloseTo(1.2);
+  });
+
+  it('keeps later nine-ball shots at the selected power', () => {
+    const scene = createOpeningBreakScene();
+    scene.gameRuleset = 'nine-ball';
+    scene.nineBallRules = { ...scene.nineBallRules, shotCount: 2 };
+
+    scene.applyCueImpulse(createIntent(0.8));
+
+    expect(scene.physicsEngine.strikeCueBall.mock.calls[0][0].power).toBe(0.8);
   });
 });
