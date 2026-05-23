@@ -24,6 +24,7 @@ jobs:
       SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
       SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
       SUPABASE_PROJECT_ID: auymwlpzwtpsnaaemnut
+      SUPABASE_DB_HOST: db.auymwlpzwtpsnaaemnut.supabase.co
 
     steps:
       - name: Check out repository
@@ -51,7 +52,10 @@ jobs:
         run: supabase link --project-ref "$SUPABASE_PROJECT_ID" --password "$SUPABASE_DB_PASSWORD" --yes
 
       - name: Apply database migrations
-        run: supabase db push --password "$SUPABASE_DB_PASSWORD"
+        shell: bash
+        run: |
+          ENCODED_PASSWORD="$(python3 -c 'import os, urllib.parse; print(urllib.parse.quote(os.environ["SUPABASE_DB_PASSWORD"], safe=""))')"
+          supabase db push --db-url "postgresql://postgres:${ENCODED_PASSWORD}@${SUPABASE_DB_HOST}:5432/postgres"
 
       - name: Deploy Edge Functions
         run: supabase functions deploy --project-ref "$SUPABASE_PROJECT_ID"
