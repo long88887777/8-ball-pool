@@ -179,6 +179,7 @@ h2 {
   inset: 0;
   width: var(--turn-progress);
   content: '';
+  pointer-events: none;
   background: linear-gradient(90deg, rgba(108, 92, 231, 0.15), rgba(0, 206, 201, 0.06), transparent);
   opacity: 0;
   transition: width 0.25s ease, opacity 0.2s ease;
@@ -2809,6 +2810,7 @@ h2 {
 
 .chat-trigger-btn {
   position: relative;
+  z-index: 2;
   width: 24px;
   height: 24px;
   border: none;

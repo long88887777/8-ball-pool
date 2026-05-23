@@ -3171,8 +3171,7 @@ export class PoolScene extends Phaser.Scene {
       turnTimeLimit: 30,
       disconnectTimeout: 30,
     });
-    this.chatTriggerP1.hidden = !this.roomInfo.isHost;
-    this.chatTriggerP2.hidden = this.roomInfo.isHost;
+    this.syncOnlineChatTriggers();
     this.onlineChannel = new GameChannel();
     this.onlineChannel.join({
       roomId: this.roomInfo.roomId,
@@ -3367,11 +3366,21 @@ export class PoolScene extends Phaser.Scene {
   }
 
   private handleOpponentTurnEnd(msg: TurnEndMessage): void {
-    if (!this.onlineState || this.opponentTurnEndApplied) return;
+    if (!this.onlineState) return;
+    const timeoutTurnEnd = this.isNetworkTimeoutTurnEnd(msg);
+    if (timeoutTurnEnd && this.onlineState.phase === 'opponent_turn') {
+      this.pendingResult = null;
+      this.pendingTurnEnd = null;
+      this.opponentResultApplied = false;
+      this.opponentTurnEndApplied = false;
+      this.opponentShotResolved = false;
+      this.wasMoving = false;
+    }
+    if (this.opponentTurnEndApplied) return;
     const canApplyTurnEnd =
       this.onlineState.phase === 'watching_opponent_shot' ||
       this.opponentResultApplied ||
-      this.isNetworkTimeoutTurnEnd(msg);
+      (timeoutTurnEnd && this.onlineState.phase === 'opponent_turn');
     if (!canApplyTurnEnd) return;
     this.logOnlineAuditEvent('turn_end_received', {
       reason: msg.gameOver ? 'game_over' : msg.foul ? 'foul' : 'turn_end',
@@ -3983,7 +3992,11 @@ export class PoolScene extends Phaser.Scene {
   private handleOpponentDisconnect(): void {
     if (!this.onlineState || !this.onlineChannel) return;
     const myIndex: 0 | 1 = this.roomInfo!.isHost ? 0 : 1;
-    this.onlineChannel.send({ type: 'game_over', reason: 'disconnect', winner: myIndex });
+    try {
+      this.onlineChannel.send({ type: 'game_over', reason: 'disconnect', winner: myIndex });
+    } catch {
+      // The peer is already beyond the reconnect window; local settlement must continue.
+    }
     this.logOnlineAuditEvent('disconnect_forfeit', {
       reason: 'opponent_timeout',
       metadata: { winner: myIndex },
@@ -4362,6 +4375,16 @@ export class PoolScene extends Phaser.Scene {
   // --- Chat ---
 
   private static readonly CHAT_EMOJIS = ['😀','😂','🤣','😊','😎','😍','🤩','😤','😢','😡','👍','👎','🎱','🔥','💯','👏','🥇','🏆','🤝','🎉','💪','🙏','😅','🤔','👋','❤️','✨','⚡','🎯'];
+
+  private syncOnlineChatTriggers(): void {
+    if (!this.roomInfo) {
+      this.chatTriggerP1.hidden = true;
+      this.chatTriggerP2.hidden = true;
+      return;
+    }
+    this.chatTriggerP1.hidden = !this.roomInfo.isHost;
+    this.chatTriggerP2.hidden = this.roomInfo.isHost;
+  }
 
   private bindChatUI(): void {
     this.chatTriggerP1 = document.querySelector<HTMLButtonElement>('#chat-trigger-p1')!;

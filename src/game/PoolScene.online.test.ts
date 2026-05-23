@@ -54,6 +54,7 @@ type ShotHandlerHarness = {
   handlePhysicsEvents: (events: Array<{ type: 'collision' | 'cushion' | 'pocket'; ballId: number; otherBallId?: number; speed?: number; pocketIndex?: number }>) => void;
   handleOnlineSettled: () => void;
   handleOnlineTimeout: () => void;
+  updateOnlineTick: (deltaSeconds: number) => void;
   applyPendingOpponentResult: () => void;
   formatCurrentMessageText: () => string;
   updateShotClockHud: () => void;
@@ -65,6 +66,7 @@ type ShotHandlerHarness = {
   victoryRestartHandler: () => void;
   bindChatUI: () => void;
   unbindChatUI: () => void;
+  syncOnlineChatTriggers: () => void;
   sendOnlineResult: () => void;
   restartRack: ReturnType<typeof vi.fn>;
   showOnlineGameOver: (iWin: boolean, reason: string) => void;
@@ -117,6 +119,9 @@ type ShotHandlerHarness = {
     winner: 0 | 1 | null;
     foulReason?: NetworkFoulReason;
   } | null;
+  opponentResultApplied: boolean;
+  opponentTurnEndApplied: boolean;
+  opponentShotResolved: boolean;
   ballPocketMap: Map<number, number>;
   wasMoving: boolean;
   physicsEngine: {
@@ -282,6 +287,9 @@ function createOnlineSceneHarness(options: { useRealSync?: boolean } = {}): Shot
   scene.nineBallRules = createNineBallState();
   scene.pendingResult = null;
   scene.pendingTurnEnd = null;
+  scene.opponentResultApplied = false;
+  scene.opponentTurnEndApplied = false;
+  scene.opponentShotResolved = false;
   scene.ballPocketMap = new Map();
   scene.wasMoving = false;
   scene.physicsEngine = {
@@ -612,6 +620,69 @@ describe('PoolScene online turn state', () => {
     expect(scene.rules.cueBallInHand).toBe(true);
     expect(scene.rules.lastFoul).toBe('shotClockExpired');
     expect(scene.rules.messageKey).toBe('eightBallTimeoutFoul');
+    expect(scene.onlineState.phase).toBe('my_turn');
+    expect(scene.canPlaceBallInHandCueBall()).toBe(true);
+  });
+
+  it('applies an opponent shot-clock timeout after the previous opponent shot was already resolved', () => {
+    const scene = createOnlineSceneHarness();
+    scene.roomInfo = { ...scene.roomInfo!, isHost: false };
+    scene.onlineState = transitionToOpponentTurn(scene.onlineState);
+    scene.opponentResultApplied = true;
+    scene.opponentTurnEndApplied = true;
+    scene.opponentShotResolved = true;
+    scene.physicsEngine.isSettled.mockReturnValue(true);
+
+    scene.handleOpponentTurnEnd({
+      type: 'turn_end',
+      ts: Date.now(),
+      foul: true,
+      cueBallInHand: true,
+      nextPlayer: 1,
+      pocketedBallIds: [],
+      gameOver: false,
+      winner: null,
+      foulReason: 'shotClockExpired',
+    });
+
+    expect(scene.rules.currentPlayer).toBe(1);
+    expect(scene.rules.cueBallInHand).toBe(true);
+    expect(scene.rules.lastFoul).toBe('shotClockExpired');
+    expect(scene.onlineState.phase).toBe('my_turn');
+    expect(scene.canPlaceBallInHandCueBall()).toBe(true);
+  });
+
+  it('applies a nine-ball opponent shot-clock timeout after the previous opponent shot was already resolved', () => {
+    const scene = createOnlineSceneHarness();
+    scene.roomInfo = { ...scene.roomInfo!, isHost: false };
+    scene.gameRuleset = 'nine-ball';
+    scene.onlineState = transitionToOpponentTurn(scene.onlineState);
+    scene.nineBallRules = {
+      ...createNineBallState(),
+      currentPlayer: 0,
+      shotCount: 2,
+    };
+    scene.opponentResultApplied = true;
+    scene.opponentTurnEndApplied = true;
+    scene.opponentShotResolved = true;
+    scene.physicsEngine.isSettled.mockReturnValue(true);
+
+    scene.handleOpponentTurnEnd({
+      type: 'turn_end',
+      ts: Date.now(),
+      foul: true,
+      cueBallInHand: true,
+      nextPlayer: 1,
+      pocketedBallIds: [],
+      gameOver: false,
+      winner: null,
+      foulReason: 'shotClockExpired',
+    });
+
+    expect(scene.nineBallRules.currentPlayer).toBe(1);
+    expect(scene.rules.currentPlayer).toBe(1);
+    expect(scene.nineBallRules.cueBallInHand).toBe(true);
+    expect(scene.nineBallRules.lastFoul).toBe('shotClockExpired');
     expect(scene.onlineState.phase).toBe('my_turn');
     expect(scene.canPlaceBallInHandCueBall()).toBe(true);
   });
@@ -1004,6 +1075,58 @@ describe('PoolScene online turn state', () => {
     }
   });
 
+  it('shows only the local player chat button when online mode starts', () => {
+    const previousDocument = globalThis.document;
+    const chatTriggerP1 = createFakeButton();
+    const chatTriggerP2 = createFakeButton();
+    const popover = createFakeElement();
+    const input = createFakeInput();
+    const emojiButton = createFakeButton();
+    const emojiList = createFakeElement();
+    const sendButton = createFakeButton();
+    const myBubble = createFakeElement({
+      '.chat-msg-sender-inline': createFakeElement(),
+      '.chat-msg-text-inline': createFakeElement(),
+    });
+    const opponentBubble = createFakeElement({
+      '.chat-msg-sender-inline': createFakeElement(),
+      '.chat-msg-text-inline': createFakeElement(),
+    });
+    const nodes: Record<string, HTMLElement> = {
+      '#chat-trigger-p1': chatTriggerP1,
+      '#chat-trigger-p2': chatTriggerP2,
+      '#chat-popover': popover,
+      '#chat-popover-input': input,
+      '#chat-popover-emoji': emojiButton,
+      '#chat-popover-emojis': emojiList,
+      '#chat-popover-send': sendButton,
+      '#chat-my-bubble': myBubble,
+      '#chat-opponent-bubble': opponentBubble,
+    };
+    globalThis.document = {
+      querySelector: vi.fn((selector: string) => nodes[selector] ?? null),
+      createElement: vi.fn(() => createFakeButton()),
+    } as unknown as Document;
+
+    try {
+      const scene = createOnlineSceneHarness();
+      scene.roomInfo = { ...scene.roomInfo!, isHost: false };
+      scene.bindChatUI();
+      scene.syncOnlineChatTriggers();
+
+      expect(chatTriggerP1.hidden).toBe(true);
+      expect(chatTriggerP2.hidden).toBe(false);
+
+      popover.hidden = true;
+      chatTriggerP2.click();
+
+      expect(popover.hidden).toBe(false);
+      expect(input.focus).toHaveBeenCalled();
+    } finally {
+      globalThis.document = previousDocument;
+    }
+  });
+
   it('shows a return-to-menu win as a final confirmation instead of rematch actions', () => {
     const scene = createOnlineSceneHarness();
     const title = { textContent: '' };
@@ -1211,6 +1334,34 @@ describe('PoolScene online turn state', () => {
     });
     expect(scene.currentMatchId).toBe('match-1');
     expect(from).not.toHaveBeenCalled();
+  });
+
+  it('forfeits and settles locally when opponent is disconnected for more than 30 seconds even if the game_over send fails', () => {
+    const scene = createOnlineSceneHarness();
+    const previousDocument = globalThis.document;
+    const send = vi.fn(() => {
+      throw new Error('channel closed');
+    });
+    scene.onlineChannel = { send };
+    scene.onlineState = {
+      ...transitionToOpponentTurn(scene.onlineState),
+      lastOpponentHeartbeat: Date.now() - 31000,
+      realtimeStatus: 'stable',
+    };
+    globalThis.document = {
+      querySelector: vi.fn(() => null),
+    } as unknown as Document;
+
+    try {
+      expect(() => scene.updateOnlineTick(0)).not.toThrow();
+
+      expect(send).toHaveBeenCalledWith({ type: 'game_over', reason: 'disconnect', winner: 0 });
+      expect(scene.onlineState.phase).toBe('game_over');
+      expect(scene.showOnlineGameOver).toHaveBeenCalledWith(true, 'disconnect');
+      expect(scene.updateOnlineStats).toHaveBeenCalledWith(true, 'disconnect');
+    } finally {
+      globalThis.document = previousDocument;
+    }
   });
 
   it('applies snapshot when watching opponent shot and balls still in motion', () => {
