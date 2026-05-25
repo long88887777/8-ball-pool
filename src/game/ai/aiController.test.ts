@@ -208,7 +208,42 @@ describe('aiController', () => {
 
       const decision = controller.computeDecision(ballPositions, rules);
       expect(decision).not.toBeNull();
+      expect(['break_cluster', 'kick']).toContain(decision!.shot.type);
       expect(decision!.shot.power).toBeGreaterThan(0);
+    });
+
+    it('does not attack the 8-ball before clearing its group', () => {
+      const controller = new AIController({ timeBudgetMs: 100, maxDepth: 3, explorationConstant: 1.25 });
+      const ballPositions = new Map<number, Vector>([
+        [0, { x: 250, y: 320 }],
+        [8, { x: 500, y: 320 }],
+        [9, { x: 760, y: 250 }],
+      ]);
+      const rules = createEightBallState();
+      rules.currentPlayer = 1;
+      rules.players[1].group = 'stripes';
+
+      const decision = controller.computeDecision(ballPositions, rules);
+
+      expect(decision).not.toBeNull();
+      expect(decision!.shot.targetBallId).not.toBe(8);
+    });
+
+    it('attacks the 8-ball after clearing its group when the shot is legal', () => {
+      const controller = new AIController({ timeBudgetMs: 100, maxDepth: 3, explorationConstant: 1.25 });
+      const ballPositions = new Map<number, Vector>([
+        [0, { x: 250, y: 320 }],
+        [8, { x: 500, y: 320 }],
+      ]);
+      const rules = createEightBallState();
+      rules.currentPlayer = 1;
+      rules.players[1].group = 'stripes';
+      rules.pocketedBallIds = [9, 10, 11, 12, 13, 14, 15];
+
+      const decision = controller.computeDecision(ballPositions, rules);
+
+      expect(decision).not.toBeNull();
+      expect(decision!.shot.targetBallId).toBe(8);
     });
 
     it('AI uses position play to steer cue ball toward next target', () => {

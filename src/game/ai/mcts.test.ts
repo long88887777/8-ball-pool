@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { mctsSearch, createRootNode, selectBestChild } from './mcts';
 import type { Vector } from '../constants';
 import type { TableState, MCTSConfig } from './types';
@@ -75,6 +75,23 @@ describe('mcts', () => {
       const result = mctsSearch(easyPotState, 1, 'solids', [], config);
       expect(result).not.toBeNull();
       expect(result!.type).toBe('pot');
+    });
+
+    it('does not use Math.random during rollout selection', () => {
+      const randomSpy = vi.spyOn(Math, 'random').mockImplementation(() => {
+        throw new Error('MCTS search must stay deterministic');
+      });
+
+      try {
+        expect(() => mctsSearch(simpleState, 1, 'solids', [], { ...config, iterationBudget: 40 })).not.toThrow();
+      } finally {
+        randomSpy.mockRestore();
+      }
+    });
+
+    it('limits root candidates when configured', () => {
+      const root = createRootNode(simpleState, 'solids', [], 3);
+      expect(root.untriedShots.length).toBeLessThanOrEqual(3);
     });
   });
 });

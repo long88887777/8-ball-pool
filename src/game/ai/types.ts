@@ -34,6 +34,8 @@ export type MCTSConfig = {
   timeBudgetMs: number;
   maxDepth: number;
   explorationConstant: number;
+  iterationBudget?: number;
+  candidateLimit?: number;
 };
 
 export type MCTSNode = {

@@ -12,6 +12,8 @@ export type AIDifficultyProfile = {
   spinError: number;
   safetyBias: number;
   riskTolerance: number;
+  candidateLimit: number;
+  routeDepth: number;
   tempoMs: number;
 };
 
@@ -23,12 +25,16 @@ const PROFILES: Record<AIDifficulty, AIDifficultyProfile> = {
       timeBudgetMs: 70,
       maxDepth: 2,
       explorationConstant: 1.7,
+      iterationBudget: 24,
+      candidateLimit: 18,
     },
     aimErrorRadians: 0,
     powerError: 0,
     spinError: 0,
     safetyBias: 0.16,
     riskTolerance: -0.08,
+    candidateLimit: 18,
+    routeDepth: 2,
     tempoMs: 760,
   },
   normal: {
@@ -38,12 +44,16 @@ const PROFILES: Record<AIDifficulty, AIDifficultyProfile> = {
       timeBudgetMs: 140,
       maxDepth: 3,
       explorationConstant: 1.45,
+      iterationBudget: 48,
+      candidateLimit: 30,
     },
     aimErrorRadians: 0,
     powerError: 0,
     spinError: 0,
     safetyBias: 0.07,
     riskTolerance: 0.04,
+    candidateLimit: 30,
+    routeDepth: 2,
     tempoMs: 620,
   },
   hard: {
@@ -51,14 +61,18 @@ const PROFILES: Record<AIDifficulty, AIDifficultyProfile> = {
     label: '大师',
     mctsConfig: {
       timeBudgetMs: 220,
-      maxDepth: 3,
+      maxDepth: 4,
       explorationConstant: 1.25,
+      iterationBudget: 84,
+      candidateLimit: 48,
     },
     aimErrorRadians: 0,
     powerError: 0,
     spinError: 0,
     safetyBias: 0.02,
     riskTolerance: 0.12,
+    candidateLimit: 48,
+    routeDepth: 3,
     tempoMs: 480,
   },
 };
@@ -92,6 +106,10 @@ function applyDifficultyToShot(
   profile: AIDifficultyProfile,
   rng: RandomSource,
 ): ShotCandidate {
+  if (profile.aimErrorRadians === 0 && profile.powerError === 0 && profile.spinError === 0) {
+    return cloneShot(shot);
+  }
+
   const aimDelta = randomSigned(rng) * profile.aimErrorRadians;
   const powerDelta = randomSigned(rng) * profile.powerError;
   const spinXDelta = randomSigned(rng) * profile.spinError;
@@ -105,6 +123,15 @@ function applyDifficultyToShot(
       x: clamp(shot.spin.x + spinXDelta, -1, 1),
       y: clamp(shot.spin.y + spinYDelta, -1, 1),
     },
+    ghostBallPos: { x: shot.ghostBallPos.x, y: shot.ghostBallPos.y },
+  };
+}
+
+function cloneShot(shot: ShotCandidate): ShotCandidate {
+  return {
+    ...shot,
+    direction: { x: shot.direction.x, y: shot.direction.y },
+    spin: { x: shot.spin.x, y: shot.spin.y },
     ghostBallPos: { x: shot.ghostBallPos.x, y: shot.ghostBallPos.y },
   };
 }

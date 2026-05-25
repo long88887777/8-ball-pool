@@ -144,14 +144,11 @@ export function generateShotCandidates(
     }
   }
 
-  if (candidates.length === 0) {
-    return generateSafetyCandidates(cuePos, legalTargets, ballPositions, obstacles);
-  }
-
-  return candidates;
+  const safetyCandidates = generateSafetyCandidates(cuePos, legalTargets, ballPositions, obstacles);
+  return [...candidates, ...safetyCandidates];
 }
 
-function generateSafetyCandidates(
+export function generateSafetyCandidates(
   cuePos: Vector,
   legalTargets: number[],
   ballPositions: Map<number, Vector>,
@@ -176,7 +173,7 @@ function generateSafetyCandidates(
     );
     if (!isPathClear(cuePos, targetPos, pathObstacles)) continue;
 
-    for (const power of [0.3, 0.5]) {
+    for (const power of [0.18, 0.26, 0.34, 0.5]) {
       candidates.push({
         targetBallId: targetId,
         pocketIndex: -1,

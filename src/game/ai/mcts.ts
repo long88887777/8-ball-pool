@@ -15,9 +15,10 @@ export function createRootNode(
   state: TableState,
   aiGroup: BallGroup | null,
   pocketedBallIds: number[],
+  candidateLimit?: number,
 ): MCTSNode {
   const candidates = generateShotCandidates(state.ballPositions, aiGroup, pocketedBallIds, state.ruleset);
-  const sorted = sortCandidates(candidates);
+  const sorted = limitCandidates(sortCandidates(candidates), candidateLimit);
   return {
     state,
     shot: null,
@@ -50,14 +51,17 @@ export function mctsSearch(
   pocketedBallIds: number[],
   config: MCTSConfig = DEFAULT_CONFIG,
 ): ShotCandidate | null {
-  const root = createRootNode(state, aiGroup, pocketedBallIds);
+  const root = createRootNode(state, aiGroup, pocketedBallIds, config.candidateLimit);
 
   if (root.untriedShots.length === 0) return null;
   if (root.untriedShots.length === 1) return root.untriedShots[0];
 
   const deadline = performance.now() + config.timeBudgetMs;
+  const iterationBudget = config.iterationBudget ?? Infinity;
+  let iterations = 0;
 
-  while (performance.now() < deadline) {
+  while (performance.now() < deadline && iterations < iterationBudget) {
+    iterations++;
     let node = root;
 
     // Selection
@@ -83,7 +87,7 @@ export function mctsSearch(
         children: [],
         visits: 0,
         totalValue: 0,
-        untriedShots: sortCandidates(childCandidates),
+        untriedShots: limitCandidates(sortCandidates(childCandidates), config.candidateLimit),
       };
       node.children.push(child);
       node = child;
@@ -137,8 +141,17 @@ function rollout(
   const candidates = generateShotCandidates(state.ballPositions, aiGroup, state.pocketedBallIds, state.ruleset);
   if (candidates.length === 0) return baseScore;
 
-  const top = candidates.slice(0, Math.min(10, candidates.length));
-  const pick = top[Math.floor(Math.random() * top.length)];
+  const top = sortCandidates(candidates).slice(0, Math.min(10, candidates.length));
+  let pick = top[0];
+  let bestScore = -Infinity;
+  for (const candidate of top) {
+    const candidateResult = simulateShot(state.ballPositions, candidate.direction, candidate.power, candidate.spin);
+    const candidateScore = evaluateState(state, candidateResult, aiPlayer, aiGroup) - candidate.power * 0.02;
+    if (candidateScore > bestScore) {
+      bestScore = candidateScore;
+      pick = candidate;
+    }
+  }
 
   const simResult = simulateShot(state.ballPositions, pick.direction, pick.power, pick.spin);
   const nextState = buildNextState(state, simResult, state.pocketedBallIds);
@@ -184,4 +197,9 @@ function sortCandidates(candidates: ShotCandidate[]): ShotCandidate[] {
     if (a.type !== 'pot' && b.type === 'pot') return 1;
     return 0;
   });
+}
+
+function limitCandidates(candidates: ShotCandidate[], candidateLimit?: number): ShotCandidate[] {
+  if (!candidateLimit || candidateLimit <= 0) return candidates;
+  return candidates.slice(0, candidateLimit);
 }

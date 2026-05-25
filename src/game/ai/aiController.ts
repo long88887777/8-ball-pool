@@ -7,7 +7,7 @@ import { mctsSearch } from './mcts';
 import { generateShotCandidates, generateKickShots, generateClusterBreakShots, getAILegalTargets, isPathClear, isOnTable } from './shotGenerator';
 import { simulateShot } from './fastPhysics';
 import { evaluateState, scorePositionPlay } from './evaluator';
-import { generatePositionAwareShots, computeNextTarget } from './positionPlay';
+import { generatePositionAwareShots, computeNextTarget, scoreFuturePotRoute } from './positionPlay';
 import {
   applyDifficultyToDecision,
   getAIDifficultyProfile,
@@ -32,6 +32,13 @@ const LEGACY_HARD_PROFILE: AIDifficultyProfile = {
 const PLACEMENT_GRID_SPACING = 40;
 const PLACEMENT_MIN_BALL_DIST = BALL_RADIUS * 2 + 4;
 const PLACEMENT_MIN_POCKET_DIST = 50;
+const STRONG_ATTACK_SCORE = 0.55;
+const SAFETY_ATTACK_MARGIN = 0.08;
+
+type ScoredShot = {
+  shot: ShotCandidate;
+  score: number;
+};
 
 export class AIController {
   private config: MCTSConfig;
@@ -83,14 +90,16 @@ export class AIController {
     };
 
     const directShot = this.findBestConfirmedPot(state, aiPlayer, aiGroup, pocketedBallIds);
-    if (directShot) {
-      return this.createDecision(directShot, placementPosition);
+    const safetyShot = this.findBestSafetyShot(state, aiPlayer, aiGroup, pocketedBallIds);
+
+    if (directShot && (!safetyShot || directShot.score >= STRONG_ATTACK_SCORE || directShot.score + SAFETY_ATTACK_MARGIN >= safetyShot.score)) {
+      return this.createDecision(directShot.shot, placementPosition);
     }
 
     const kickShot = this.findBestKickShot(state, aiPlayer, aiGroup, pocketedBallIds);
     const clusterShot = this.findBestClusterBreak(state, aiPlayer, aiGroup, pocketedBallIds);
 
-    const bestAlternative = this.pickBestAlternative(kickShot, clusterShot);
+    const bestAlternative = this.pickBestAlternative(kickShot, clusterShot, safetyShot);
     if (bestAlternative) {
       return this.createDecision(bestAlternative, placementPosition);
     }
@@ -125,12 +134,16 @@ export class AIController {
     return 0;
   }
 
+  private confirmedPotLimit(): number {
+    return Math.max(5, Math.floor(this.difficultyProfile.candidateLimit / 6));
+  }
+
   private findBestConfirmedPot(
     state: TableState,
     aiPlayer: PlayerIndex,
     aiGroup: BallGroup | null,
     pocketedBallIds: number[],
-  ): ShotCandidate | null {
+  ): ScoredShot | null {
     const candidates = generateShotCandidates(state.ballPositions, aiGroup, pocketedBallIds, state.ruleset);
     const potCandidates = candidates.filter((c) => c.type === 'pot');
     if (potCandidates.length === 0) return null;
@@ -162,7 +175,7 @@ export class AIController {
     let bestShot: ShotCandidate | null = null;
     let bestScore = -Infinity;
 
-    for (const { targetBallId, pocketIndex } of confirmedPots.slice(0, 5)) {
+    for (const { targetBallId, pocketIndex } of confirmedPots.slice(0, this.confirmedPotLimit())) {
       const positionCandidates = generatePositionAwareShots(
         state.ballPositions,
         targetBallId,
@@ -182,7 +195,7 @@ export class AIController {
       const idealZone = nextTarget ? nextTarget.idealZone : null;
       const zoneRadius = nextTarget ? nextTarget.zoneRadius : 50;
 
-      for (const candidate of positionCandidates) {
+      for (const candidate of positionCandidates.slice(0, this.difficultyProfile.candidateLimit)) {
         const simResult = simulateShot(
           state.ballPositions,
           candidate.direction,
@@ -192,8 +205,17 @@ export class AIController {
 
         if (simResult.pocketedBalls.length === 0) continue;
         if (simResult.cueBallPocketed) continue;
+        if (isIllegalEightBallResult(state, simResult, aiGroup)) continue;
 
         const posScore = scorePositionPlay(simResult, idealZone, zoneRadius);
+        const routeScore = scoreFuturePotRoute(
+          simResult.ballPositions,
+          getAILegalTargets(aiGroup, [...pocketedBallIds, ...simResult.pocketedBalls], state.ruleset),
+          [...pocketedBallIds, ...simResult.pocketedBalls],
+          state.ruleset,
+          Math.max(1, this.difficultyProfile.routeDepth - 1),
+        );
+        const simScore = evaluateState(state, simResult, aiPlayer, aiGroup);
         const cueEnd = simResult.ballPositions.get(0);
         let safetyScore = 1.0;
         if (cueEnd) {
@@ -207,7 +229,14 @@ export class AIController {
         const powerPenalty = candidate.power * 0.03;
 
         // Position play is the primary objective once pot is confirmed
-        const score = posScore * 0.55 + safetyScore * 0.15 + 0.3 - powerPenalty + this.personalityBias(candidate);
+        const score =
+          simScore * 0.32 +
+          posScore * 0.26 +
+          routeScore * 0.24 +
+          safetyScore * 0.13 +
+          0.05 -
+          powerPenalty +
+          this.personalityBias(candidate);
 
         if (score > bestScore) {
           bestScore = score;
@@ -216,7 +245,7 @@ export class AIController {
       }
     }
 
-    return bestShot;
+    return bestShot ? { shot: bestShot, score: bestScore } : null;
   }
 
   private findBestKickShot(
@@ -224,14 +253,14 @@ export class AIController {
     aiPlayer: PlayerIndex,
     aiGroup: BallGroup | null,
     pocketedBallIds: number[],
-  ): { shot: ShotCandidate; score: number } | null {
+  ): ScoredShot | null {
     const kickCandidates = generateKickShots(state.ballPositions, aiGroup, pocketedBallIds, state.ruleset);
     if (kickCandidates.length === 0) return null;
 
     let bestShot: ShotCandidate | null = null;
     let bestScore = -Infinity;
 
-    for (const candidate of kickCandidates.slice(0, 30)) {
+    for (const candidate of kickCandidates.slice(0, this.difficultyProfile.candidateLimit)) {
       const simResult = simulateShot(
         state.ballPositions,
         candidate.direction,
@@ -264,7 +293,7 @@ export class AIController {
     aiPlayer: PlayerIndex,
     aiGroup: BallGroup | null,
     pocketedBallIds: number[],
-  ): { shot: ShotCandidate; score: number } | null {
+  ): ScoredShot | null {
     const breakCandidates = generateClusterBreakShots(state.ballPositions, aiGroup, pocketedBallIds, state.ruleset);
     if (breakCandidates.length === 0) return null;
 
@@ -292,14 +321,58 @@ export class AIController {
     return { shot: bestShot, score: bestScore };
   }
 
+  private findBestSafetyShot(
+    state: TableState,
+    aiPlayer: PlayerIndex,
+    aiGroup: BallGroup | null,
+    pocketedBallIds: number[],
+  ): ScoredShot | null {
+    const candidates = generateShotCandidates(state.ballPositions, aiGroup, pocketedBallIds, state.ruleset)
+      .filter((candidate) => candidate.type === 'safety');
+    if (candidates.length === 0) return null;
+
+    let bestShot: ShotCandidate | null = null;
+    let bestScore = -Infinity;
+
+    for (const candidate of candidates.slice(0, this.difficultyProfile.candidateLimit)) {
+      const simResult = simulateShot(
+        state.ballPositions,
+        candidate.direction,
+        candidate.power,
+        candidate.spin,
+      );
+      if (simResult.cueBallPocketed) continue;
+
+      const baseScore = evaluateState(state, simResult, aiPlayer, aiGroup);
+      const snookerScore = scoreOpponentDeniedRoutes(state, simResult, aiGroup);
+      const cueSafety = scoreCueBallPocketSafety(simResult);
+      const legalContactBonus = simResult.firstContact === candidate.targetBallId ? 0.08 : 0;
+      const score =
+        baseScore * 0.35 +
+        snookerScore * 0.38 +
+        cueSafety * 0.17 +
+        legalContactBonus +
+        this.personalityBias(candidate) -
+        candidate.power * 0.04;
+
+      if (score > bestScore) {
+        bestScore = score;
+        bestShot = candidate;
+      }
+    }
+
+    return bestShot ? { shot: bestShot, score: bestScore } : null;
+  }
+
   private pickBestAlternative(
-    kickResult: { shot: ShotCandidate; score: number } | null,
-    clusterResult: { shot: ShotCandidate; score: number } | null,
+    kickResult: ScoredShot | null,
+    clusterResult: ScoredShot | null,
+    safetyResult: ScoredShot | null,
   ): ShotCandidate | null {
-    if (!kickResult && !clusterResult) return null;
-    if (!kickResult) return clusterResult!.shot;
-    if (!clusterResult) return kickResult.shot;
-    return kickResult.score >= clusterResult.score ? kickResult.shot : clusterResult.shot;
+    const options = [kickResult, clusterResult, safetyResult].filter((option): option is ScoredShot => option !== null);
+    if (options.length === 0) return null;
+    options.sort((a, b) => b.score - a.score);
+    return options[0].shot;
   }
 
   private fallbackSearch(
@@ -311,7 +384,7 @@ export class AIController {
     const candidates = generateShotCandidates(state.ballPositions, aiGroup, pocketedBallIds, state.ruleset);
     if (candidates.length === 0) return null;
 
-    const top = candidates.slice(0, 20);
+    const top = candidates.slice(0, this.difficultyProfile.candidateLimit);
     let bestShot: ShotCandidate | null = null;
     let bestScore = -Infinity;
 
@@ -346,6 +419,71 @@ function isControllerOptions(value: MCTSConfig | {
     value &&
     ('difficulty' in value || 'config' in value || 'rng' in value)
   );
+}
+
+function isIllegalEightBallResult(
+  state: TableState,
+  simResult: ReturnType<typeof simulateShot>,
+  aiGroup: BallGroup | null,
+): boolean {
+  if (state.ruleset === 'nine-ball') return false;
+  if (!simResult.pocketedBalls.includes(8)) return false;
+  if (aiGroup === null) return true;
+
+  const groupBalls = aiGroup === 'solids'
+    ? [1, 2, 3, 4, 5, 6, 7]
+    : [9, 10, 11, 12, 13, 14, 15];
+  const allGroupPocketed = groupBalls.every(
+    (id) => state.pocketedBallIds.includes(id) || simResult.pocketedBalls.includes(id),
+  );
+
+  return !allGroupPocketed || simResult.cueBallPocketed || simResult.firstContact !== 8;
+}
+
+function scoreCueBallPocketSafety(simResult: ReturnType<typeof simulateShot>): number {
+  const cueEnd = simResult.ballPositions.get(0);
+  if (!cueEnd) return 0;
+
+  let minPocketDist = Infinity;
+  for (const pocket of POCKETS) {
+    const d = Math.hypot(cueEnd.x - pocket.x, cueEnd.y - pocket.y);
+    if (d < minPocketDist) minPocketDist = d;
+  }
+
+  return minPocketDist > BALL_RADIUS * 5 ? 1 : Math.max(0, minPocketDist / (BALL_RADIUS * 5));
+}
+
+function scoreOpponentDeniedRoutes(
+  state: TableState,
+  simResult: ReturnType<typeof simulateShot>,
+  aiGroup: BallGroup | null,
+): number {
+  if (state.ruleset === 'nine-ball') {
+    const nextTargets = getAILegalTargets(null, [...state.pocketedBallIds, ...simResult.pocketedBalls], 'nine-ball');
+    return 1 - scoreFuturePotRoute(
+      simResult.ballPositions,
+      nextTargets,
+      [...state.pocketedBallIds, ...simResult.pocketedBalls],
+      'nine-ball',
+      1,
+    );
+  }
+
+  const opponentGroup = aiGroup === 'solids' ? 'stripes' : aiGroup === 'stripes' ? 'solids' : null;
+  const opponentTargets = getAILegalTargets(
+    opponentGroup,
+    [...state.pocketedBallIds, ...simResult.pocketedBalls],
+    state.ruleset,
+  );
+  const opponentRoute = scoreFuturePotRoute(
+    simResult.ballPositions,
+    opponentTargets,
+    [...state.pocketedBallIds, ...simResult.pocketedBalls],
+    state.ruleset,
+    1,
+  );
+
+  return Math.max(0, Math.min(1, 1 - opponentRoute));
 }
 
 export function computeBestPlacement(

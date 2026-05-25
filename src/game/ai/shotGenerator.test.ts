@@ -65,6 +65,18 @@ describe('shotGenerator', () => {
       expect(candidates.every((c) => c.targetBallId === 1)).toBe(true);
     });
 
+    it('keeps safety candidates available even when a pot is available', () => {
+      const ballPositions = new Map<number, Vector>([
+        [0, { x: 250, y: 320 }],
+        [1, { x: 500, y: 320 }],
+      ]);
+
+      const candidates = generateShotCandidates(ballPositions, 'solids', []);
+
+      expect(candidates.some((c) => c.type === 'pot')).toBe(true);
+      expect(candidates.some((c) => c.type === 'safety')).toBe(true);
+    });
+
     it('generates safety candidates when no pot is available', () => {
       // Ball 1 surrounded by blockers so no clear pot line exists
       const ballPositions = new Map<number, Vector>([

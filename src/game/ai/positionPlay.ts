@@ -6,6 +6,7 @@ import { isPathClear, isOnTable } from './shotGenerator';
 const IDEAL_DISTANCE = 150;
 const ZONE_RADIUS = 50;
 const MAX_RECOMMENDED_SPIN_MAGNITUDE = 0.85;
+const FUTURE_ROUTE_DECAY = 0.7;
 
 export function computeNextTarget(
   ballPositions: Map<number, Vector>,
@@ -81,6 +82,59 @@ export function computeNextTarget(
   return best;
 }
 
+export function scoreFuturePotRoute(
+  ballPositions: Map<number, Vector>,
+  legalTargets: number[],
+  pocketedBallIds: number[],
+  ruleset: GameRuleset = 'eight-ball',
+  depth = 2,
+): number {
+  const cuePos = ballPositions.get(0);
+  if (!cuePos || depth <= 0) return 0;
+
+  const remainingTargets = legalTargets.filter((id) => !pocketedBallIds.includes(id));
+  if (remainingTargets.length === 0) return 0.5;
+
+  let best = 0;
+  for (const targetId of remainingTargets) {
+    const targetPos = ballPositions.get(targetId);
+    if (!targetPos) continue;
+
+    for (let pocketIndex = 0; pocketIndex < POCKETS.length; pocketIndex++) {
+      const shotQuality = estimatePotQuality(ballPositions, cuePos, targetPos, pocketIndex);
+      if (shotQuality <= 0) continue;
+
+      const nextTargets = remainingTargets.filter((id) => id !== targetId);
+      let futureScore = 0;
+      if (depth > 1 && nextTargets.length > 0) {
+        const nextTarget = computeNextTarget(
+          ballPositions,
+          targetId,
+          remainingTargets,
+          pocketedBallIds,
+          ruleset,
+        );
+        if (nextTarget) {
+          const nextPositions = new Map(ballPositions);
+          nextPositions.delete(targetId);
+          nextPositions.set(0, nextTarget.idealZone);
+          futureScore = scoreFuturePotRoute(
+            nextPositions,
+            nextTargets,
+            [...pocketedBallIds, targetId],
+            ruleset,
+            depth - 1,
+          );
+        }
+      }
+
+      best = Math.max(best, shotQuality * 0.75 + futureScore * FUTURE_ROUTE_DECAY * 0.25);
+    }
+  }
+
+  return Math.max(0, Math.min(1, best));
+}
+
 const FALLBACK_SPINS: Vector[] = [
   { x: 0, y: 0 },
   { x: 0, y: 0.7 },
@@ -88,6 +142,51 @@ const FALLBACK_SPINS: Vector[] = [
   { x: -0.5, y: 0 },
   { x: 0.5, y: 0 },
 ];
+
+function estimatePotQuality(
+  ballPositions: Map<number, Vector>,
+  cuePos: Vector,
+  targetPos: Vector,
+  pocketIndex: number,
+): number {
+  const pocket = POCKETS[pocketIndex];
+  const toPocketX = pocket.x - targetPos.x;
+  const toPocketY = pocket.y - targetPos.y;
+  const toPocketLen = Math.hypot(toPocketX, toPocketY);
+  if (toPocketLen < 1) return 0;
+
+  const toPocketDir = { x: toPocketX / toPocketLen, y: toPocketY / toPocketLen };
+  const ghostBall = {
+    x: targetPos.x - toPocketDir.x * BALL_RADIUS * 2,
+    y: targetPos.y - toPocketDir.y * BALL_RADIUS * 2,
+  };
+  if (!isOnTable(ghostBall)) return 0;
+
+  const obstacles = Array.from(ballPositions.entries())
+    .filter(([, pos]) => (
+      Math.hypot(pos.x - cuePos.x, pos.y - cuePos.y) > 0.1 &&
+      Math.hypot(pos.x - targetPos.x, pos.y - targetPos.y) > 0.1
+    ))
+    .map(([, pos]) => pos);
+
+  if (!isPathClear(cuePos, ghostBall, obstacles)) return 0;
+
+  const ballToPocketObstacles = Array.from(ballPositions.entries())
+    .filter(([, pos]) => Math.hypot(pos.x - targetPos.x, pos.y - targetPos.y) > 0.1)
+    .map(([, pos]) => pos);
+  if (!isPathClear(targetPos, pocket, ballToPocketObstacles)) return 0;
+
+  const cueDist = Math.hypot(ghostBall.x - cuePos.x, ghostBall.y - cuePos.y);
+  const totalDist = cueDist + toPocketLen;
+  const distScore = Math.max(0.15, 1 - totalDist / 1200);
+  const approachAngle = Math.atan2(ghostBall.y - cuePos.y, ghostBall.x - cuePos.x);
+  const objectLineAngle = Math.atan2(toPocketDir.y, toPocketDir.x);
+  let angleDiff = Math.abs(approachAngle - objectLineAngle);
+  if (angleDiff > Math.PI) angleDiff = 2 * Math.PI - angleDiff;
+  const cutScore = Math.max(0, 1 - angleDiff / (Math.PI * 0.7));
+
+  return Math.max(0, Math.min(1, distScore * 0.45 + cutScore * 0.55));
+}
 
 export function generatePositionAwareShots(
   ballPositions: Map<number, Vector>,

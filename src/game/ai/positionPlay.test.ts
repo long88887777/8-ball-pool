@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { computeNextTarget, deriveSpin, generatePositionAwareShots } from './positionPlay';
+import { computeNextTarget, deriveSpin, generatePositionAwareShots, scoreFuturePotRoute } from './positionPlay';
 import { simulateShot } from './fastPhysics';
 import { POCKETS, BALL_RADIUS } from '../constants';
 import type { Vector } from '../constants';
@@ -42,6 +42,28 @@ describe('positionPlay', () => {
       ]);
       const result = computeNextTarget(ballPositions, 1, [1, 2], [2]);
       expect(result).toBeNull();
+    });
+  });
+
+  describe('scoreFuturePotRoute', () => {
+    it('scores a connected two-ball route higher than a blocked next shot', () => {
+      const openRoute = new Map<number, Vector>([
+        [0, { x: POCKETS[1].x, y: POCKETS[1].y + 340 }],
+        [10, { x: POCKETS[1].x, y: POCKETS[1].y + 130 }],
+      ]);
+      const blockedRoute = new Map<number, Vector>([
+        [0, { x: POCKETS[1].x, y: POCKETS[1].y + 340 }],
+        [10, { x: POCKETS[1].x, y: POCKETS[1].y + 130 }],
+        [1, { x: POCKETS[1].x, y: POCKETS[1].y + 230 }],
+        [2, { x: POCKETS[1].x, y: POCKETS[1].y + 70 }],
+        [3, { x: POCKETS[1].x - 40, y: POCKETS[1].y + 130 }],
+        [4, { x: POCKETS[1].x + 40, y: POCKETS[1].y + 130 }],
+      ]);
+
+      const openScore = scoreFuturePotRoute(openRoute, [10], [], 'eight-ball', 2);
+      const blockedScore = scoreFuturePotRoute(blockedRoute, [10], [], 'eight-ball', 2);
+
+      expect(openScore).toBeGreaterThan(blockedScore + 0.15);
     });
   });
 

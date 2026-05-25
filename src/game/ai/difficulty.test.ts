@@ -42,6 +42,7 @@ describe('ai difficulty profiles', () => {
 
     expect(easy.mctsConfig.timeBudgetMs).toBeLessThan(normal.mctsConfig.timeBudgetMs);
     expect(normal.mctsConfig.timeBudgetMs).toBeLessThanOrEqual(hard.mctsConfig.timeBudgetMs);
+    expect(hard.mctsConfig.maxDepth).toBeGreaterThan(normal.mctsConfig.maxDepth);
     expect(easy.aimErrorRadians).toBe(0);
     expect(normal.aimErrorRadians).toBe(0);
     expect(hard.aimErrorRadians).toBe(0);
@@ -106,6 +107,16 @@ describe('applyDifficultyToDecision', () => {
     expect(adjusted.shot.spin.x).toBeGreaterThanOrEqual(-1);
     expect(adjusted.shot.spin.y).toBeLessThanOrEqual(1);
   });
+
+  it('does not consume randomness when execution errors are zero', () => {
+    const decision: AIDecision = { shot: baseShot };
+    const profile = getAIDifficultyProfile('hard');
+    const rng = () => {
+      throw new Error('zero-error profiles must not sample randomness');
+    };
+
+    expect(() => applyDifficultyToDecision(decision, profile, rng)).not.toThrow();
+  });
 });
 
 describe('AIController difficulty integration', () => {
@@ -140,13 +151,13 @@ describe('AIController difficulty integration', () => {
   });
 
   it('does not add random execution error to selected difficulty decisions', () => {
-    const hard = new AIController({
+    const conservativeRng = new AIController({
       difficulty: 'hard',
       config: { timeBudgetMs: 30, maxDepth: 2, explorationConstant: 1.41 },
-      rng: sequence([1, 1, 1, 1]),
+      rng: sequence([0, 0, 0, 0]),
     });
-    const easy = new AIController({
-      difficulty: 'easy',
+    const aggressiveRng = new AIController({
+      difficulty: 'hard',
       config: { timeBudgetMs: 30, maxDepth: 2, explorationConstant: 1.41 },
       rng: sequence([1, 1, 1, 1]),
     });
@@ -158,13 +169,13 @@ describe('AIController difficulty integration', () => {
     rules.currentPlayer = 1;
     rules.players[1].group = 'stripes';
 
-    const hardDecision = hard.computeDecision(ballPositions, rules);
-    const easyDecision = easy.computeDecision(ballPositions, rules);
+    const conservativeDecision = conservativeRng.computeDecision(ballPositions, rules);
+    const aggressiveDecision = aggressiveRng.computeDecision(ballPositions, rules);
 
-    expect(hardDecision).not.toBeNull();
-    expect(easyDecision).not.toBeNull();
-    expect(angleOf(easyDecision!.shot.direction) - angleOf(hardDecision!.shot.direction)).toBeCloseTo(0, 5);
-    expect(easyDecision!.shot.power).toBeCloseTo(hardDecision!.shot.power, 5);
-    expect(easyDecision!.shot.spin).toEqual(hardDecision!.shot.spin);
+    expect(conservativeDecision).not.toBeNull();
+    expect(aggressiveDecision).not.toBeNull();
+    expect(angleOf(conservativeDecision!.shot.direction) - angleOf(aggressiveDecision!.shot.direction)).toBeCloseTo(0, 5);
+    expect(conservativeDecision!.shot.power).toBeCloseTo(aggressiveDecision!.shot.power, 5);
+    expect(conservativeDecision!.shot.spin).toEqual(aggressiveDecision!.shot.spin);
   });
 });
