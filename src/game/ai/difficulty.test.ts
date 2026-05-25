@@ -4,6 +4,7 @@ import {
   applyDifficultyToDecision,
   getAIDifficultyProfile,
   normalizeAIDifficulty,
+  type AIDifficultyProfile,
   type RandomSource,
 } from './difficulty';
 import { createEightBallState } from '../eightBallRules';
@@ -19,21 +20,37 @@ function angleOf(direction: Vector): number {
   return Math.atan2(direction.y, direction.x);
 }
 
+function noisyProfile(): AIDifficultyProfile {
+  return {
+    ...getAIDifficultyProfile('easy'),
+    aimErrorRadians: (3.2 * Math.PI) / 180,
+    powerError: 0.14,
+    spinError: 0.18,
+  };
+}
+
 describe('ai difficulty profiles', () => {
   it('normalizes unknown difficulty values to the provided fallback', () => {
     expect(normalizeAIDifficulty('easy', 'hard')).toBe('easy');
     expect(normalizeAIDifficulty('legendary', 'normal')).toBe('normal');
   });
 
-  it('scales search budget from easy to hard', () => {
+  it('scales search budget from easy to hard without adding execution error', () => {
     const easy = getAIDifficultyProfile('easy');
     const normal = getAIDifficultyProfile('normal');
     const hard = getAIDifficultyProfile('hard');
 
     expect(easy.mctsConfig.timeBudgetMs).toBeLessThan(normal.mctsConfig.timeBudgetMs);
     expect(normal.mctsConfig.timeBudgetMs).toBeLessThanOrEqual(hard.mctsConfig.timeBudgetMs);
-    expect(easy.aimErrorRadians).toBeGreaterThan(normal.aimErrorRadians);
-    expect(normal.aimErrorRadians).toBeGreaterThan(hard.aimErrorRadians);
+    expect(easy.aimErrorRadians).toBe(0);
+    expect(normal.aimErrorRadians).toBe(0);
+    expect(hard.aimErrorRadians).toBe(0);
+    expect(easy.powerError).toBe(0);
+    expect(normal.powerError).toBe(0);
+    expect(hard.powerError).toBe(0);
+    expect(easy.spinError).toBe(0);
+    expect(normal.spinError).toBe(0);
+    expect(hard.spinError).toBe(0);
   });
 
   it('exposes personality traits for each difficulty', () => {
@@ -43,7 +60,6 @@ describe('ai difficulty profiles', () => {
 
     expect(easy.safetyBias).toBeGreaterThan(hard.safetyBias);
     expect(hard.riskTolerance).toBeGreaterThan(normal.riskTolerance);
-    expect(hard.aimErrorRadians).toBeGreaterThan(0);
     expect(normal.tempoMs).toBeGreaterThan(0);
   });
 });
@@ -60,7 +76,7 @@ describe('applyDifficultyToDecision', () => {
   };
 
   it('applies deterministic aim, power, and spin error without mutating the original shot', () => {
-    const profile = getAIDifficultyProfile('easy');
+    const profile = noisyProfile();
     const decision: AIDecision = { shot: baseShot };
 
     const adjusted = applyDifficultyToDecision(decision, profile, sequence([1, 1, 0, 1]));
@@ -74,7 +90,7 @@ describe('applyDifficultyToDecision', () => {
   });
 
   it('clamps noisy shot values to playable ranges', () => {
-    const profile = getAIDifficultyProfile('easy');
+    const profile = noisyProfile();
     const decision: AIDecision = {
       shot: {
         ...baseShot,
@@ -123,7 +139,7 @@ describe('AIController difficulty integration', () => {
     );
   });
 
-  it('applies selected difficulty error to computed AI decisions', () => {
+  it('does not add random execution error to selected difficulty decisions', () => {
     const hard = new AIController({
       difficulty: 'hard',
       config: { timeBudgetMs: 30, maxDepth: 2, explorationConstant: 1.41 },
@@ -147,11 +163,8 @@ describe('AIController difficulty integration', () => {
 
     expect(hardDecision).not.toBeNull();
     expect(easyDecision).not.toBeNull();
-    const delta = angleOf(easyDecision!.shot.direction) - angleOf(hardDecision!.shot.direction);
-    expect(delta).toBeCloseTo(
-      getAIDifficultyProfile('easy').aimErrorRadians - getAIDifficultyProfile('hard').aimErrorRadians,
-      5,
-    );
-    expect(easyDecision!.shot.power).toBeGreaterThan(hardDecision!.shot.power);
+    expect(angleOf(easyDecision!.shot.direction) - angleOf(hardDecision!.shot.direction)).toBeCloseTo(0, 5);
+    expect(easyDecision!.shot.power).toBeCloseTo(hardDecision!.shot.power, 5);
+    expect(easyDecision!.shot.spin).toEqual(hardDecision!.shot.spin);
   });
 });
