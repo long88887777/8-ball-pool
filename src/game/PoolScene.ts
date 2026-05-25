@@ -92,6 +92,7 @@ import {
   type MatchMode,
   type PlayerStats,
 } from './growth/stats';
+import { appendShotHistoryEntry, type ShotHistoryEntry } from './matchHistory';
 import {
   completeDailyTask,
   createDailyTaskState,
@@ -292,6 +293,8 @@ export class PoolScene extends Phaser.Scene {
   private dailyTasks: DailyTaskState = createDailyTaskState(this.localDateKey());
   private growthSaveQueue: Promise<void> = Promise.resolve();
   private localMatchTracker: LocalMatchTracker = createLocalMatchTracker();
+  private currentShotHistory: ShotHistoryEntry[] = [];
+  private pendingShotHistoryEntry: ShotHistoryEntry | null = null;
   private matchGrowthSettled = false;
   private spinPadButton?: HTMLButtonElement;
   private spinMarker?: HTMLElement;
@@ -1398,6 +1401,8 @@ export class PoolScene extends Phaser.Scene {
       won,
       strokes,
       clearedTable,
+      ruleset: this.gameRuleset,
+      shotHistory: this.currentShotHistory,
     });
     this.completeDailyGrowthTask('play_match');
     if (won) {
@@ -1884,7 +1889,9 @@ export class PoolScene extends Phaser.Scene {
         }
       },
     });
-    this.localMatchTracker = recordPlayerStroke(this.localMatchTracker, this.activeCurrentPlayer());
+    const shooter = this.activeCurrentPlayer();
+    this.beginShotHistoryEntry(shooter, aimIntent.power, this.selectedSpin);
+    this.localMatchTracker = recordPlayerStroke(this.localMatchTracker, shooter);
     this.state = recordStroke(this.state);
     this.startRulesShot();
     this.shotClockRemaining = SHOT_CLOCK_SECONDS;
@@ -2327,6 +2334,7 @@ export class PoolScene extends Phaser.Scene {
     const foulBeforeResolve = this.activeFirstContactBallId();
     this.resolveActiveShot();
     this.spotNineBallIfNeeded();
+    this.completePendingShotHistoryEntry();
     const lastFoul = this.activeLastFoul();
     if (lastFoul) {
       this.showFoulFeedback(lastFoul, foulBeforeResolve);
@@ -2547,7 +2555,9 @@ export class PoolScene extends Phaser.Scene {
       },
     });
 
-    this.localMatchTracker = recordPlayerStroke(this.localMatchTracker, this.activeCurrentPlayer());
+    const shooter = this.activeCurrentPlayer();
+    this.beginShotHistoryEntry(shooter, shot.power, shot.spin);
+    this.localMatchTracker = recordPlayerStroke(this.localMatchTracker, shooter);
     this.state = recordStroke(this.state);
     this.startRulesShot();
     this.shotClockRemaining = SHOT_CLOCK_SECONDS;
@@ -2612,6 +2622,8 @@ export class PoolScene extends Phaser.Scene {
     this.rules = createEightBallState();
     this.nineBallRules = createNineBallState();
     this.localMatchTracker = createLocalMatchTracker();
+    this.currentShotHistory = [];
+    this.pendingShotHistoryEntry = null;
     this.shotClockRemaining = SHOT_CLOCK_SECONDS;
     this.wasMoving = false;
     this.matchCoinSettled = false;
@@ -3054,6 +3066,36 @@ export class PoolScene extends Phaser.Scene {
       : this.rules.shot.pocketedBallIds;
   }
 
+  private beginShotHistoryEntry(playerIndex: 0 | 1, power: number, spin: Vector): void {
+    if (this.gameMode === 'challenge') {
+      return;
+    }
+    this.pendingShotHistoryEntry = {
+      playerIndex,
+      ruleset: this.gameRuleset,
+      powerPercent: Math.round(Math.max(0, Math.min(1, power)) * 100),
+      spin: { x: spin.x, y: spin.y },
+      pocketedBallIds: [],
+      foulReason: null,
+      message: '',
+    };
+  }
+
+  private completePendingShotHistoryEntry(): void {
+    if (!this.pendingShotHistoryEntry) {
+      return;
+    }
+
+    const lastFoul = this.activeLastFoul();
+    this.currentShotHistory = appendShotHistoryEntry(this.currentShotHistory, {
+      ...this.pendingShotHistoryEntry,
+      pocketedBallIds: this.activeShotPocketedBallIds().filter((ballId) => ballId !== 0),
+      foulReason: lastFoul,
+      message: this.formatCurrentMessageText(),
+    });
+    this.pendingShotHistoryEntry = null;
+  }
+
   private activeFirstContactBallId(): number | null {
     return this.gameRuleset === 'nine-ball'
       ? this.nineBallRules.shot.firstContactBallId
@@ -3304,7 +3346,9 @@ export class PoolScene extends Phaser.Scene {
       contactOffset: msg.contactOffset,
     });
     this.wasMoving = true;
-    this.localMatchTracker = recordPlayerStroke(this.localMatchTracker, this.activeCurrentPlayer());
+    const shooter = this.activeCurrentPlayer();
+    this.beginShotHistoryEntry(shooter, msg.power, msg.contactOffset);
+    this.localMatchTracker = recordPlayerStroke(this.localMatchTracker, shooter);
     this.state = recordStroke(this.state);
     this.startRulesShot(msg.pushOut === true);
     this.audio.play('cue');
@@ -3582,6 +3626,7 @@ export class PoolScene extends Phaser.Scene {
     }
     const playerBeforeResolve = this.activeCurrentPlayer();
     this.resolveActiveShot();
+    this.completePendingShotHistoryEntry();
     const myIndex: 0 | 1 = this.roomInfo!.isHost ? 0 : 1;
     const opponentIndex: 0 | 1 = this.roomInfo!.isHost ? 1 : 0;
     const foul = this.activeCueBallInHand();
@@ -3667,6 +3712,7 @@ export class PoolScene extends Phaser.Scene {
       this.resolveActiveShot();
       this.spotNineBallIfNeeded();
       this.applyAuthoritativeTurnEndForActiveRules(msg, shooterIndex, groupsAssignedFromTurnEnd);
+      this.completePendingShotHistoryEntry();
       if (msg.gameOver) {
         const winner = msg.winner ?? 0;
         const loser: 0 | 1 = winner === 0 ? 1 : 0;

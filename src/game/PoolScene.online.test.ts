@@ -17,6 +17,8 @@ import { PoolScene } from './PoolScene';
 import { createEightBallState, resolveEightBallShot, startEightBallShot } from './eightBallRules';
 import { createNineBallState, resolveNineBallShot, startNineBallShot, type NineBallState } from './nineBallRules';
 import { createGameState } from './state';
+import { createDefaultPlayerStats, type PlayerStats } from './growth/stats';
+import type { ShotHistoryEntry } from './matchHistory';
 import { transitionToMyTurn, transitionToOpponentTurn, type OnlineState } from '../online/onlineState';
 import type { MatchAuditEventType, NetworkFoulReason, RoomInfo } from '../online/types';
 
@@ -90,11 +92,17 @@ type ShotHandlerHarness = {
   leaveOnlineMatch: ReturnType<typeof vi.fn>;
   bindVictoryOverlay: () => void;
   updateOnlineStats: (won: boolean, reason: 'normal' | 'disconnect' | 'surrender') => Promise<void>;
+  settleGrowthForMatch: (won: boolean, reason?: 'normal' | 'disconnect' | 'surrender') => void;
+  completeDailyGrowthTask: ReturnType<typeof vi.fn>;
+  saveGrowthData: ReturnType<typeof vi.fn>;
   supabaseClient: { rpc: ReturnType<typeof vi.fn>; from: ReturnType<typeof vi.fn> };
   matchStartedAt: number | null;
   currentMatchId: string | null;
   onlineGameSeq: number;
   localMatchTracker: { playerStrokes: [number, number] };
+  currentShotHistory: ShotHistoryEntry[];
+  playerStats: PlayerStats;
+  matchGrowthSettled: boolean;
   gameMode: 'pvp' | 'ai' | 'challenge' | 'online';
   language: 'en' | 'zh';
   roomInfo: RoomInfo | null;
@@ -317,6 +325,8 @@ function createOnlineSceneHarness(options: { useRealSync?: boolean } = {}): Shot
   scene.showOnlineGameOver = vi.fn() as unknown as ShotHandlerHarness['showOnlineGameOver'];
   scene.updateHud = vi.fn();
   scene.updateOnlineStats = vi.fn(async () => undefined);
+  scene.completeDailyGrowthTask = vi.fn();
+  scene.saveGrowthData = vi.fn();
   scene.logOnlineAuditEvent = vi.fn();
 
   return scene;
@@ -422,6 +432,27 @@ describe('PoolScene online turn state', () => {
       p_room_id: 'room-1',
       p_game_seq: 3,
     }));
+  });
+
+  it('attaches shot history to growth match records', () => {
+    const scene = createOnlineSceneHarness();
+    scene.currentShotHistory = [{
+      playerIndex: 0,
+      ruleset: 'eight-ball',
+      powerPercent: 50,
+      spin: { x: 0, y: 0 },
+      pocketedBallIds: [1],
+      foulReason: null,
+      message: 'legal pot',
+    }];
+    scene.playerStats = createDefaultPlayerStats();
+    scene.matchGrowthSettled = false;
+    scene.localMatchTracker = { playerStrokes: [3, 4] };
+
+    scene.settleGrowthForMatch(true, 'normal');
+
+    expect(scene.playerStats.recentMatches[0].ruleset).toBe('eight-ball');
+    expect(scene.playerStats.recentMatches[0].shotHistory).toEqual(scene.currentShotHistory);
   });
 
   it('keeps already-pocketed balls pocketed when applying the shot-start snapshot', () => {
