@@ -67,6 +67,31 @@ describe('growth stats', () => {
     expect(stats.recentMatches.at(-1)?.matchId).toBe('match-3');
   });
 
+  it('keeps optional ruleset and shot history on recent matches', () => {
+    const stats = applyMatchToStats(createDefaultPlayerStats(), {
+      matchId: 'match-history',
+      playedAt: '2026-05-25T10:00:00.000Z',
+      mode: 'online',
+      opponentName: 'Mina',
+      won: true,
+      strokes: 3,
+      clearedTable: true,
+      ruleset: 'eight-ball',
+      shotHistory: [{
+        playerIndex: 0,
+        ruleset: 'eight-ball',
+        powerPercent: 70,
+        spin: { x: 0, y: 0 },
+        pocketedBallIds: [1],
+        foulReason: null,
+        message: 'legal pot',
+      }],
+    });
+
+    expect(stats.recentMatches[0].ruleset).toBe('eight-ball');
+    expect(stats.recentMatches[0].shotHistory).toHaveLength(1);
+  });
+
   it('calculates current rank progress and next-rank gap from points', () => {
     expect(getRankProgress(1000)).toEqual({
       rankName: 'Bronze',

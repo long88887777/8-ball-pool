@@ -1,3 +1,6 @@
+import type { GameRuleset } from '../gameRules';
+import { sanitizeShotHistory, type ShotHistoryEntry } from '../matchHistory';
+
 export type MatchMode = 'ai' | 'pvp' | 'challenge' | 'online';
 
 export type RecentMatchRecord = {
@@ -8,6 +11,8 @@ export type RecentMatchRecord = {
   won: boolean;
   strokes: number;
   clearedTable: boolean;
+  ruleset?: GameRuleset;
+  shotHistory?: ShotHistoryEntry[];
 };
 
 export type PlayerStats = {
@@ -169,7 +174,10 @@ export function sanitizePlayerStats(value: Partial<PlayerStats> | null | undefin
         : null,
     rankPoints: nonNegativeInteger(value.rankPoints, base.rankPoints),
     recentMatches: Array.isArray(value.recentMatches)
-      ? value.recentMatches.filter(isRecentMatchRecord).slice(0, MAX_RECENT_MATCHES)
+      ? value.recentMatches
+        .map(sanitizeRecentMatchRecord)
+        .filter((match): match is RecentMatchRecord => match !== null)
+        .slice(0, MAX_RECENT_MATCHES)
       : [],
   };
 }
@@ -188,12 +196,12 @@ function roundToOne(value: number): number {
   return Math.round(value * 10) / 10;
 }
 
-function isRecentMatchRecord(value: unknown): value is RecentMatchRecord {
+function sanitizeRecentMatchRecord(value: unknown): RecentMatchRecord | null {
   if (!value || typeof value !== 'object') {
-    return false;
+    return null;
   }
   const candidate = value as Partial<RecentMatchRecord>;
-  return (
+  const validBase =
     typeof candidate.matchId === 'string' &&
     typeof candidate.playedAt === 'string' &&
     (candidate.mode === 'ai' ||
@@ -203,6 +211,26 @@ function isRecentMatchRecord(value: unknown): value is RecentMatchRecord {
     typeof candidate.opponentName === 'string' &&
     typeof candidate.won === 'boolean' &&
     typeof candidate.strokes === 'number' &&
-    typeof candidate.clearedTable === 'boolean'
-  );
+    typeof candidate.clearedTable === 'boolean';
+
+  if (!validBase) {
+    return null;
+  }
+
+  const ruleset = candidate.ruleset === 'eight-ball' || candidate.ruleset === 'nine-ball'
+    ? candidate.ruleset
+    : undefined;
+  const shotHistory = sanitizeShotHistory(candidate.shotHistory);
+
+  return {
+    matchId: candidate.matchId,
+    playedAt: candidate.playedAt,
+    mode: candidate.mode,
+    opponentName: candidate.opponentName,
+    won: candidate.won,
+    strokes: candidate.strokes,
+    clearedTable: candidate.clearedTable,
+    ...(ruleset ? { ruleset } : {}),
+    ...(shotHistory.length > 0 ? { shotHistory } : {}),
+  };
 }
