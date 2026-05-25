@@ -148,6 +148,7 @@ export type RematchStartMessage = MessageBase & {
   type: 'rematch_start';
   startAt: number;
   breaker: 0 | 1;
+  gameSeq?: number;
 };
 
 export type ChatMessage = MessageBase & {

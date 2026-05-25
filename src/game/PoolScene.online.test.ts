@@ -68,7 +68,9 @@ type ShotHandlerHarness = {
   unbindChatUI: () => void;
   syncOnlineChatTriggers: () => void;
   sendOnlineResult: () => void;
-  performRematch: (breaker: 0 | 1) => void;
+  startRematchCountdown: () => void;
+  beginRematchCountdown: ReturnType<typeof vi.fn>;
+  performRematch: (breaker: 0 | 1, gameSeq?: number) => void;
   restartRack: ReturnType<typeof vi.fn>;
   showOnlineGameOver: (iWin: boolean, reason: string) => void;
   updateHud: ReturnType<typeof vi.fn>;
@@ -91,6 +93,7 @@ type ShotHandlerHarness = {
   supabaseClient: { rpc: ReturnType<typeof vi.fn>; from: ReturnType<typeof vi.fn> };
   matchStartedAt: number | null;
   currentMatchId: string | null;
+  onlineGameSeq: number;
   localMatchTracker: { playerStrokes: [number, number] };
   gameMode: 'pvp' | 'ai' | 'challenge' | 'online';
   language: 'en' | 'zh';
@@ -262,6 +265,7 @@ function createOnlineSceneHarness(options: { useRealSync?: boolean } = {}): Shot
     myUserId: 'self-1',
     ruleset: 'eight-ball',
   };
+  scene.onlineGameSeq = 1;
   scene.onlineChannel = null;
   scene.aimLine = { clear: vi.fn() };
   scene.cueGraphics = { clear: vi.fn() };
@@ -367,6 +371,57 @@ describe('PoolScene online turn state', () => {
 
     expect(scene.state.strokes).toBe(1);
     expect(scene.rules.shotCount).toBe(1);
+  });
+
+  it('starts rematches with the next online game sequence', () => {
+    const scene = createOnlineSceneHarness();
+    scene.onlineChannel = { send: vi.fn() };
+    scene.onlineGameSeq = 1;
+    scene.beginRematchCountdown = vi.fn();
+
+    scene.startRematchCountdown();
+
+    expect(scene.onlineChannel.send).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'rematch_start',
+      gameSeq: 2,
+    }));
+  });
+
+  it('resets online match tracking when a rematch begins', () => {
+    const scene = createOnlineSceneHarness();
+    scene.onlineGameSeq = 1;
+    scene.matchStartedAt = 1000;
+    scene.currentMatchId = 'match-1';
+    scene.setElementHidden = vi.fn();
+
+    scene.performRematch(0, 2);
+
+    expect(scene.onlineGameSeq).toBe(2);
+    expect(scene.currentMatchId).toBeNull();
+    expect(scene.matchStartedAt).not.toBe(1000);
+    expect(scene.matchStartedAt).toEqual(expect.any(Number));
+  });
+
+  it('settles online stats with the current game sequence', async () => {
+    const scene = createOnlineSceneHarness();
+    scene.onlineGameSeq = 3;
+    scene.matchStartedAt = 1000;
+    scene.currentMatchId = null;
+    scene.localMatchTracker = { playerStrokes: [2, 1] };
+    scene.supabaseClient = {
+      rpc: vi.fn(async () => ({ data: [{ match_id: 'match-3' }], error: null })),
+      from: vi.fn(),
+    };
+    scene.updateOnlineStats = (
+      PoolScene.prototype as unknown as { updateOnlineStats: ShotHandlerHarness['updateOnlineStats'] }
+    ).updateOnlineStats.bind(scene);
+
+    await scene.updateOnlineStats(true, 'normal');
+
+    expect(scene.supabaseClient.rpc).toHaveBeenCalledWith('settle_online_match', expect.objectContaining({
+      p_room_id: 'room-1',
+      p_game_seq: 3,
+    }));
   });
 
   it('keeps already-pocketed balls pocketed when applying the shot-start snapshot', () => {
@@ -1355,6 +1410,7 @@ describe('PoolScene online turn state', () => {
       p_player2_strokes: 3,
       p_player1_cleared_table: false,
       p_player2_cleared_table: false,
+      p_game_seq: 1,
     });
     expect(scene.currentMatchId).toBe('match-1');
     expect(from).not.toHaveBeenCalled();

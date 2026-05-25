@@ -429,6 +429,7 @@ export class PoolScene extends Phaser.Scene {
   private roomInfo: RoomInfo | null = null;
   private matchStartedAt: number | null = null;
   private currentMatchId: string | null = null;
+  private onlineGameSeq = 1;
   private supabaseClient = supabase;
   private rechargeClient = supabase as unknown as SupabaseRechargeClient;
   private leaveReporter: LeaveReporter | null = null;
@@ -3165,6 +3166,7 @@ export class PoolScene extends Phaser.Scene {
 
   private initOnlineMode(): void {
     if (!this.roomInfo) return;
+    this.onlineGameSeq = 1;
     this.matchStartedAt = Date.now();
     this.onlineState = createOnlineState({
       isHost: this.roomInfo.isHost,
@@ -3269,7 +3271,7 @@ export class PoolScene extends Phaser.Scene {
       return;
     }
     if (msg.type === 'rematch_start') {
-      this.beginRematchCountdown(msg.startAt, msg.breaker);
+      this.beginRematchCountdown(msg.startAt, msg.breaker, msg.gameSeq);
     }
     if (msg.type === 'chat') {
       this.showOpponentBubble(msg.senderNickname, msg.text);
@@ -4182,11 +4184,12 @@ export class PoolScene extends Phaser.Scene {
     if (!this.onlineChannel) return;
     const breaker: 0 | 1 = this.lastGameLoser ?? 0;
     const startAt = Date.now() + 3500;
-    this.onlineChannel.send({ type: 'rematch_start', startAt, breaker });
-    this.beginRematchCountdown(startAt, breaker);
+    const gameSeq = this.onlineGameSeq + 1;
+    this.onlineChannel.send({ type: 'rematch_start', startAt, breaker, gameSeq });
+    this.beginRematchCountdown(startAt, breaker, gameSeq);
   }
 
-  private beginRematchCountdown(startAt: number, breaker: 0 | 1): void {
+  private beginRematchCountdown(startAt: number, breaker: 0 | 1, gameSeq = this.onlineGameSeq + 1): void {
     this.rematchPhase = 'countdown';
     this.setElementHidden('#rematch-actions', true);
     this.setElementHidden('#rematch-waiting', true);
@@ -4201,19 +4204,22 @@ export class PoolScene extends Phaser.Scene {
           clearInterval(this.rematchCountdownTimer);
           this.rematchCountdownTimer = null;
         }
-        this.performRematch(breaker);
+        this.performRematch(breaker, gameSeq);
       }
     };
     tick();
     this.rematchCountdownTimer = setInterval(tick, 200);
   }
 
-  private performRematch(breaker: 0 | 1): void {
+  private performRematch(breaker: 0 | 1, gameSeq = this.onlineGameSeq + 1): void {
     if (this.rematchCountdownTimer) {
       clearInterval(this.rematchCountdownTimer);
       this.rematchCountdownTimer = null;
     }
     this.rematchPhase = 'idle';
+    this.onlineGameSeq = Math.max(1, Math.floor(gameSeq));
+    this.matchStartedAt = Date.now();
+    this.currentMatchId = null;
     this.setElementHidden('#rematch-countdown', true);
     this.matchCoinSettled = false;
     this.lastCoinDelta = 0;
@@ -4298,6 +4304,7 @@ export class PoolScene extends Phaser.Scene {
         p_player2_strokes: this.localMatchTracker.playerStrokes[1],
         p_player1_cleared_table: winnerId === hostId && reason === 'normal',
         p_player2_cleared_table: winnerId === guestId && reason === 'normal',
+        p_game_seq: this.onlineGameSeq,
       };
 
       const { data: settledData, error: settleError } = await this.supabaseClient.rpc('settle_online_match', payload);
@@ -4311,6 +4318,7 @@ export class PoolScene extends Phaser.Scene {
       const { data } = await this.supabaseClient.from('matches').upsert(
         {
           room_id: this.roomInfo.roomId,
+          game_seq: this.onlineGameSeq,
           player1_id: hostId,
           player2_id: guestId,
           winner_id: winnerId,
@@ -4321,7 +4329,7 @@ export class PoolScene extends Phaser.Scene {
           player1_cleared_table: winnerId === hostId && reason === 'normal',
           player2_cleared_table: winnerId === guestId && reason === 'normal',
         },
-        { onConflict: 'room_id', ignoreDuplicates: true },
+        { onConflict: 'room_id,game_seq', ignoreDuplicates: true },
       ).select('id').single();
       this.currentMatchId = data?.id ?? this.currentMatchId;
     } else {
@@ -4354,6 +4362,7 @@ export class PoolScene extends Phaser.Scene {
     this.onlineState = null;
     this.matchStartedAt = null;
     this.currentMatchId = null;
+    this.onlineGameSeq = 1;
     this.matchCoinSettled = false;
     this.lastCoinDelta = 0;
     this.lastCoinResultWon = null;
