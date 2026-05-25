@@ -81,11 +81,6 @@
         </div>
         <div class="menu-user-bar">
           <span id="user-info" class="user-info" hidden></span>
-          <div class="menu-action-group" aria-label="Player actions">
-            <button id="growth-panel-toggle" class="menu-growth-btn" type="button">个人成长</button>
-            <button id="recharge-open" class="menu-growth-btn menu-economy-btn" type="button">充值系统</button>
-            <button id="cue-shop-open" class="menu-growth-btn menu-economy-btn" type="button">球杆收藏</button>
-          </div>
           <button id="btn-logout" class="menu-logout-btn" type="button">退出登录</button>
         </div>
         <section class="menu-growth-overview" aria-label="Growth overview">
@@ -101,6 +96,16 @@
             <span id="menu-growth-streak">连胜 0 · 最佳 0</span>
             <span id="menu-growth-tasks">每日任务 0/4</span>
             <span id="menu-growth-stars">挑战 0/30 星</span>
+          </div>
+        </section>
+        <section class="menu-secondary-actions" aria-labelledby="menu-secondary-title">
+          <span id="menu-secondary-title" class="menu-secondary-title">更多</span>
+          <div class="menu-action-group" aria-label="Player actions">
+            <button id="growth-panel-toggle" class="menu-growth-btn" type="button">个人成长</button>
+            <button id="history-open" class="menu-growth-btn" type="button">对局历史</button>
+            <button id="settings-open" class="menu-growth-btn" type="button">设置</button>
+            <button id="recharge-open" class="menu-growth-btn menu-economy-btn" type="button">充值系统</button>
+            <button id="cue-shop-open" class="menu-growth-btn menu-economy-btn" type="button">球杆收藏</button>
           </div>
         </section>
         <div class="menu-buttons">
@@ -239,6 +244,53 @@
             <h3>最近战绩</h3>
             <ul id="growth-recent-list" class="growth-list"></ul>
           </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="history-panel" class="history-panel-overlay" hidden>
+      <div class="history-panel-dialog">
+        <div class="history-panel-header">
+          <div>
+            <p class="eyebrow">History</p>
+            <h2 id="history-title">对局历史</h2>
+          </div>
+          <button id="history-close" class="history-panel-close" type="button" aria-label="关闭">&times;</button>
+        </div>
+        <div class="history-panel-body">
+          <ul id="history-list" class="history-list"></ul>
+          <div id="history-detail" class="history-detail" hidden></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="settings-panel" class="settings-panel-overlay" hidden>
+      <div class="settings-panel-dialog">
+        <div class="settings-panel-header">
+          <div>
+            <p class="eyebrow">Settings</p>
+            <h2 id="settings-title">设置</h2>
+          </div>
+          <button id="settings-close" class="settings-panel-close" type="button" aria-label="关闭">&times;</button>
+        </div>
+        <div class="settings-section">
+          <h3 id="settings-controls-title">手感控制</h3>
+          <label class="settings-field" for="settings-sensitivity">
+            <span id="settings-sensitivity-label">瞄准灵敏度</span>
+            <select id="settings-sensitivity">
+              <option id="settings-sensitivity-fine" value="fine">精细</option>
+              <option id="settings-sensitivity-normal" value="normal">标准</option>
+              <option id="settings-sensitivity-fast" value="fast">快速</option>
+            </select>
+          </label>
+          <label class="settings-field" for="settings-power-step">
+            <span id="settings-power-step-label">力度步进</span>
+            <input id="settings-power-step" type="number" min="1" max="20" value="5" />
+          </label>
+          <label class="settings-toggle" for="settings-power-lock">
+            <input id="settings-power-lock" type="checkbox" />
+            <span id="settings-power-lock-label">锁定力度</span>
+          </label>
         </div>
       </div>
     </section>

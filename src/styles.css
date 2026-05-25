@@ -2399,6 +2399,27 @@ h2 {
   text-overflow: ellipsis;
 }
 
+.menu-secondary-actions {
+  width: min(760px, 92vw);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid rgba(29, 29, 31, 0.08);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.68);
+}
+
+.menu-secondary-title {
+  color: #6e6e73;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
 .growth-panel-overlay {
   position: fixed;
   inset: 0;
@@ -2576,10 +2597,187 @@ h2 {
   justify-content: flex-start;
 }
 
+.history-panel-overlay,
+.settings-panel-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1105;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(245, 243, 240, 0.76);
+  backdrop-filter: blur(8px);
+}
+
+.history-panel-overlay[hidden],
+.settings-panel-overlay[hidden] {
+  display: none;
+}
+
+.history-panel-dialog,
+.settings-panel-dialog {
+  width: min(920px, 100%);
+  max-height: min(760px, calc(100vh - 40px));
+  overflow: auto;
+  border: 1px solid rgba(29, 29, 31, 0.08);
+  border-radius: 16px;
+  padding: 22px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 18px 48px rgba(15, 23, 42, 0.12);
+}
+
+.settings-panel-dialog {
+  width: min(520px, 100%);
+}
+
+.history-panel-header,
+.settings-panel-header {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+.history-panel-close,
+.settings-panel-close {
+  width: 36px;
+  height: 36px;
+  border: 1px solid rgba(29, 29, 31, 0.1);
+  border-radius: 8px;
+  background: rgba(29, 29, 31, 0.04);
+  color: #3a3a3c;
+  cursor: pointer;
+  font-size: 24px;
+  line-height: 1;
+}
+
+.history-panel-body {
+  display: grid;
+  grid-template-columns: minmax(240px, 0.85fr) minmax(0, 1.15fr);
+  gap: 14px;
+  align-items: start;
+}
+
+.history-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.history-row {
+  width: 100%;
+  min-height: 66px;
+  display: grid;
+  gap: 4px;
+  padding: 11px 12px;
+  border: 1px solid rgba(29, 29, 31, 0.08);
+  border-radius: 10px;
+  background: #fff;
+  color: #1d1d1f;
+  text-align: left;
+  cursor: pointer;
+}
+
+.history-row:hover,
+.history-row.is-selected {
+  border-color: rgba(36, 105, 179, 0.28);
+  background: #f7fbff;
+}
+
+.history-row strong,
+.history-detail h3,
+.settings-section h3 {
+  color: #1d1d1f;
+  font-size: 15px;
+}
+
+.history-row span,
+.history-row small,
+.history-detail-meta,
+.history-detail-empty,
+.history-empty-row {
+  color: #6e6e73;
+  font-size: 12px;
+}
+
+.history-detail {
+  min-height: 240px;
+  border: 1px solid rgba(29, 29, 31, 0.08);
+  border-radius: 12px;
+  padding: 16px;
+  background: #fff;
+}
+
+.history-detail[hidden] {
+  display: none;
+}
+
+.history-detail h3,
+.history-detail h4,
+.settings-section h3 {
+  margin: 0 0 10px;
+}
+
+.history-shot-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding-left: 20px;
+}
+
+.history-shot-list li {
+  color: #3a3a3c;
+  font-size: 13px;
+}
+
+.history-shot-list small {
+  display: block;
+  margin-top: 3px;
+  color: #86868b;
+}
+
+.settings-section {
+  display: grid;
+  gap: 12px;
+}
+
+.settings-field,
+.settings-toggle {
+  display: grid;
+  gap: 7px;
+  color: #3a3a3c;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.settings-field select,
+.settings-field input {
+  min-height: 38px;
+  border: 1px solid rgba(29, 29, 31, 0.12);
+  border-radius: 8px;
+  padding: 7px 10px;
+  background: #fff;
+  color: #1d1d1f;
+}
+
+.settings-toggle {
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+}
+
+.settings-toggle input {
+  width: 18px;
+  height: 18px;
+}
+
 @media (max-width: 760px) {
   .menu-growth-grid,
   .growth-detail-grid,
-  .growth-rank-band {
+  .growth-rank-band,
+  .history-panel-body {
     grid-template-columns: 1fr;
   }
 
@@ -2589,8 +2787,14 @@ h2 {
   }
 
   .menu-user-bar,
-  .menu-action-group {
+  .menu-action-group,
+  .menu-secondary-actions {
     width: 100%;
+  }
+
+  .menu-secondary-actions {
+    align-items: stretch;
+    flex-direction: column;
   }
 }
 

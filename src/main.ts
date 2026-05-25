@@ -2,6 +2,8 @@ import Phaser from 'phaser';
 import { PoolScene } from './game/PoolScene';
 import { type GameRuleset } from './game/gameRules';
 import { normalizeAIDifficulty, type AIDifficulty } from './game/ai/difficulty';
+import { getCopy, type Language } from './game/i18n';
+import type { AimSensitivity } from './game/shotControl';
 import { supabase } from './lib/supabase';
 import { initAuthPage, showAuthPage, hideAuthPage } from './auth/authPage';
 import { initMatchmaking, openMatchModal } from './online/matchmaking';
@@ -44,6 +46,13 @@ import {
   type ModeSelectionState,
 } from './menuFlow';
 import { showGameShellForNewGame } from './gameShellVisibility';
+import {
+  formatRecentMatchSummary,
+  formatShotHistoryEntry,
+  readStoredAimControlSettings,
+  resolveHistorySelectionIndex,
+  writeStoredAimControlSettings,
+} from './menuShell';
 import './styles.css';
 
 type GameMode = 'pvp' | 'ai' | 'challenge' | 'online';
@@ -52,6 +61,18 @@ let currentGame: Phaser.Game | null = null;
 let guestMode = false;
 let currentProfileName = '游客玩家';
 let currentWallet: PlayerWallet = DEFAULT_PLAYER_WALLET;
+let currentStats: PlayerStats = {
+  totalGames: 0,
+  wins: 0,
+  losses: 0,
+  currentStreak: 0,
+  bestStreak: 0,
+  clearances: 0,
+  totalStrokes: 0,
+  bestSingleGameStrokes: null,
+  rankPoints: 1000,
+  recentMatches: [],
+};
 let walletSaveQueue: Promise<void> = Promise.resolve();
 let rechargePackages: RechargePackage[] = [];
 let rechargeOrders: RechargeOrder[] = [];
@@ -59,6 +80,9 @@ let selectedRechargePackageId: string | null = null;
 let pendingRechargeOrder: CreatedRechargeOrder | null = null;
 let rechargeBusy = false;
 let modeSelectionState: ModeSelectionState = createModeSelectionState();
+let selectedHistoryIndex: number | null = null;
+
+const shellLanguage: Language = 'zh';
 
 const rechargeClient = supabase as unknown as SupabaseRechargeClient;
 
@@ -98,6 +122,7 @@ function startGame(
       preBoot: (game) => {
         game.registry.set('initialMode', mode);
         game.registry.set('gameRuleset', ruleset);
+        game.registry.set('aimControlSettings', readStoredAimControlSettings(browserStorage()));
         if (challengeLevelId !== undefined) game.registry.set('challengeLevelId', challengeLevelId);
         if (mode === 'ai') game.registry.set('aiDifficulty', selectedAIDifficulty());
         if (roomInfo) game.registry.set('roomInfo', roomInfo);
@@ -364,6 +389,7 @@ function renderGrowthOverview(
   challengeSummary: ReturnType<typeof summarizeChallengeStars>,
   wallet: PlayerWallet,
 ): void {
+  currentStats = stats;
   renderProfileSummary(stats, tasks, guestMode);
   currentWallet = wallet;
   renderMenuEconomy();
@@ -396,6 +422,10 @@ function renderGrowthOverview(
 
   renderTaskList(tasks);
   renderRecentMatches(stats);
+  const historyPanel = document.getElementById('history-panel');
+  if (historyPanel && !historyPanel.hidden) {
+    renderHistoryPanel(stats);
+  }
 }
 
 function renderTaskList(tasks: DailyTaskState): void {
@@ -428,6 +458,164 @@ function renderRecentMatches(stats: PlayerStats): void {
     item.innerHTML = `<span>${match.won ? '胜' : '负'} · ${match.opponentName}</span><strong>${match.strokes}杆 ${date}</strong>`;
     return item;
   }));
+}
+
+function showHistoryPanel(): void {
+  const overlay = document.getElementById('history-panel');
+  if (!overlay) return;
+  overlay.hidden = false;
+  renderHistoryPanel(currentStats);
+  void loadGrowthOverview();
+}
+
+function hideHistoryPanel(): void {
+  const overlay = document.getElementById('history-panel');
+  if (overlay) overlay.hidden = true;
+}
+
+function renderHistoryPanel(stats: PlayerStats): void {
+  const list = document.getElementById('history-list');
+  const detail = document.getElementById('history-detail');
+  if (!list || !detail) return;
+
+  const copy = getCopy(shellLanguage).shell;
+  if (stats.recentMatches.length === 0) {
+    const empty = document.createElement('li');
+    empty.className = 'history-empty-row';
+    empty.textContent = copy.noHistory;
+    list.replaceChildren(empty);
+    detail.hidden = true;
+    selectedHistoryIndex = null;
+    return;
+  }
+
+  selectedHistoryIndex = resolveHistorySelectionIndex(stats.recentMatches, selectedHistoryIndex);
+
+  list.replaceChildren(...stats.recentMatches.map((match, index) => createHistoryRow(match, index)));
+  const selected = stats.recentMatches[selectedHistoryIndex ?? 0] ?? stats.recentMatches[0];
+  renderHistoryDetail(selected);
+}
+
+function createHistoryRow(match: PlayerStats['recentMatches'][number], index: number): HTMLLIElement {
+  const summary = formatRecentMatchSummary(match, shellLanguage);
+  const item = document.createElement('li');
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = `history-row${index === selectedHistoryIndex ? ' is-selected' : ''}`;
+  button.dataset.matchIndex = String(index);
+
+  const title = document.createElement('strong');
+  title.textContent = summary.title;
+  const meta = document.createElement('span');
+  meta.textContent = summary.meta;
+  const detail = document.createElement('small');
+  detail.textContent = summary.detail;
+
+  button.append(title, meta, detail);
+  item.append(button);
+  return item;
+}
+
+function renderHistoryDetail(match: PlayerStats['recentMatches'][number]): void {
+  const detail = document.getElementById('history-detail');
+  if (!detail) return;
+
+  const copy = getCopy(shellLanguage).shell;
+  const summary = formatRecentMatchSummary(match, shellLanguage);
+  const title = document.createElement('h3');
+  title.textContent = summary.title;
+  const meta = document.createElement('p');
+  meta.className = 'history-detail-meta';
+  meta.textContent = `${summary.meta} · ${summary.detail}`;
+
+  if (!match.shotHistory || match.shotHistory.length === 0) {
+    const empty = document.createElement('p');
+    empty.className = 'history-detail-empty';
+    empty.textContent = copy.noShotHistory;
+    detail.replaceChildren(title, meta, empty);
+    detail.hidden = false;
+    return;
+  }
+
+  const heading = document.createElement('h4');
+  heading.textContent = copy.shotHistory;
+  const shots = document.createElement('ol');
+  shots.className = 'history-shot-list';
+  shots.replaceChildren(...match.shotHistory.map((entry) => {
+    const item = document.createElement('li');
+    item.textContent = formatShotHistoryEntry(entry, shellLanguage);
+    if (entry.message) {
+      const message = document.createElement('small');
+      message.textContent = entry.message;
+      item.append(message);
+    }
+    return item;
+  }));
+
+  detail.replaceChildren(title, meta, heading, shots);
+  detail.hidden = false;
+}
+
+function selectHistoryMatch(index: number): void {
+  selectedHistoryIndex = index;
+  renderHistoryPanel(currentStats);
+}
+
+function showSettingsPanel(): void {
+  renderSettingsPanel();
+  const overlay = document.getElementById('settings-panel');
+  if (overlay) overlay.hidden = false;
+}
+
+function hideSettingsPanel(): void {
+  const overlay = document.getElementById('settings-panel');
+  if (overlay) overlay.hidden = true;
+}
+
+function renderSettingsPanel(): void {
+  const settings = readStoredAimControlSettings(browserStorage());
+  const sensitivity = document.getElementById('settings-sensitivity') as HTMLSelectElement | null;
+  const powerStep = document.getElementById('settings-power-step') as HTMLInputElement | null;
+  const powerLock = document.getElementById('settings-power-lock') as HTMLInputElement | null;
+
+  if (sensitivity) sensitivity.value = settings.sensitivity;
+  if (powerStep) powerStep.value = String(settings.powerStep);
+  if (powerLock) powerLock.checked = settings.powerLocked;
+}
+
+function saveAimControlSettingsFromPanel(): void {
+  const sensitivity = document.getElementById('settings-sensitivity') as HTMLSelectElement | null;
+  const powerStep = document.getElementById('settings-power-step') as HTMLInputElement | null;
+  const powerLock = document.getElementById('settings-power-lock') as HTMLInputElement | null;
+
+  const saved = writeStoredAimControlSettings(browserStorage(), {
+    sensitivity: (sensitivity?.value ?? 'normal') as AimSensitivity,
+    powerStep: Number(powerStep?.value ?? 5),
+    powerLocked: powerLock?.checked === true,
+  });
+  currentGame?.registry.set('aimControlSettings', saved);
+  renderSettingsPanel();
+}
+
+function applyShellCopy(): void {
+  const copy = getCopy(shellLanguage).shell;
+  setText('menu-secondary-title', copy.secondaryActions);
+  setText('growth-panel-toggle', copy.progress);
+  setText('history-open', copy.history);
+  setText('settings-open', copy.settings);
+  setText('recharge-open', copy.recharge);
+  setText('cue-shop-open', copy.cueCollection);
+  setText('history-title', copy.history);
+  setText('settings-title', copy.settings);
+  setText('settings-controls-title', copy.controls);
+  setText('settings-sensitivity-label', copy.sensitivity);
+  setText('settings-power-step-label', copy.powerStep);
+  setText('settings-power-lock-label', copy.powerLock);
+  setText('settings-sensitivity-fine', copy.sensitivityFine);
+  setText('settings-sensitivity-normal', copy.sensitivityNormal);
+  setText('settings-sensitivity-fast', copy.sensitivityFast);
+  document.getElementById('history-close')?.setAttribute('aria-label', copy.close);
+  document.getElementById('settings-close')?.setAttribute('aria-label', copy.close);
 }
 
 function setText(id: string, text: string): void {
@@ -479,7 +667,7 @@ function renderMenuEconomy(): void {
   setText('coin-balance', `金币 ${currentWallet.coins}`);
   setText('cue-shop-balance', `金币 ${currentWallet.coins}`);
   setText('recharge-balance', `金币 ${currentWallet.coins}`);
-  setText('cue-shop-open', '球杆收藏');
+  setText('cue-shop-open', getCopy(shellLanguage).shell.cueCollection);
   renderCueShop();
   renderRechargePanel();
 }
@@ -512,6 +700,8 @@ function hideRechargePanel(): void {
 function hideEconomyPanels(): void {
   hideCueShop();
   hideRechargePanel();
+  hideHistoryPanel();
+  hideSettingsPanel();
 }
 
 async function loadRechargeData(): Promise<void> {
@@ -728,6 +918,8 @@ function showMenu(): void {
 }
 
 async function init(): Promise<void> {
+  applyShellCopy();
+  renderSettingsPanel();
   const { data: { session } } = await supabase.auth.getSession();
 
   const onAuthSuccess = () => {
@@ -788,6 +980,20 @@ async function init(): Promise<void> {
     const panel = document.getElementById('growth-panel');
     if (panel) panel.hidden = true;
   });
+
+  document.getElementById('history-open')?.addEventListener('click', showHistoryPanel);
+  document.getElementById('history-close')?.addEventListener('click', hideHistoryPanel);
+  document.getElementById('history-list')?.addEventListener('click', (event) => {
+    const target = event.target as HTMLElement | null;
+    const button = target?.closest<HTMLButtonElement>('[data-match-index]');
+    const matchIndex = Number(button?.dataset.matchIndex);
+    if (Number.isInteger(matchIndex)) selectHistoryMatch(matchIndex);
+  });
+  document.getElementById('settings-open')?.addEventListener('click', showSettingsPanel);
+  document.getElementById('settings-close')?.addEventListener('click', hideSettingsPanel);
+  document.getElementById('settings-sensitivity')?.addEventListener('change', saveAimControlSettingsFromPanel);
+  document.getElementById('settings-power-step')?.addEventListener('change', saveAimControlSettingsFromPanel);
+  document.getElementById('settings-power-lock')?.addEventListener('change', saveAimControlSettingsFromPanel);
 
   document.getElementById('cue-shop-open')?.addEventListener('click', showCueShop);
   document.getElementById('cue-shop-close')?.addEventListener('click', hideCueShop);

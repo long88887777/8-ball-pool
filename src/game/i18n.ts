@@ -51,6 +51,25 @@ export type GameCopy = {
     stars: (count: number) => string;
     level: (id: number) => string;
   };
+  shell: {
+    settings: string;
+    history: string;
+    secondaryActions: string;
+    controls: string;
+    sensitivity: string;
+    powerStep: string;
+    powerLock: string;
+    progress: string;
+    cueCollection: string;
+    recharge: string;
+    close: string;
+    noHistory: string;
+    noShotHistory: string;
+    shotHistory: string;
+    sensitivityFine: string;
+    sensitivityNormal: string;
+    sensitivityFast: string;
+  };
   hud: {
     mode: string;
     eightBallMode: string;
@@ -140,6 +159,25 @@ const COPY: Record<Language, GameCopy> = {
       failed: 'Level Failed',
       stars: (count) => `${count} Star${count !== 1 ? 's' : ''}`,
       level: (id) => `Level ${id}`,
+    },
+    shell: {
+      settings: 'Settings',
+      history: 'Match History',
+      secondaryActions: 'More',
+      controls: 'Controls',
+      sensitivity: 'Aim Sensitivity',
+      powerStep: 'Power Step',
+      powerLock: 'Lock Power',
+      progress: 'Progress',
+      cueCollection: 'Cue Collection',
+      recharge: 'Recharge',
+      close: 'Close',
+      noHistory: 'No match history yet',
+      noShotHistory: 'No shot summary saved for this match',
+      shotHistory: 'Shot Summary',
+      sensitivityFine: 'Fine',
+      sensitivityNormal: 'Standard',
+      sensitivityFast: 'Fast',
     },
     hud: {
       mode: 'Clear Table',
@@ -253,6 +291,25 @@ const COPY: Record<Language, GameCopy> = {
       failed: '挑战失败',
       stars: (count) => `${count} 星`,
       level: (id) => `第 ${id} 关`,
+    },
+    shell: {
+      settings: '设置',
+      history: '对局历史',
+      secondaryActions: '更多',
+      controls: '手感控制',
+      sensitivity: '瞄准灵敏度',
+      powerStep: '力度步进',
+      powerLock: '锁定力度',
+      progress: '个人成长',
+      cueCollection: '球杆收藏',
+      recharge: '充值系统',
+      close: '关闭',
+      noHistory: '还没有对局记录',
+      noShotHistory: '这局没有保存杆法摘要',
+      shotHistory: '每杆摘要',
+      sensitivityFine: '精细',
+      sensitivityNormal: '标准',
+      sensitivityFast: '快速',
     },
     hud: {
       mode: '清台练习',

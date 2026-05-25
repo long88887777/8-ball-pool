@@ -221,15 +221,16 @@ function sanitizeRecentMatchRecord(value: unknown): RecentMatchRecord | null {
     ? candidate.ruleset
     : undefined;
   const shotHistory = sanitizeShotHistory(candidate.shotHistory);
+  const base = candidate as RecentMatchRecord;
 
   return {
-    matchId: candidate.matchId,
-    playedAt: candidate.playedAt,
-    mode: candidate.mode,
-    opponentName: candidate.opponentName,
-    won: candidate.won,
-    strokes: candidate.strokes,
-    clearedTable: candidate.clearedTable,
+    matchId: base.matchId,
+    playedAt: base.playedAt,
+    mode: base.mode,
+    opponentName: base.opponentName,
+    won: base.won,
+    strokes: base.strokes,
+    clearedTable: base.clearedTable,
     ...(ruleset ? { ruleset } : {}),
     ...(shotHistory.length > 0 ? { shotHistory } : {}),
   };

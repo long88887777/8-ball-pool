@@ -93,6 +93,9 @@ describe('i18n AI keys', () => {
     expect(copy.hud.modeLabel).toBe('Mode');
     expect(copy.hud.modePvp).toBe('PVP');
     expect(copy.hud.modeAi).toBe('VS AI');
+    expect(copy.shell.settings).toBe('Settings');
+    expect(copy.shell.history).toBe('Match History');
+    expect(copy.shell.secondaryActions).toBe('More');
   });
 
   it('Chinese copy has AI keys', () => {
@@ -110,5 +113,8 @@ describe('i18n AI keys', () => {
     expect(copy.hud.modeLabel).toBe('模式');
     expect(copy.hud.modePvp).toBe('双人对战');
     expect(copy.hud.modeAi).toBe('人机对战');
+    expect(copy.shell.settings).toBe('设置');
+    expect(copy.shell.history).toBe('对局历史');
+    expect(copy.shell.secondaryActions).toBe('更多');
   });
 });
