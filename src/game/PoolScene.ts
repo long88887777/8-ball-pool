@@ -1,7 +1,7 @@
 import Phaser from 'phaser';
 import { AIController } from './ai/aiController';
 import type { AIDecision } from './ai/types';
-import { normalizeAIDifficulty, type AIDifficulty } from './ai/difficulty';
+import { getAIDifficultyProfile, normalizeAIDifficulty, type AIDifficulty } from './ai/difficulty';
 import { PoolAudio } from './audio';
 import { CHALLENGE_LEVELS, type ChallengeLevel } from './challenge/levels';
 import {
@@ -2495,7 +2495,7 @@ export class PoolScene extends Phaser.Scene {
     this.updateHud();
     setTimeout(() => {
       this.executeAITurn();
-    }, 500);
+    }, getAIDifficultyProfile(this.aiDifficulty).tempoMs);
   }
 
   private executeAITurn(): void {
@@ -2523,7 +2523,7 @@ export class PoolScene extends Phaser.Scene {
 
     this.showAIAimLine(decision);
     this.updateHud();
-    setTimeout(() => this.executeAIShot(decision), 800);
+    setTimeout(() => this.executeAIShot(decision), Math.max(420, getAIDifficultyProfile(this.aiDifficulty).tempoMs));
   }
 
   private executeAIShot(decision: AIDecision): void {

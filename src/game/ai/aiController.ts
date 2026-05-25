@@ -22,6 +22,13 @@ const DEFAULT_CONFIG: MCTSConfig = {
   explorationConstant: 1.41,
 };
 
+const LEGACY_HARD_PROFILE: AIDifficultyProfile = {
+  ...getAIDifficultyProfile('hard'),
+  aimErrorRadians: 0,
+  powerError: 0,
+  spinError: 0,
+};
+
 const PLACEMENT_GRID_SPACING = 40;
 const PLACEMENT_MIN_BALL_DIST = BALL_RADIUS * 2 + 4;
 const PLACEMENT_MIN_POCKET_DIST = 50;
@@ -41,7 +48,7 @@ export class AIController {
       this.config = config.config ?? this.difficultyProfile.mctsConfig;
       this.rng = config.rng ?? Math.random;
     } else {
-      this.difficultyProfile = getAIDifficultyProfile('hard');
+      this.difficultyProfile = LEGACY_HARD_PROFILE;
       this.config = config ?? DEFAULT_CONFIG;
       this.rng = Math.random;
     }
@@ -103,6 +110,19 @@ export class AIController {
 
   private createDecision(shot: ShotCandidate, placementPosition?: Vector): AIDecision {
     return applyDifficultyToDecision({ shot, placementPosition }, this.difficultyProfile, this.rng);
+  }
+
+  private personalityBias(candidate: ShotCandidate): number {
+    if (candidate.type === 'safety') {
+      return this.difficultyProfile.safetyBias;
+    }
+    if (candidate.type === 'pot') {
+      return this.difficultyProfile.riskTolerance;
+    }
+    if (candidate.type === 'kick' || candidate.type === 'break_cluster') {
+      return this.difficultyProfile.riskTolerance * 0.5;
+    }
+    return 0;
   }
 
   private findBestConfirmedPot(
@@ -187,7 +207,7 @@ export class AIController {
         const powerPenalty = candidate.power * 0.03;
 
         // Position play is the primary objective once pot is confirmed
-        const score = posScore * 0.55 + safetyScore * 0.15 + 0.3 - powerPenalty;
+        const score = posScore * 0.55 + safetyScore * 0.15 + 0.3 - powerPenalty + this.personalityBias(candidate);
 
         if (score > bestScore) {
           bestScore = score;
@@ -224,9 +244,9 @@ export class AIController {
       const potted = simResult.pocketedBalls.length > 0;
       let score: number;
       if (potted) {
-        score = evaluateState(state, simResult, aiPlayer, aiGroup) + 0.2;
+        score = evaluateState(state, simResult, aiPlayer, aiGroup) + 0.2 + this.personalityBias(candidate);
       } else {
-        score = evaluateState(state, simResult, aiPlayer, aiGroup) * 0.5;
+        score = evaluateState(state, simResult, aiPlayer, aiGroup) * 0.5 + this.personalityBias(candidate);
       }
 
       if (score > bestScore) {
@@ -261,7 +281,7 @@ export class AIController {
 
       if (simResult.cueBallPocketed) continue;
 
-      const score = evaluateState(state, simResult, aiPlayer, aiGroup);
+      const score = evaluateState(state, simResult, aiPlayer, aiGroup) + this.personalityBias(candidate);
       if (score > bestScore) {
         bestScore = score;
         bestShot = candidate;
@@ -302,7 +322,7 @@ export class AIController {
         candidate.power,
         candidate.spin,
       );
-      const score = evaluateState(state, simResult, aiPlayer, aiGroup);
+      const score = evaluateState(state, simResult, aiPlayer, aiGroup) + this.personalityBias(candidate);
       if (score > bestScore) {
         bestScore = score;
         bestShot = candidate;

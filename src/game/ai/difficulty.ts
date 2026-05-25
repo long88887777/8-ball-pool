@@ -10,6 +10,9 @@ export type AIDifficultyProfile = {
   aimErrorRadians: number;
   powerError: number;
   spinError: number;
+  safetyBias: number;
+  riskTolerance: number;
+  tempoMs: number;
 };
 
 const PROFILES: Record<AIDifficulty, AIDifficultyProfile> = {
@@ -24,6 +27,9 @@ const PROFILES: Record<AIDifficulty, AIDifficultyProfile> = {
     aimErrorRadians: (3.2 * Math.PI) / 180,
     powerError: 0.14,
     spinError: 0.18,
+    safetyBias: 0.16,
+    riskTolerance: -0.08,
+    tempoMs: 760,
   },
   normal: {
     difficulty: 'normal',
@@ -36,6 +42,9 @@ const PROFILES: Record<AIDifficulty, AIDifficultyProfile> = {
     aimErrorRadians: (0.9 * Math.PI) / 180,
     powerError: 0.045,
     spinError: 0.06,
+    safetyBias: 0.07,
+    riskTolerance: 0.04,
+    tempoMs: 620,
   },
   hard: {
     difficulty: 'hard',
@@ -45,9 +54,12 @@ const PROFILES: Record<AIDifficulty, AIDifficultyProfile> = {
       maxDepth: 3,
       explorationConstant: 1.25,
     },
-    aimErrorRadians: 0,
-    powerError: 0,
-    spinError: 0,
+    aimErrorRadians: (0.12 * Math.PI) / 180,
+    powerError: 0.008,
+    spinError: 0.01,
+    safetyBias: 0.02,
+    riskTolerance: 0.12,
+    tempoMs: 480,
   },
 };
 

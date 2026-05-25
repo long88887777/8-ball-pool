@@ -35,6 +35,17 @@ describe('ai difficulty profiles', () => {
     expect(easy.aimErrorRadians).toBeGreaterThan(normal.aimErrorRadians);
     expect(normal.aimErrorRadians).toBeGreaterThan(hard.aimErrorRadians);
   });
+
+  it('exposes personality traits for each difficulty', () => {
+    const easy = getAIDifficultyProfile('easy');
+    const normal = getAIDifficultyProfile('normal');
+    const hard = getAIDifficultyProfile('hard');
+
+    expect(easy.safetyBias).toBeGreaterThan(hard.safetyBias);
+    expect(hard.riskTolerance).toBeGreaterThan(normal.riskTolerance);
+    expect(hard.aimErrorRadians).toBeGreaterThan(0);
+    expect(normal.tempoMs).toBeGreaterThan(0);
+  });
 });
 
 describe('applyDifficultyToDecision', () => {
@@ -83,7 +94,12 @@ describe('applyDifficultyToDecision', () => {
 
 describe('AIController difficulty integration', () => {
   it('keeps legacy config constructor at hard difficulty behavior', () => {
-    const hard = new AIController({ timeBudgetMs: 30, maxDepth: 2, explorationConstant: 1.41 });
+    const legacyHard = new AIController({ timeBudgetMs: 30, maxDepth: 2, explorationConstant: 1.41 });
+    const selectedHard = new AIController({
+      difficulty: 'hard',
+      config: { timeBudgetMs: 30, maxDepth: 2, explorationConstant: 1.41 },
+      rng: sequence([1, 1, 1, 1]),
+    });
     const ballPositions = new Map<number, Vector>([
       [0, { x: 250, y: 320 }],
       [9, { x: 500, y: 320 }],
@@ -92,10 +108,19 @@ describe('AIController difficulty integration', () => {
     rules.currentPlayer = 1;
     rules.players[1].group = 'stripes';
 
-    const decision = hard.computeDecision(ballPositions, rules);
+    const legacyDecision = legacyHard.computeDecision(ballPositions, rules);
+    const selectedDecision = selectedHard.computeDecision(ballPositions, rules);
 
-    expect(decision).not.toBeNull();
-    expect(decision!.shot.power).toBeGreaterThan(0);
+    expect(legacyDecision).not.toBeNull();
+    expect(selectedDecision).not.toBeNull();
+    expect(selectedDecision!.shot.power - legacyDecision!.shot.power).toBeCloseTo(
+      getAIDifficultyProfile('hard').powerError,
+      5,
+    );
+    expect(angleOf(selectedDecision!.shot.direction) - angleOf(legacyDecision!.shot.direction)).toBeCloseTo(
+      getAIDifficultyProfile('hard').aimErrorRadians,
+      5,
+    );
   });
 
   it('applies selected difficulty error to computed AI decisions', () => {
@@ -123,7 +148,10 @@ describe('AIController difficulty integration', () => {
     expect(hardDecision).not.toBeNull();
     expect(easyDecision).not.toBeNull();
     const delta = angleOf(easyDecision!.shot.direction) - angleOf(hardDecision!.shot.direction);
-    expect(delta).toBeCloseTo(getAIDifficultyProfile('easy').aimErrorRadians, 5);
+    expect(delta).toBeCloseTo(
+      getAIDifficultyProfile('easy').aimErrorRadians - getAIDifficultyProfile('hard').aimErrorRadians,
+      5,
+    );
     expect(easyDecision!.shot.power).toBeGreaterThan(hardDecision!.shot.power);
   });
 });
