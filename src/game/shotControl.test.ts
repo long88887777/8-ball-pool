@@ -3,7 +3,9 @@ import { TABLE, type Vector } from './constants';
 import {
   adjustAimPower,
   computeAimIntent,
+  createDefaultAimControlSettings,
   resolveFoulFeedbackTarget,
+  resolveAimControlStep,
   rotateAimPoint,
 } from './shotControl';
 
@@ -68,5 +70,14 @@ describe('shot control helpers', () => {
     expect(resolveFoulFeedbackTarget('noCushionAfterContact', cue, null, new Map())).toEqual({
       kind: 'table',
     });
+  });
+
+  it('resolves aim control steps from sensitivity and shift state', () => {
+    expect(resolveAimControlStep(createDefaultAimControlSettings(), false)).toMatchObject({
+      powerStep: 5,
+    });
+    expect(resolveAimControlStep({ sensitivity: 'fine', powerStep: 4, powerLocked: false }, false).rotationStepRadians)
+      .toBeLessThan(resolveAimControlStep({ sensitivity: 'fast', powerStep: 4, powerLocked: false }, false).rotationStepRadians);
+    expect(resolveAimControlStep({ sensitivity: 'normal', powerStep: 5, powerLocked: false }, true).powerStep).toBe(15);
   });
 });

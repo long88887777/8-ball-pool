@@ -158,8 +158,12 @@ import {
 import {
   adjustAimPower,
   computeAimIntent,
+  createDefaultAimControlSettings,
   resolveFoulFeedbackTarget,
+  resolveAimControlStep,
   rotateAimPoint,
+  sanitizeAimControlSettings,
+  type AimControlSettings,
   type AimIntent,
   type FoulFeedbackTarget,
 } from './shotControl';
@@ -226,9 +230,6 @@ const DEPTH = {
 
 const SHOT_CLOCK_SECONDS = 20;
 const ONLINE_SNAPSHOT_INTERVAL_MS = 200;
-const AIM_FINE_ROTATION_STEP = (0.35 * Math.PI) / 180;
-const AIM_FAST_ROTATION_STEP = (1.1 * Math.PI) / 180;
-const AIM_POWER_STEP = 5;
 const FOUL_FEEDBACK_MS = 1400;
 const OPENING_BREAK_POWER_MULTIPLIER = 1.5;
 
@@ -300,6 +301,7 @@ export class PoolScene extends Phaser.Scene {
   private spinMarker?: HTMLElement;
   private spinPresetButtons: HTMLButtonElement[] = [];
   private selectedSpin: Vector = SPIN_PRESETS.center;
+  private aimControlSettings: AimControlSettings = createDefaultAimControlSettings();
   private spinPadPointerId: number | null = null;
   private ballPrevPositions = new Map<number, Vector>();
   private nineBallPushOutDeclared = false;
@@ -477,6 +479,7 @@ export class PoolScene extends Phaser.Scene {
     }
     this.gameRuleset = normalizeGameRuleset(this.game.registry.get('gameRuleset'));
     this.aiDifficulty = normalizeAIDifficulty(this.game.registry.get('aiDifficulty'), 'normal');
+    this.aimControlSettings = sanitizeAimControlSettings(this.game.registry.get('aimControlSettings'));
     this.aiController = new AIController({ difficulty: this.aiDifficulty });
     this.createTextures();
     this.wallet = readPlayerWallet(this.storage());
@@ -794,17 +797,16 @@ export class PoolScene extends Phaser.Scene {
     }
 
     const cue = this.cuePosition();
-    const rotationStep = event.shiftKey ? AIM_FAST_ROTATION_STEP : AIM_FINE_ROTATION_STEP;
-    const powerStep = event.shiftKey ? AIM_POWER_STEP * 3 : AIM_POWER_STEP;
+    const { rotationStepRadians, powerStep } = resolveAimControlStep(this.aimControlSettings, event.shiftKey);
     let next: Vector | null = null;
 
     if (event.key === 'ArrowLeft') {
-      next = rotateAimPoint(cue, this.aimState.current, -rotationStep);
+      next = rotateAimPoint(cue, this.aimState.current, -rotationStepRadians);
     } else if (event.key === 'ArrowRight') {
-      next = rotateAimPoint(cue, this.aimState.current, rotationStep);
-    } else if (event.key === 'ArrowUp') {
+      next = rotateAimPoint(cue, this.aimState.current, rotationStepRadians);
+    } else if (event.key === 'ArrowUp' && !this.aimControlSettings.powerLocked) {
       next = adjustAimPower(cue, this.aimState.current, powerStep);
-    } else if (event.key === 'ArrowDown') {
+    } else if (event.key === 'ArrowDown' && !this.aimControlSettings.powerLocked) {
       next = adjustAimPower(cue, this.aimState.current, -powerStep);
     }
 

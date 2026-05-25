@@ -16,6 +16,56 @@ export type FoulFeedbackTarget =
   | { kind: 'cue'; position: Vector }
   | { kind: 'table' };
 
+export type AimSensitivity = 'fine' | 'normal' | 'fast';
+
+export type AimControlSettings = {
+  sensitivity: AimSensitivity;
+  powerStep: number;
+  powerLocked: boolean;
+};
+
+export function createDefaultAimControlSettings(): AimControlSettings {
+  return { sensitivity: 'normal', powerStep: 5, powerLocked: false };
+}
+
+export function sanitizeAimControlSettings(value: unknown): AimControlSettings {
+  const fallback = createDefaultAimControlSettings();
+  if (!value || typeof value !== 'object') {
+    return fallback;
+  }
+
+  const candidate = value as Partial<AimControlSettings>;
+  const sensitivity: AimSensitivity =
+    candidate.sensitivity === 'fine' || candidate.sensitivity === 'fast' || candidate.sensitivity === 'normal'
+      ? candidate.sensitivity
+      : fallback.sensitivity;
+
+  return {
+    sensitivity,
+    powerStep: typeof candidate.powerStep === 'number' && Number.isFinite(candidate.powerStep)
+      ? Math.max(1, Math.min(20, Math.round(candidate.powerStep)))
+      : fallback.powerStep,
+    powerLocked: candidate.powerLocked === true,
+  };
+}
+
+export function resolveAimControlStep(
+  settings: AimControlSettings,
+  fastModifier: boolean,
+): { rotationStepRadians: number; powerStep: number } {
+  const baseRotation = settings.sensitivity === 'fine'
+    ? (0.2 * Math.PI) / 180
+    : settings.sensitivity === 'fast'
+      ? (0.7 * Math.PI) / 180
+      : (0.35 * Math.PI) / 180;
+  const multiplier = fastModifier ? 3 : 1;
+
+  return {
+    rotationStepRadians: baseRotation * multiplier,
+    powerStep: Math.max(1, Math.floor(settings.powerStep)) * multiplier,
+  };
+}
+
 export function computeAimIntent(cue: Vector, aimPoint: Vector): AimIntent {
   const pull = {
     x: aimPoint.x - cue.x,
