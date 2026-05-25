@@ -2,9 +2,9 @@
 
 This roadmap records the planned evolution after the first playable MVP. It is a planning reference, not an implementation plan. Each version can be revised before work begins.
 
-## Current State: MVP
+## Current State: Multi-Mode Competitive Prototype
 
-The MVP is a browser-based 2D single-player practice table built with Vite, TypeScript, Phaser 3, and Matter physics. It supports drag aiming, shot power, ball collision, rail rebounds, pocket scoring, cue-ball reset, restart, and basic HUD state.
+The game has moved beyond the original MVP. It is a browser-based pool game built with Vite, TypeScript, Phaser 3, Supabase, and a professional physics layer. It now supports local two-player, AI opponent, challenge mode, online matchmaking/rooms, 8-ball and 9-ball rules, cue spin, shot clock, online chat/rematch, player growth stats, daily tasks, wallet/cue collection, and a mock recharge foundation.
 
 ## V1.1: Visual And Shot-Feel Refinement
 
@@ -173,6 +173,39 @@ Add a safe recharge foundation for authenticated players without launching real-
 - Recharge grants are recorded in an append-only wallet ledger.
 - The existing game remains playable if recharge UI is hidden or mock payments are disabled.
 
+## V6: Competitive Experience Phase 1
+
+### Goal
+
+Improve the game for repeat competitive play by strengthening online rematch records, recent match history, shot controls, AI personality, and menu/localization clarity.
+
+### Scope
+
+- Add per-game identity inside an online room so rematches create separate match records.
+- Reset online match tracking correctly when a rematch starts.
+- Add lightweight recent match details with per-shot summaries.
+- Add aim control settings for sensitivity and power fine-tuning without replacing drag-to-shoot.
+- Extend AI difficulty profiles with risk, safety, imperfection, and pacing traits.
+- Improve menu hierarchy and reduce mixed-language hardcoded labels in normal gameplay.
+
+### Non-Goals
+
+- No full animated replay.
+- No server-authoritative physics or anti-cheat.
+- No ranked seasons, leaderboards, friends, clubs, or tournaments.
+- No full economy hardening or real-money payment launch.
+- No rewrite of core 8-ball/9-ball rules.
+
+### Acceptance Criteria
+
+- Two online rematches in the same room produce two independent match records.
+- Old match records and old recent match data remain readable.
+- Players can inspect recent match details and shot summaries.
+- Keyboard fine aim and power controls are deterministic, tested, and discoverable.
+- AI difficulties feel behaviorally distinct without breaking existing AI tests.
+- Primary menu actions are visually and semantically clearer than economy/settings actions.
+- Normal Chinese and English flows avoid obvious mixed-language labels.
+
 ## Suggested Development Order
 
 1. V1.1: Visual and shot-feel refinement.
@@ -181,6 +214,7 @@ Add a safe recharge foundation for authenticated players without launching real-
 4. V3: Simplified spin system.
 5. V4: Human vs computer AI.
 6. V5: Domestic Recharge Foundation.
+7. V6: Competitive Experience Phase 1.
 
 ## Notes
 
