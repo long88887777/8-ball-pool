@@ -80,7 +80,10 @@
           <h1 class="menu-heading">Pool Hall</h1>
         </div>
         <div class="menu-user-bar">
-          <span id="user-info" class="user-info" hidden></span>
+          <button id="profile-open" class="menu-profile-btn" type="button" aria-label="打开个人资料">
+            <img id="menu-avatar" class="menu-avatar" src="/assets/avatars/default-01.webp" alt="" />
+            <span id="user-info" class="user-info" hidden></span>
+          </button>
           <button id="btn-logout" class="menu-logout-btn" type="button">退出登录</button>
         </div>
         <section class="menu-growth-overview" aria-label="Growth overview">
@@ -187,6 +190,50 @@
               <small>8-Ball</small>
             </span>
           </button>
+        </div>
+      </div>
+    </section>
+
+    <section id="profile-panel" class="profile-panel-overlay" hidden>
+      <div class="profile-panel-dialog">
+        <div class="profile-panel-header">
+          <div>
+            <p class="eyebrow">Profile</p>
+            <h2>个人资料</h2>
+          </div>
+          <button id="profile-close" class="profile-panel-close" type="button" aria-label="关闭">&times;</button>
+        </div>
+        <div class="profile-summary-row">
+          <img id="profile-avatar-preview" class="profile-avatar-preview" src="/assets/avatars/default-01.webp" alt="当前头像" />
+          <div>
+            <strong id="profile-name">游客玩家</strong>
+            <span id="profile-record">本地存档</span>
+          </div>
+        </div>
+        <div class="profile-section">
+          <h3>默认头像</h3>
+          <div id="profile-avatar-grid" class="profile-avatar-grid" role="listbox" aria-label="默认头像"></div>
+        </div>
+        <div class="profile-section">
+          <h3>上传头像</h3>
+          <input id="profile-avatar-upload" type="file" accept="image/*" hidden />
+          <button id="profile-avatar-upload-btn" class="profile-upload-btn" type="button">选择相册图片</button>
+          <div id="profile-cropper" class="profile-cropper" hidden>
+            <div id="profile-crop-frame" class="profile-crop-frame">
+              <img id="profile-crop-image" class="profile-crop-image" alt="" />
+              <span class="profile-crop-mask" aria-hidden="true"></span>
+              <span class="profile-crop-ring" aria-hidden="true"></span>
+            </div>
+            <label class="profile-slider-row">
+              <span>缩放</span>
+              <input id="profile-crop-zoom" type="range" min="0" max="4" step="0.01" />
+            </label>
+          </div>
+        </div>
+        <p id="profile-feedback" class="profile-feedback" aria-live="polite"></p>
+        <div class="profile-actions">
+          <button id="profile-cancel" type="button">取消</button>
+          <button id="profile-save" type="button" class="primary">保存头像</button>
         </div>
       </div>
     </section>
