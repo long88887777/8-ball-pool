@@ -53,6 +53,28 @@ import {
   resolveHistorySelectionIndex,
   writeStoredAimControlSettings,
 } from './menuShell';
+import {
+  DEFAULT_AVATARS,
+  createDefaultAvatarSelection,
+  readStoredAvatarSelection,
+  resolveAvatarSrc,
+  writeStoredAvatarSelection,
+  type AvatarSelection,
+  type DefaultAvatarId,
+} from './player/avatar';
+import {
+  AVATAR_OUTPUT_SIZE,
+  createInitialCropState,
+  moveCrop,
+  resolveCropSourceRect,
+  updateCropZoom,
+  type CropState,
+} from './player/avatarCrop';
+import {
+  readProfileAvatarSelection,
+  uploadProfileAvatar,
+  writeProfileAvatarSelection,
+} from './player/avatarPersistence';
 import './styles.css';
 
 type GameMode = 'pvp' | 'ai' | 'challenge' | 'online';
@@ -81,6 +103,13 @@ let pendingRechargeOrder: CreatedRechargeOrder | null = null;
 let rechargeBusy = false;
 let modeSelectionState: ModeSelectionState = createModeSelectionState();
 let selectedHistoryIndex: number | null = null;
+let currentAvatarSelection: AvatarSelection = createDefaultAvatarSelection();
+let pendingAvatarSelection: AvatarSelection = currentAvatarSelection;
+let cropState: CropState | null = null;
+let cropImageElement: HTMLImageElement | null = null;
+let cropSourceImage: HTMLImageElement | null = null;
+let cropObjectUrl: string | null = null;
+let cropDragStart: { x: number; y: number; state: CropState } | null = null;
 
 const shellLanguage: Language = 'zh';
 
@@ -334,6 +363,8 @@ async function loadUserProfile(): Promise<void> {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) {
     currentProfileName = '游客玩家';
+    currentAvatarSelection = readStoredAvatarSelection(browserStorage());
+    renderAvatarSelection(currentAvatarSelection);
     renderProfileSummary(null, null, true);
     await loadGrowthOverview();
     return;
@@ -355,6 +386,9 @@ async function loadUserProfile(): Promise<void> {
       infoEl.hidden = false;
     }
   }
+  const remoteAvatar = await readProfileAvatarSelection(supabase);
+  currentAvatarSelection = remoteAvatar ?? readStoredAvatarSelection(browserStorage());
+  renderAvatarSelection(currentAvatarSelection);
   await loadGrowthOverview();
 }
 
@@ -381,6 +415,194 @@ function renderProfileSummary(stats: PlayerStats | null, tasks: DailyTaskState |
   const summary = summarizeStats(stats);
   infoEl.textContent = `${currentProfileName} | ${summary.wins}胜 ${summary.losses}负 (${summary.winRate}%)`;
   infoEl.hidden = false;
+}
+
+function renderAvatarSelection(selection: AvatarSelection): void {
+  currentAvatarSelection = selection;
+  const src = resolveAvatarSrc(selection);
+  const menuAvatar = document.getElementById('menu-avatar') as HTMLImageElement | null;
+  const profilePreview = document.getElementById('profile-avatar-preview') as HTMLImageElement | null;
+  if (menuAvatar) menuAvatar.src = src;
+  if (profilePreview) profilePreview.src = src;
+}
+
+function renderProfileAvatarPreview(selection: AvatarSelection): void {
+  const src = resolveAvatarSrc(selection);
+  const profilePreview = document.getElementById('profile-avatar-preview') as HTMLImageElement | null;
+  if (profilePreview) profilePreview.src = src;
+}
+
+function renderProfilePanel(): void {
+  pendingAvatarSelection = currentAvatarSelection;
+  const name = document.getElementById('profile-name');
+  const record = document.getElementById('profile-record');
+  if (name) name.textContent = currentProfileName;
+  if (record) {
+    const summary = summarizeStats(currentStats);
+    record.textContent = guestMode
+      ? '游客玩家 | 本地存档'
+      : `${summary.wins}胜 ${summary.losses}负 (${summary.winRate}%)`;
+  }
+  renderProfileAvatarGrid();
+  renderProfileAvatarPreview(pendingAvatarSelection);
+  setProfileFeedback('');
+}
+
+function renderProfileAvatarGrid(): void {
+  const grid = document.getElementById('profile-avatar-grid');
+  if (!grid) return;
+  grid.replaceChildren(...DEFAULT_AVATARS.map((avatar) => {
+    const isSelected = pendingAvatarSelection.kind === 'default' && pendingAvatarSelection.id === avatar.id;
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = `profile-avatar-option${isSelected ? ' is-selected' : ''}`;
+    button.dataset.avatarId = avatar.id;
+    button.setAttribute('role', 'option');
+    button.setAttribute('aria-selected', String(isSelected));
+
+    const img = document.createElement('img');
+    img.src = avatar.src;
+    img.alt = avatar.label;
+    button.append(img);
+    return button;
+  }));
+}
+
+function setProfileFeedback(message: string): void {
+  const feedback = document.getElementById('profile-feedback');
+  if (feedback) feedback.textContent = message;
+}
+
+function showProfilePanel(): void {
+  renderProfilePanel();
+  const panel = document.getElementById('profile-panel');
+  if (panel) panel.hidden = false;
+}
+
+function hideProfilePanel(): void {
+  const panel = document.getElementById('profile-panel');
+  if (panel) panel.hidden = true;
+  resetProfileCropper();
+  renderAvatarSelection(currentAvatarSelection);
+}
+
+async function saveProfileAvatar(): Promise<void> {
+  setProfileFeedback('正在保存头像...');
+  const cropped = await saveCroppedAvatar();
+  if (!cropped) {
+    setProfileFeedback('头像生成失败。');
+    return;
+  }
+  pendingAvatarSelection = cropped;
+
+  if (guestMode) {
+    currentAvatarSelection = writeStoredAvatarSelection(browserStorage(), pendingAvatarSelection);
+    renderAvatarSelection(currentAvatarSelection);
+    hideProfilePanel();
+    return;
+  }
+
+  const saved = await writeProfileAvatarSelection(supabase, pendingAvatarSelection);
+  if (!saved) {
+    setProfileFeedback('头像保存失败，请稍后重试。');
+    return;
+  }
+  currentAvatarSelection = pendingAvatarSelection;
+  writeStoredAvatarSelection(browserStorage(), currentAvatarSelection);
+  renderAvatarSelection(currentAvatarSelection);
+  hideProfilePanel();
+}
+
+function resetProfileCropper(): void {
+  cropState = null;
+  cropImageElement = null;
+  cropSourceImage = null;
+  cropDragStart = null;
+  if (cropObjectUrl) {
+    URL.revokeObjectURL(cropObjectUrl);
+    cropObjectUrl = null;
+  }
+  const cropper = document.getElementById('profile-cropper');
+  if (cropper) cropper.hidden = true;
+}
+
+async function handleProfileUpload(file: File): Promise<void> {
+  if (!file.type.startsWith('image/')) {
+    setProfileFeedback('请选择图片文件。');
+    return;
+  }
+
+  const image = new Image();
+  const url = URL.createObjectURL(file);
+  let shouldRevokeUrl = true;
+  try {
+    await new Promise<void>((resolve, reject) => {
+      image.onload = () => resolve();
+      image.onerror = () => reject(new Error('decode failed'));
+      image.src = url;
+    });
+    resetProfileCropper();
+    cropObjectUrl = url;
+    cropSourceImage = image;
+    cropState = createInitialCropState({ width: image.naturalWidth, height: image.naturalHeight }, 320);
+    cropImageElement = document.getElementById('profile-crop-image') as HTMLImageElement | null;
+    if (cropImageElement) cropImageElement.src = url;
+    const cropper = document.getElementById('profile-cropper');
+    if (cropper) cropper.hidden = false;
+    updateCropperDom();
+    setProfileFeedback('');
+    shouldRevokeUrl = false;
+  } catch {
+    setProfileFeedback('图片读取失败，请换一张再试。');
+  } finally {
+    if (shouldRevokeUrl) URL.revokeObjectURL(url);
+  }
+}
+
+function updateCropperDom(): void {
+  if (!cropState || !cropImageElement) return;
+  cropImageElement.style.width = `${cropState.imageWidth * cropState.zoom}px`;
+  cropImageElement.style.height = `${cropState.imageHeight * cropState.zoom}px`;
+  cropImageElement.style.transform = `translate(calc(-50% + ${cropState.offsetX}px), calc(-50% + ${cropState.offsetY}px))`;
+  const zoom = document.getElementById('profile-crop-zoom') as HTMLInputElement | null;
+  if (zoom) {
+    zoom.min = String(Math.max(320 / cropState.imageWidth, 320 / cropState.imageHeight));
+    zoom.value = String(cropState.zoom);
+  }
+}
+
+async function saveCroppedAvatar(): Promise<AvatarSelection | null> {
+  if (!cropState || !cropSourceImage) return pendingAvatarSelection;
+  const rect = resolveCropSourceRect(cropState);
+  const canvas = document.createElement('canvas');
+  canvas.width = AVATAR_OUTPUT_SIZE;
+  canvas.height = AVATAR_OUTPUT_SIZE;
+  const context = canvas.getContext('2d');
+  if (!context) return null;
+  context.drawImage(
+    cropSourceImage,
+    rect.sx,
+    rect.sy,
+    rect.sw,
+    rect.sh,
+    0,
+    0,
+    AVATAR_OUTPUT_SIZE,
+    AVATAR_OUTPUT_SIZE,
+  );
+
+  const blob = await new Promise<Blob | null>((resolve) => {
+    canvas.toBlob(resolve, 'image/webp', 0.9);
+  });
+  if (!blob) return null;
+
+  if (guestMode) {
+    const dataUrl = canvas.toDataURL('image/webp', 0.9);
+    return { kind: 'uploaded', url: dataUrl };
+  }
+
+  const uploadedUrl = await uploadProfileAvatar(supabase, blob);
+  return uploadedUrl ? { kind: 'uploaded', url: uploadedUrl } : null;
 }
 
 function renderGrowthOverview(
@@ -994,6 +1216,59 @@ async function init(): Promise<void> {
   document.getElementById('settings-sensitivity')?.addEventListener('change', saveAimControlSettingsFromPanel);
   document.getElementById('settings-power-step')?.addEventListener('change', saveAimControlSettingsFromPanel);
   document.getElementById('settings-power-lock')?.addEventListener('change', saveAimControlSettingsFromPanel);
+  document.getElementById('profile-open')?.addEventListener('click', showProfilePanel);
+  document.getElementById('profile-close')?.addEventListener('click', hideProfilePanel);
+  document.getElementById('profile-cancel')?.addEventListener('click', hideProfilePanel);
+  document.getElementById('profile-save')?.addEventListener('click', () => {
+    void saveProfileAvatar();
+  });
+  document.getElementById('profile-avatar-grid')?.addEventListener('click', (event) => {
+    const target = event.target as HTMLElement | null;
+    const button = target?.closest<HTMLButtonElement>('[data-avatar-id]');
+    const avatarId = button?.dataset.avatarId as DefaultAvatarId | undefined;
+    if (!avatarId) return;
+    pendingAvatarSelection = { kind: 'default', id: avatarId };
+    resetProfileCropper();
+    renderProfileAvatarGrid();
+    renderProfileAvatarPreview(pendingAvatarSelection);
+  });
+  document.getElementById('profile-avatar-upload-btn')?.addEventListener('click', () => {
+    (document.getElementById('profile-avatar-upload') as HTMLInputElement | null)?.click();
+  });
+  document.getElementById('profile-avatar-upload')?.addEventListener('change', (event) => {
+    const input = event.target as HTMLInputElement;
+    const file = input.files?.[0];
+    if (file) void handleProfileUpload(file);
+    input.value = '';
+  });
+  document.getElementById('profile-crop-zoom')?.addEventListener('input', (event) => {
+    if (!cropState) return;
+    const input = event.target as HTMLInputElement;
+    cropState = updateCropZoom(cropState, Number(input.value));
+    updateCropperDom();
+  });
+
+  const cropFrame = document.getElementById('profile-crop-frame');
+  cropFrame?.addEventListener('pointerdown', (event) => {
+    if (!cropState) return;
+    cropDragStart = { x: event.clientX, y: event.clientY, state: cropState };
+    (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+  });
+  cropFrame?.addEventListener('pointermove', (event) => {
+    if (!cropDragStart) return;
+    cropState = moveCrop(
+      cropDragStart.state,
+      event.clientX - cropDragStart.x,
+      event.clientY - cropDragStart.y,
+    );
+    updateCropperDom();
+  });
+  cropFrame?.addEventListener('pointerup', () => {
+    cropDragStart = null;
+  });
+  cropFrame?.addEventListener('pointercancel', () => {
+    cropDragStart = null;
+  });
 
   document.getElementById('cue-shop-open')?.addEventListener('click', showCueShop);
   document.getElementById('cue-shop-close')?.addEventListener('click', hideCueShop);
