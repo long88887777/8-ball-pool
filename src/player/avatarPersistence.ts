@@ -30,6 +30,12 @@ type SupabaseAvatarClient = {
   };
 };
 
+export type AvatarUploadFailureReason = 'not-signed-in' | 'storage-unavailable' | 'upload-failed';
+
+export type AvatarUploadResult =
+  | { ok: true; url: string }
+  | { ok: false; reason: AvatarUploadFailureReason };
+
 export async function readProfileAvatarSelection(supabase: unknown): Promise<AvatarSelection | null> {
   const client = asSupabaseAvatarClient(supabase);
   if (!client) return null;
@@ -69,11 +75,11 @@ export async function writeProfileAvatarSelection(
   }
 }
 
-export async function uploadProfileAvatar(supabase: unknown, blob: Blob): Promise<string | null> {
+export async function uploadProfileAvatar(supabase: unknown, blob: Blob): Promise<AvatarUploadResult> {
   const client = asSupabaseAvatarClient(supabase);
-  if (!client?.storage) return null;
+  if (!client?.storage) return { ok: false, reason: 'storage-unavailable' };
   const userId = await getSupabaseUserId(client);
-  if (!userId) return null;
+  if (!userId) return { ok: false, reason: 'not-signed-in' };
 
   const extension = blob.type === 'image/png' ? 'png' : 'webp';
   const path = `${userId}/avatar-${Date.now()}.${extension}`;
@@ -83,10 +89,13 @@ export async function uploadProfileAvatar(supabase: unknown, blob: Blob): Promis
       contentType: blob.type || 'image/webp',
       upsert: true,
     });
-    if (error) return null;
-    return bucket.getPublicUrl(path).data.publicUrl;
-  } catch {
-    return null;
+    if (error) return { ok: false, reason: classifyUploadFailure(error) };
+    const publicUrl = bucket.getPublicUrl(path).data.publicUrl;
+    return publicUrl
+      ? { ok: true, url: publicUrl }
+      : { ok: false, reason: 'upload-failed' };
+  } catch (error) {
+    return { ok: false, reason: classifyUploadFailure(error) };
   }
 }
 
@@ -105,4 +114,15 @@ async function getSupabaseUserId(supabase: SupabaseAvatarClient): Promise<string
   } catch {
     return null;
   }
+}
+
+function classifyUploadFailure(error: unknown): AvatarUploadFailureReason {
+  if (!error || typeof error !== 'object') return 'upload-failed';
+  const details = error as Record<string, unknown>;
+  const statusCode = details.statusCode ?? details.status;
+  const message = typeof details.message === 'string' ? details.message.toLowerCase() : '';
+  if (statusCode === 404 || statusCode === '404' || message.includes('bucket not found')) {
+    return 'storage-unavailable';
+  }
+  return 'upload-failed';
 }

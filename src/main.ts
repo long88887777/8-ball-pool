@@ -74,6 +74,7 @@ import {
   readProfileAvatarSelection,
   uploadProfileAvatar,
   writeProfileAvatarSelection,
+  type AvatarUploadFailureReason,
 } from './player/avatarPersistence';
 import './styles.css';
 
@@ -490,7 +491,8 @@ async function saveProfileAvatar(): Promise<void> {
   setProfileFeedback('正在保存头像...');
   const cropped = await saveCroppedAvatar();
   if (!cropped) {
-    setProfileFeedback('头像生成失败。');
+    const feedback = document.getElementById('profile-feedback')?.textContent?.trim();
+    if (!feedback) setProfileFeedback('头像生成失败。');
     return;
   }
   pendingAvatarSelection = cropped;
@@ -602,7 +604,21 @@ async function saveCroppedAvatar(): Promise<AvatarSelection | null> {
   }
 
   const uploadedUrl = await uploadProfileAvatar(supabase, blob);
-  return uploadedUrl ? { kind: 'uploaded', url: uploadedUrl } : null;
+  if (!uploadedUrl.ok) {
+    setProfileFeedback(avatarUploadFailureMessage(uploadedUrl.reason));
+    return null;
+  }
+  return { kind: 'uploaded', url: uploadedUrl.url };
+}
+
+function avatarUploadFailureMessage(reason: AvatarUploadFailureReason): string {
+  if (reason === 'storage-unavailable') {
+    return '头像存储尚未配置，请先选择默认头像。';
+  }
+  if (reason === 'not-signed-in') {
+    return '请先登录后再上传头像。';
+  }
+  return '头像上传失败，请稍后重试。';
 }
 
 function renderGrowthOverview(

@@ -84,10 +84,31 @@ describe('avatar persistence', () => {
     const { client, uploads } = createClient();
     const blob = new Blob(['avatar'], { type: 'image/webp' });
 
-    const url = await uploadProfileAvatar(client, blob);
+    const result = await uploadProfileAvatar(client, blob);
 
-    expect(url).toMatch(/^https:\/\/cdn\.example\/user-1\/avatar-/);
+    expect(result).toMatchObject({ ok: true });
+    expect(result.ok ? result.url : '').toMatch(/^https:\/\/cdn\.example\/user-1\/avatar-/);
     expect(uploads[0].path).toMatch(/^user-1\/avatar-/);
     expect(uploads[0].options).toMatchObject({ contentType: 'image/webp', upsert: true });
+  });
+
+  it('falls back without throwing when avatar profile columns are not migrated yet', async () => {
+    const { client } = createClient({
+      selectError: { code: '42703', message: 'column profiles.avatar_kind does not exist' },
+    });
+
+    await expect(readProfileAvatarSelection(client)).resolves.toBeNull();
+  });
+
+  it('returns a storage-unavailable upload result when the avatar bucket is missing', async () => {
+    const { client } = createClient({
+      uploadError: { statusCode: '404', message: 'Bucket not found' },
+    });
+    const blob = new Blob(['avatar'], { type: 'image/webp' });
+
+    await expect(uploadProfileAvatar(client, blob)).resolves.toEqual({
+      ok: false,
+      reason: 'storage-unavailable',
+    });
   });
 });
