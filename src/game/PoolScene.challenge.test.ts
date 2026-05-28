@@ -57,6 +57,7 @@ type ChallengeSceneHarness = {
   rules: EightBallState;
   wasMoving: boolean;
   cuePlacementState: unknown;
+  breakCuePlacementConfirmed: boolean;
   strikeLocked: boolean;
   aiThinking: boolean;
   physicsEngine: {
@@ -83,10 +84,12 @@ type ChallengeSceneHarness = {
   input: { on: ReturnType<typeof vi.fn> };
   audio: { unlock: ReturnType<typeof vi.fn>; play: ReturnType<typeof vi.fn> };
   aimState: unknown;
+  game: { loop: { delta: number } };
   canStartBreakCuePlacement: (point: Vector) => boolean;
   canPlaceBreakCueBall: () => boolean;
   canAim: () => boolean;
   bindInput: () => void;
+  smoothActiveAim: (deltaSeconds: number) => void;
   handlePhysicsEvents: (events: Array<
     | { type: 'collision'; ballId: number; otherBallId: number; speed: number }
     | { type: 'pocket'; ballId: number; pocketIndex: number }
@@ -310,7 +313,35 @@ describe('PoolScene challenge rules', () => {
     handlers.get('pointerdown')!({ id: 2, worldX: 900, worldY: 320, rightButtonDown: () => false });
 
     expect(scene.cuePlacementState).toBeNull();
-    expect(scene.aimState).toEqual({ pointerId: 2, current: { x: 900, y: 320 } });
+    expect(scene.aimState).toEqual({ pointerId: 2, current: { x: 900, y: 320 }, target: { x: 900, y: 320 } });
+  });
+
+  it('tracks drag targets continuously and smooths the visible aim point per frame', () => {
+    const scene = createChallengeHarness();
+    const handlers = new Map<string, (pointer: { id: number; worldX: number; worldY: number; rightButtonDown: () => boolean }) => void>();
+    scene.input.on.mockImplementation((eventName: string, handler: (pointer: { id: number; worldX: number; worldY: number; rightButtonDown: () => boolean }) => void) => {
+      handlers.set(eventName, handler);
+      return scene.input;
+    });
+
+    scene.wasMoving = false;
+    scene.breakCuePlacementConfirmed = true;
+    scene.bindInput();
+
+    handlers.get('pointerdown')!({ id: 3, worldX: 300.25, worldY: 200.5, rightButtonDown: () => false });
+    handlers.get('pointermove')!({ id: 3, worldX: 301.1, worldY: 199.9, rightButtonDown: () => false });
+
+    const aimState = scene.aimState as { current: Vector; target: Vector };
+    expect(aimState.current).toEqual({ x: 300.25, y: 200.5 });
+    expect(aimState.target).toEqual({ x: 301.1, y: 199.9 });
+
+    scene.smoothActiveAim(1 / 60);
+
+    expect(aimState.current.x).toBeGreaterThan(300.25);
+    expect(aimState.current.x).toBeLessThan(301.1);
+    expect(aimState.current.y).toBeLessThan(200.5);
+    expect(aimState.current.y).toBeGreaterThan(199.9);
+    expect(aimState.current.x).not.toBe(Math.round(aimState.current.x));
   });
 
   it('gives full-table ball in hand after a non-final cue scratch without reverting pocketed targets', () => {

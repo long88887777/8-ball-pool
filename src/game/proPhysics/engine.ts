@@ -136,7 +136,7 @@ export class ProfessionalPoolEngine {
   }
 
   isSettled(): boolean {
-    return this.balls.every((ball) => !ball.inMotion());
+    return this.balls.every((ball) => !ball.onTable() || !ball.inMotion());
   }
 
   resetCueBall(position: Vector = CUE_START): void {

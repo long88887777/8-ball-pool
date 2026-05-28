@@ -33,7 +33,6 @@ const PLACEMENT_GRID_SPACING = 40;
 const PLACEMENT_MIN_BALL_DIST = BALL_RADIUS * 2 + 4;
 const PLACEMENT_MIN_POCKET_DIST = 50;
 const STRONG_ATTACK_SCORE = 0.55;
-const SAFETY_ATTACK_MARGIN = 0.08;
 
 type ScoredShot = {
   shot: ShotCandidate;
@@ -90,12 +89,11 @@ export class AIController {
     };
 
     const directShot = this.findBestConfirmedPot(state, aiPlayer, aiGroup, pocketedBallIds);
-    const safetyShot = this.findBestSafetyShot(state, aiPlayer, aiGroup, pocketedBallIds);
-
-    if (directShot && (!safetyShot || directShot.score >= STRONG_ATTACK_SCORE || directShot.score + SAFETY_ATTACK_MARGIN >= safetyShot.score)) {
+    if (directShot) {
       return this.createDecision(directShot.shot, placementPosition);
     }
 
+    const safetyShot = this.findBestSafetyShot(state, aiPlayer, aiGroup, pocketedBallIds);
     const kickShot = this.findBestKickShot(state, aiPlayer, aiGroup, pocketedBallIds);
     const clusterShot = this.findBestClusterBreak(state, aiPlayer, aiGroup, pocketedBallIds);
 
@@ -252,7 +250,10 @@ export class AIController {
       }
     }
 
-    return bestShot ? { shot: bestShot, score: bestScore } : null;
+    if (bestShot) {
+      return { shot: bestShot, score: Math.max(bestScore, STRONG_ATTACK_SCORE) };
+    }
+    return null;
   }
 
   private findBestKickShot(

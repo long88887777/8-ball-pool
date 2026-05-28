@@ -24,6 +24,9 @@ export type AimControlSettings = {
   powerLocked: boolean;
 };
 
+const AIM_SMOOTHING_RESPONSE = 26;
+const AIM_SETTLE_DISTANCE = 0.02;
+
 export function createDefaultAimControlSettings(): AimControlSettings {
   return { sensitivity: 'normal', powerStep: 5, powerLocked: false };
 }
@@ -109,6 +112,20 @@ export function adjustAimPower(cue: Vector, aimPoint: Vector, deltaDistance: num
   return {
     x: cue.x + (dx / distance) * nextDistance,
     y: cue.y + (dy / distance) * nextDistance,
+  };
+}
+
+export function smoothAimPoint(current: Vector, target: Vector, deltaSeconds: number): Vector {
+  const dx = target.x - current.x;
+  const dy = target.y - current.y;
+  if (Math.hypot(dx, dy) <= AIM_SETTLE_DISTANCE) {
+    return target;
+  }
+
+  const t = 1 - Math.exp(-AIM_SMOOTHING_RESPONSE * Math.max(0, deltaSeconds));
+  return {
+    x: current.x + dx * t,
+    y: current.y + dy * t,
   };
 }
 

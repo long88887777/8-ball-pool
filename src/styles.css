@@ -1297,6 +1297,19 @@ h2 {
   font-size: 0.85rem;
 }
 
+.challenge-loading {
+  grid-column: 1 / -1;
+  min-height: 92px;
+  display: grid;
+  place-items: center;
+  border: 1px dashed rgba(108, 92, 231, 0.26);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.48);
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
 .star-gold { color: var(--gold); }
 .star-gray { color: #555; }
 
@@ -2944,6 +2957,13 @@ h2 {
   gap: 12px;
 }
 
+.settings-note {
+  margin: 0;
+  color: #5f6368;
+  font-size: 14px;
+  line-height: 1.55;
+}
+
 .settings-field,
 .settings-toggle {
   display: grid;
@@ -3390,4 +3410,32 @@ h2 {
 .chat-msg-text-inline {
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+@media (hover: none), (pointer: coarse) {
+  .menu-ball,
+  .auth-page,
+  .auth-orb,
+  .auth-shape,
+  .main-menu,
+  .menu-buttons {
+    animation: none;
+  }
+
+  .auth-card,
+  .mm-modal,
+  .victory-card,
+  .challenge-card,
+  .pause-card,
+  .chat-popover,
+  .chat-msg-bubble-inline,
+  .growth-panel,
+  .history-panel,
+  .settings-panel,
+  .ruleset-card,
+  .recharge-modal,
+  .cue-shop-modal {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
 }

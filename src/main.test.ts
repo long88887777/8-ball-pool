@@ -5,6 +5,7 @@ import {
   formatRecentMatchSummary,
   readStoredAimControlSettings,
   resolveHistorySelectionIndex,
+  showChallengeSelectLoadingState,
   writeStoredAimControlSettings,
 } from './menuShell';
 import type { RecentMatchRecord } from './game/growth/stats';
@@ -47,6 +48,37 @@ describe('main menu ruleset selection', () => {
 });
 
 describe('menu shell helpers', () => {
+  it('shows the challenge selector immediately while saved progress is loading', () => {
+    const overlay = { hidden: true } as HTMLElement;
+    const title = { textContent: '' } as HTMLElement;
+    const backBtn = { textContent: '' } as HTMLElement;
+    const gridChildren: unknown[] = [];
+    const grid = {
+      replaceChildren: (...children: unknown[]) => {
+        gridChildren.splice(0, gridChildren.length, ...children);
+      },
+    } as HTMLElement;
+    const doc = {
+      createElement: (tag: string) => ({
+        tagName: tag.toUpperCase(),
+        className: '',
+        textContent: '',
+      }),
+    } as Pick<Document, 'createElement'>;
+
+    showChallengeSelectLoadingState({ overlay, grid, title, backBtn }, doc);
+
+    expect(overlay.hidden).toBe(false);
+    expect(title.textContent).toBe('挑战模式');
+    expect(backBtn.textContent).toBe('返回');
+    expect(gridChildren).toMatchObject([
+      {
+        className: 'challenge-loading',
+        textContent: '正在加载关卡...',
+      },
+    ]);
+  });
+
   it('persists sanitized aim control settings', () => {
     const data = new Map<string, string>();
     const storage = {

@@ -215,6 +215,25 @@ describe('ProfessionalPoolEngine', () => {
     expect(next.events.filter((event) => event.type === 'pocket' && event.ballId === 1)).toHaveLength(0);
   });
 
+  it('settles gameplay as soon as only pocketed balls are still falling', () => {
+    const engine = new ProfessionalPoolEngine();
+    engine.rack([
+      { id: 0, kind: 'cue', position: CUE_START },
+      { id: 1, kind: 'target', position: { x: 550, y: 90 }, label: 1 },
+    ]);
+
+    engine.setBallVelocity(1, { x: 0, y: 1.2 });
+
+    let result = engine.step(1 / 60);
+    for (let i = 0; i < 200 && !result.events.some((event) => event.type === 'pocket'); i += 1) {
+      result = engine.step(1 / 60);
+    }
+
+    expect(result.events.filter((event) => event.type === 'pocket' && event.ballId === 1)).toHaveLength(1);
+    expect(result.balls.find((ball) => ball.id === 1)?.state).toBe('falling');
+    expect(result.settled).toBe(true);
+  });
+
   it('keeps balls inside the visible cushion nose bounds when no pocket is involved', () => {
     const engine = new ProfessionalPoolEngine();
     engine.rack([

@@ -20,6 +20,27 @@ export type MatchSummaryCopy = {
 
 export const AIM_CONTROL_SETTINGS_KEY = 'pool.aimControlSettings.v1';
 
+export type ChallengeSelectElements = {
+  overlay: HTMLElement;
+  grid: HTMLElement;
+  title?: HTMLElement | null;
+  backBtn?: HTMLElement | null;
+};
+
+export function showChallengeSelectLoadingState(
+  elements: ChallengeSelectElements,
+  doc: Pick<Document, 'createElement'> = document,
+): void {
+  const loading = doc.createElement('div');
+  loading.className = 'challenge-loading';
+  loading.textContent = '正在加载关卡...';
+
+  elements.grid.replaceChildren(loading);
+  if (elements.title) elements.title.textContent = '挑战模式';
+  if (elements.backBtn) elements.backBtn.textContent = '返回';
+  elements.overlay.hidden = false;
+}
+
 export function readStoredAimControlSettings(
   storage: Pick<MenuStorage, 'getItem'>,
 ): AimControlSettings {

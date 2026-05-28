@@ -163,6 +163,7 @@ import {
   resolveAimControlStep,
   rotateAimPoint,
   sanitizeAimControlSettings,
+  smoothAimPoint,
   type AimControlSettings,
   type AimIntent,
   type FoulFeedbackTarget,
@@ -214,6 +215,7 @@ type PoolBall = Phaser.GameObjects.Image & {
 type AimState = {
   pointerId: number;
   current: Vector;
+  target: Vector;
 };
 
 type CuePlacementState = {
@@ -232,6 +234,7 @@ const SHOT_CLOCK_SECONDS = 20;
 const ONLINE_SNAPSHOT_INTERVAL_MS = 200;
 const FOUL_FEEDBACK_MS = 1400;
 const OPENING_BREAK_POWER_MULTIPLIER = 1.5;
+const IDLE_MAINTENANCE_INTERVAL_SECONDS = 0.25;
 
 export class PoolScene extends Phaser.Scene {
   private cueBall!: PoolBall;
@@ -252,6 +255,14 @@ export class PoolScene extends Phaser.Scene {
   private wasMoving = false;
   private strikeLocked = false;
   private shotClockRemaining = SHOT_CLOCK_SECONDS;
+  private lastShotClockHudSecond: number | null = null;
+  private lastShotClockHudPlayer: 0 | 1 | null = null;
+  private lastShotClockHudMaxTime: number | null = null;
+  private lastAimRenderKey: string | null = null;
+  private aimRenderDirty = false;
+  private lastHandSpriteKey: string | null = null;
+  private idleMaintenanceAccumulator = 0;
+  private idleMaintenanceRefreshPending = true;
   private readonly audio = new PoolAudio();
   private readonly physicsEngine = new ProfessionalPoolEngine();
   private restartButton?: HTMLButtonElement;
@@ -551,9 +562,10 @@ export class PoolScene extends Phaser.Scene {
   }
 
   update(): void {
-    if (!this.cuePlacementState) {
+    const deltaSeconds = this.game.loop.delta / 1000;
+    if (this.shouldStepPhysics()) {
       try {
-        const step = this.physicsEngine.step(this.game.loop.delta / 1000);
+        const step = this.physicsEngine.step(deltaSeconds);
         this.handlePhysicsEvents(step.events);
         this.syncBallsFromPhysics(step.balls);
         this.handleSettledTable(step.settled);
@@ -564,12 +576,53 @@ export class PoolScene extends Phaser.Scene {
         }
       }
     }
-    this.updateShotClock(this.game.loop.delta / 1000);
-    this.updateOnlineTick(this.game.loop.delta / 1000);
-    this.updateForbiddenIcon();
-    this.updateHandSprite();
-    this.renderAim();
-    this.renderFoulFeedback();
+
+    if (this.shouldRunMaintenanceThisFrame(deltaSeconds)) {
+      this.updateShotClock(this.idleMaintenanceAccumulator);
+      this.updateOnlineTick(this.idleMaintenanceAccumulator);
+      this.updateForbiddenIcon();
+      this.updateHandSprite();
+      this.idleMaintenanceAccumulator = 0;
+      this.idleMaintenanceRefreshPending = false;
+    }
+
+    if (this.aimState) {
+      this.smoothActiveAim(deltaSeconds);
+      if (this.shouldRenderAim()) {
+        this.renderAim();
+      }
+    }
+    if (this.lastFoulFeedback) {
+      this.renderFoulFeedback();
+    }
+  }
+
+  private shouldStepPhysics(): boolean {
+    return !this.cuePlacementState && this.wasMoving;
+  }
+
+  private shouldRunMaintenanceThisFrame(deltaSeconds: number): boolean {
+    this.idleMaintenanceAccumulator += deltaSeconds;
+    if (this.requiresLiveMaintenance()) {
+      return true;
+    }
+    if (this.idleMaintenanceRefreshPending) {
+      return true;
+    }
+    return this.idleMaintenanceAccumulator >= IDLE_MAINTENANCE_INTERVAL_SECONDS;
+  }
+
+  private requiresLiveMaintenance(): boolean {
+    return (
+      this.wasMoving ||
+      this.gameMode === 'online' ||
+      !!this.aimState ||
+      !!this.cuePlacementState ||
+      !!this.lastFoulFeedback ||
+      this.pocketAnimatingBalls.size > 0 ||
+      this.strikeLocked ||
+      this.aiThinking
+    );
   }
 
   private createTextures(): void {
@@ -686,6 +739,7 @@ export class PoolScene extends Phaser.Scene {
       if (this.canPlaceBallInHandCueBall() && isOnTableSurface(point)) {
         this.cuePlacementState = { pointerId: pointer.id, kind: 'ball-in-hand' };
         this.aimState = null;
+        this.markAimRenderDirty();
         this.aimLine.clear();
         this.cueGraphics.clear();
 
@@ -697,6 +751,7 @@ export class PoolScene extends Phaser.Scene {
       if (this.canPlaceBreakCueBall() && this.canStartBreakCuePlacement(point)) {
         this.cuePlacementState = { pointerId: pointer.id, kind: 'break' };
         this.aimState = null;
+        this.markAimRenderDirty();
         this.aimLine.clear();
         this.cueGraphics.clear();
 
@@ -715,7 +770,9 @@ export class PoolScene extends Phaser.Scene {
       this.aimState = {
         pointerId: pointer.id,
         current: point,
+        target: point,
       };
+      this.markAimRenderDirty();
       this.updateAimHud();
     });
 
@@ -734,14 +791,7 @@ export class PoolScene extends Phaser.Scene {
         return;
       }
 
-      const raw = { x: pointer.worldX, y: pointer.worldY };
-      const prev = this.aimState.current;
-      const smoothing = 0.35;
-      this.aimState.current = {
-        x: prev.x + (raw.x - prev.x) * smoothing,
-        y: prev.y + (raw.y - prev.y) * smoothing,
-      };
-      this.updateAimHud();
+      this.setAimTarget({ x: pointer.worldX, y: pointer.worldY });
     });
 
     this.input.on('pointerup', (pointer: Phaser.Input.Pointer) => {
@@ -815,7 +865,8 @@ export class PoolScene extends Phaser.Scene {
     }
 
     event.preventDefault();
-    this.aimState = { ...this.aimState, current: next };
+    this.aimState = { ...this.aimState, current: next, target: next };
+    this.markAimRenderDirty();
     this.updateAimHud();
   };
 
@@ -945,6 +996,7 @@ export class PoolScene extends Phaser.Scene {
     this.setSelectedSpin(SPIN_PRESETS.center);
     this.forbiddenIcon?.setVisible(false);
     this.handSprite?.setVisible(false);
+    this.markHandSpriteDirty();
     this.cuePlacementValid = true;
     this.breakCuePlacementConfirmed = false;
     this.ballPrevPositions.clear();
@@ -1818,15 +1870,22 @@ export class PoolScene extends Phaser.Scene {
   private updateHandSprite(): void {
     if (!this.handSprite) return;
     const show = !this.aimState && (this.canPlaceBreakCueBall() || this.canPlaceBallInHandCueBall());
-    this.handSprite.setVisible(show);
+    const targetH = BALL_RADIUS * 2.6;
+    const scale = targetH / this.handSprite.height;
+    const x = this.cueBall.x - BALL_RADIUS * 1.15;
+    const y = this.cueBall.y + BALL_RADIUS * 0.95;
+    const key = show ? `show:${x.toFixed(2)}:${y.toFixed(2)}:${scale.toFixed(4)}` : 'hide';
+    if (this.lastHandSpriteKey === key) {
+      return;
+    }
+    this.lastHandSpriteKey = key;
+
+    if (this.handSprite.visible !== show) {
+      this.handSprite.setVisible(show);
+    }
     if (show) {
-      const targetH = BALL_RADIUS * 2.6;
-      const scale = targetH / this.handSprite.height;
       this.handSprite.setScale(scale);
-      this.handSprite.setPosition(
-        this.cueBall.x - BALL_RADIUS * 1.15,
-        this.cueBall.y + BALL_RADIUS * 0.95,
-      );
+      this.handSprite.setPosition(x, y);
     }
   }
 
@@ -1841,11 +1900,59 @@ export class PoolScene extends Phaser.Scene {
     return computeAimIntent(this.cuePosition(), this.aimState.current);
   }
 
+  private smoothActiveAim(deltaSeconds: number): void {
+    if (!this.aimState) {
+      return;
+    }
+    const current = this.aimState.current;
+    const target = this.aimState.target;
+    if (current === target) {
+      return;
+    }
+    const next = smoothAimPoint(current, target, deltaSeconds);
+    if (next !== current) {
+      this.aimState.current = next;
+      this.markAimRenderDirty();
+    }
+  }
+
+  private setAimTarget(target: Vector): void {
+    if (!this.aimState) {
+      return;
+    }
+    const currentTarget = this.aimState.target;
+    if (currentTarget.x === target.x && currentTarget.y === target.y) {
+      return;
+    }
+    this.aimState.target = target;
+    this.markAimRenderDirty();
+  }
+
+  private markAimRenderDirty(): void {
+    this.aimRenderDirty = true;
+    this.lastAimRenderKey = null;
+  }
+
+  private markHandSpriteDirty(): void {
+    this.lastHandSpriteKey = null;
+  }
+
+  private shouldRenderAim(): boolean {
+    const renderKey = this.currentAimRenderKey();
+    if (!this.aimRenderDirty && this.lastAimRenderKey === renderKey) {
+      return false;
+    }
+    this.aimRenderDirty = false;
+    this.lastAimRenderKey = renderKey;
+    return true;
+  }
+
   private cancelAim(): void {
     if (!this.aimState) {
       return;
     }
     this.aimState = null;
+    this.markAimRenderDirty();
     this.aimLine.clear();
     this.cueGraphics.clear();
     this.updateAimHud();
@@ -1857,8 +1964,9 @@ export class PoolScene extends Phaser.Scene {
     }
 
     const cue = this.cuePosition();
-    const aimIntent = computeAimIntent(cue, this.aimState.current);
+    const aimIntent = computeAimIntent(cue, this.aimState.target);
     this.aimState = null;
+    this.markAimRenderDirty();
     this.aimLine.clear();
     this.updateAimHud();
 
@@ -1965,6 +2073,23 @@ export class PoolScene extends Phaser.Scene {
     this.drawAimPowerRail(power);
     this.drawSpinAimFeedback(cue);
     drawCueStick(this.cueGraphics, cue.x, cue.y, cueAngle, cueBack, this.currentCueStyle());
+  }
+
+  private currentAimRenderKey(): string {
+    if (!this.aimState) {
+      return 'inactive';
+    }
+    const cue = this.cuePosition();
+    const aimLineEnabled = this.game.registry.get('aimLineEnabled') ?? true;
+    return [
+      cue.x.toFixed(2),
+      cue.y.toFixed(2),
+      this.aimState.current.x.toFixed(2),
+      this.aimState.current.y.toFixed(2),
+      this.selectedSpin.x.toFixed(3),
+      this.selectedSpin.y.toFixed(3),
+      aimLineEnabled ? 'aim-line' : 'no-aim-line',
+    ].join(':');
   }
 
   private drawAimPowerRail(power: number): void {
@@ -2616,6 +2741,7 @@ export class PoolScene extends Phaser.Scene {
     this.setSelectedSpin(SPIN_PRESETS.center);
     this.forbiddenIcon?.setVisible(false);
     this.handSprite?.setVisible(false);
+    this.markHandSpriteDirty();
     this.cuePlacementValid = true;
     this.breakCuePlacementConfirmed = false;
     this.ballPrevPositions.clear();
@@ -2801,12 +2927,24 @@ export class PoolScene extends Phaser.Scene {
   private updateShotClockHud(): void {
     const maxTime = this.onlineState ? this.onlineState.turnTimeLimit : SHOT_CLOCK_SECONDS;
     const progress = Math.max(0, Math.min(this.shotClockRemaining / maxTime, 1));
+    const visibleSecond = Math.ceil(this.shotClockRemaining);
+    const activePlayer = this.activeHudPlayer();
+    if (
+      this.lastShotClockHudSecond === visibleSecond &&
+      this.lastShotClockHudPlayer === activePlayer &&
+      this.lastShotClockHudMaxTime === maxTime
+    ) {
+      return;
+    }
+    this.lastShotClockHudSecond = visibleSecond;
+    this.lastShotClockHudPlayer = activePlayer;
+    this.lastShotClockHudMaxTime = maxTime;
+
     const shotClock = document.querySelector('#shot-clock');
     const playerOneCard = document.querySelector<HTMLElement>('#player-one-card');
     const playerTwoCard = document.querySelector<HTMLElement>('#player-two-card');
 
-    if (shotClock) shotClock.textContent = String(Math.ceil(this.shotClockRemaining));
-    const activePlayer = this.activeHudPlayer();
+    if (shotClock) shotClock.textContent = String(visibleSecond);
     this.updatePlayerClockCard(playerOneCard, activePlayer === 0, progress);
     this.updatePlayerClockCard(playerTwoCard, activePlayer === 1, progress);
   }
@@ -2856,6 +2994,7 @@ export class PoolScene extends Phaser.Scene {
 
   private setSelectedSpin(offset: Vector): void {
     this.selectedSpin = normalizeCueContactOffset(offset);
+    this.markAimRenderDirty();
     this.updateSpinControl();
   }
 
@@ -2912,7 +3051,7 @@ export class PoolScene extends Phaser.Scene {
       if (!intent) {
         shotState.textContent = this.language === 'zh' ? '拖动球桌开始瞄准' : 'Drag on the table to aim';
       } else if (intent.canShoot) {
-        shotState.textContent = this.language === 'zh' ? '松开击球 · Esc 取消 · 方向键微调' : 'Release to shoot · Esc cancels · Arrows fine-tune';
+        shotState.textContent = this.language === 'zh' ? '滑动微调 · 松开击球 · Esc 取消' : 'Slide to fine-tune · Release to shoot · Esc cancels';
       } else {
         shotState.textContent = this.language === 'zh' ? '力度过轻，松开会取消' : 'Too soft: release cancels';
       }

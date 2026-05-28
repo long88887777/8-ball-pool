@@ -7,6 +7,7 @@ import {
   resolveFoulFeedbackTarget,
   resolveAimControlStep,
   rotateAimPoint,
+  smoothAimPoint,
 } from './shotControl';
 
 describe('shot control helpers', () => {
@@ -48,6 +49,25 @@ describe('shot control helpers', () => {
     const softer = adjustAimPower(cue, start, -TABLE.maxDragDistance);
     expect(softer.x).toBeCloseTo(cue.x);
     expect(softer.y).toBeCloseTo(cue.y);
+  });
+
+  it('smooths pointer aiming every frame without quantizing tiny movements', () => {
+    const current = { x: 10.25, y: 20.5 };
+    const target = { x: 10.85, y: 20.1 };
+
+    const next = smoothAimPoint(current, target, 1 / 60);
+
+    expect(next.x).toBeGreaterThan(current.x);
+    expect(next.x).toBeLessThan(target.x);
+    expect(next.y).toBeLessThan(current.y);
+    expect(next.y).toBeGreaterThan(target.y);
+    expect(next.x).not.toBe(Math.round(next.x));
+  });
+
+  it('settles precisely on the target when smoothed aiming is close enough', () => {
+    const target = { x: 300.125, y: 220.875 };
+
+    expect(smoothAimPoint({ x: 300.13, y: 220.88 }, target, 1 / 60)).toEqual(target);
   });
 
   it('targets the first wrong-contact ball for foul feedback', () => {

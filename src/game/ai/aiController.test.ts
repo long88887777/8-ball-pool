@@ -156,6 +156,31 @@ describe('aiController', () => {
       expect(simResult.cueBallPocketed).toBe(false);
     });
 
+    it('AI takes a confirmed real-physics pot instead of playing safety', () => {
+      const controller = new AIController({ difficulty: 'normal' });
+      const ballPositions = new Map<number, Vector>([
+        [0, { x: 308.60682620050466, y: 91.69740732133147 }],
+        [9, { x: 164, y: 144 }],
+      ]);
+      const rules = createEightBallState();
+      rules.currentPlayer = 1;
+      rules.players[1].group = 'stripes';
+
+      const decision = controller.computeDecision(ballPositions, rules);
+
+      expect(decision).not.toBeNull();
+      expect(decision!.shot.type).toBe('pot');
+      const simResult = simulateProShot(
+        ballPositions,
+        decision!.shot.direction,
+        decision!.shot.power,
+        decision!.shot.spin,
+      );
+      expect(simResult.pocketedBalls).toContain(decision!.shot.targetBallId);
+      expect(simResult.firstContact).toBe(decision!.shot.targetBallId);
+      expect(simResult.cueBallPocketed).toBe(false);
+    });
+
     it('AI prefers lower power for easy straight shots', () => {
       const controller = new AIController({ timeBudgetMs: 50, maxDepth: 2, explorationConstant: 1.41 });
       const pocket = POCKETS[1];

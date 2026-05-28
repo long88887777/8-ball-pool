@@ -59,6 +59,7 @@ export type GameCopy = {
     sensitivity: string;
     powerStep: string;
     powerLock: string;
+    smoothAimNote: string;
     progress: string;
     cueCollection: string;
     recharge: string;
@@ -168,6 +169,7 @@ const COPY: Record<Language, GameCopy> = {
       sensitivity: 'Aim Sensitivity',
       powerStep: 'Power Step',
       powerLock: 'Lock Power',
+      smoothAimNote: 'Mouse and touch dragging now use smooth precision aiming.',
       progress: 'Progress',
       cueCollection: 'Cue Collection',
       recharge: 'Recharge',
@@ -300,6 +302,7 @@ const COPY: Record<Language, GameCopy> = {
       sensitivity: '瞄准灵敏度',
       powerStep: '力度步进',
       powerLock: '锁定力度',
+      smoothAimNote: '鼠标和触摸拖动已使用平滑精细瞄准。',
       progress: '个人成长',
       cueCollection: '球杆收藏',
       recharge: '充值系统',

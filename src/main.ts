@@ -3,7 +3,8 @@ import { PoolScene } from './game/PoolScene';
 import { type GameRuleset } from './game/gameRules';
 import { normalizeAIDifficulty, type AIDifficulty } from './game/ai/difficulty';
 import { getCopy, type Language } from './game/i18n';
-import type { AimSensitivity } from './game/shotControl';
+import { bindGamePowerLifecycle } from './game/lifecycle';
+import { applyPerformanceProfileToConfig, createBrowserPerformanceProfile } from './game/performance';
 import { supabase } from './lib/supabase';
 import { initAuthPage, showAuthPage, hideAuthPage } from './auth/authPage';
 import { initMatchmaking, openMatchModal } from './online/matchmaking';
@@ -51,7 +52,7 @@ import {
   formatShotHistoryEntry,
   readStoredAimControlSettings,
   resolveHistorySelectionIndex,
-  writeStoredAimControlSettings,
+  showChallengeSelectLoadingState,
 } from './menuShell';
 import {
   DEFAULT_AVATARS,
@@ -81,6 +82,7 @@ import './styles.css';
 type GameMode = 'pvp' | 'ai' | 'challenge' | 'online';
 
 let currentGame: Phaser.Game | null = null;
+let currentGameLifecycleDispose: (() => void) | null = null;
 let guestMode = false;
 let currentProfileName = '游客玩家';
 let currentWallet: PlayerWallet = DEFAULT_PLAYER_WALLET;
@@ -104,6 +106,7 @@ let pendingRechargeOrder: CreatedRechargeOrder | null = null;
 let rechargeBusy = false;
 let modeSelectionState: ModeSelectionState = createModeSelectionState();
 let selectedHistoryIndex: number | null = null;
+let challengeSelectRequestId = 0;
 let currentAvatarSelection: AvatarSelection = createDefaultAvatarSelection();
 let pendingAvatarSelection: AvatarSelection = currentAvatarSelection;
 let cropState: CropState | null = null;
@@ -130,7 +133,7 @@ function startGame(
   showGameShellForNewGame();
   hideEconomyPanels();
 
-  const config: Phaser.Types.Core.GameConfig = {
+  const baseConfig: Phaser.Types.Core.GameConfig = {
     type: Phaser.AUTO,
     parent: 'game',
     width: 1100,
@@ -159,12 +162,18 @@ function startGame(
       },
     },
   };
+  const config = applyPerformanceProfileToConfig(baseConfig, createBrowserPerformanceProfile());
 
   currentGame = new Phaser.Game(config);
+  currentGameLifecycleDispose = bindGamePowerLifecycle(currentGame, {
+    isUserPaused: () => document.getElementById('pause-overlay')?.hidden === false,
+  });
 }
 
 function backToMenu(): void {
   if (currentGame) {
+    currentGameLifecycleDispose?.();
+    currentGameLifecycleDispose = null;
     currentGame.destroy(true);
     currentGame = null;
   }
@@ -242,11 +251,12 @@ async function showChallengeSelect(): Promise<void> {
 
   if (menu) menu.hidden = true;
   if (shell) shell.hidden = true;
-  overlay.hidden = true;
-  if (title) title.textContent = '挑战模式';
-  if (backBtn) backBtn.textContent = '返回';
+  const requestId = ++challengeSelectRequestId;
+  showChallengeSelectLoadingState({ overlay, grid, title, backBtn });
 
   const progress = await readProgressSupabase(supabase);
+  if (requestId !== challengeSelectRequestId || overlay.hidden) return;
+
   grid.replaceChildren(...CHALLENGE_LEVELS.map((level) => {
     const unlocked = isLevelUnlocked(progress, level.id);
     const result = progress.levels[String(level.id)];
@@ -283,6 +293,7 @@ async function showChallengeSelect(): Promise<void> {
 }
 
 function hideChallengeSelect(): void {
+  challengeSelectRequestId += 1;
   const overlay = document.getElementById('challenge-select');
   if (overlay) overlay.hidden = true;
 }
@@ -329,6 +340,7 @@ document.getElementById('btn-pause')?.addEventListener('click', () => {
     pauseOverlay.hidden = false;
     if (currentGame) {
       currentGame.scene.getScene('PoolScene')?.scene.pause();
+      currentGame.pause();
     }
   }
 });
@@ -338,6 +350,7 @@ document.getElementById('pause-resume')?.addEventListener('click', () => {
   if (pauseOverlay) {
     pauseOverlay.hidden = true;
     if (currentGame) {
+      currentGame.resume();
       currentGame.scene.getScene('PoolScene')?.scene.resume();
     }
   }
@@ -811,28 +824,7 @@ function hideSettingsPanel(): void {
 }
 
 function renderSettingsPanel(): void {
-  const settings = readStoredAimControlSettings(browserStorage());
-  const sensitivity = document.getElementById('settings-sensitivity') as HTMLSelectElement | null;
-  const powerStep = document.getElementById('settings-power-step') as HTMLInputElement | null;
-  const powerLock = document.getElementById('settings-power-lock') as HTMLInputElement | null;
-
-  if (sensitivity) sensitivity.value = settings.sensitivity;
-  if (powerStep) powerStep.value = String(settings.powerStep);
-  if (powerLock) powerLock.checked = settings.powerLocked;
-}
-
-function saveAimControlSettingsFromPanel(): void {
-  const sensitivity = document.getElementById('settings-sensitivity') as HTMLSelectElement | null;
-  const powerStep = document.getElementById('settings-power-step') as HTMLInputElement | null;
-  const powerLock = document.getElementById('settings-power-lock') as HTMLInputElement | null;
-
-  const saved = writeStoredAimControlSettings(browserStorage(), {
-    sensitivity: (sensitivity?.value ?? 'normal') as AimSensitivity,
-    powerStep: Number(powerStep?.value ?? 5),
-    powerLocked: powerLock?.checked === true,
-  });
-  currentGame?.registry.set('aimControlSettings', saved);
-  renderSettingsPanel();
+  setText('settings-controls-note', getCopy(shellLanguage).shell.smoothAimNote);
 }
 
 function applyShellCopy(): void {
@@ -846,12 +838,7 @@ function applyShellCopy(): void {
   setText('history-title', copy.history);
   setText('settings-title', copy.settings);
   setText('settings-controls-title', copy.controls);
-  setText('settings-sensitivity-label', copy.sensitivity);
-  setText('settings-power-step-label', copy.powerStep);
-  setText('settings-power-lock-label', copy.powerLock);
-  setText('settings-sensitivity-fine', copy.sensitivityFine);
-  setText('settings-sensitivity-normal', copy.sensitivityNormal);
-  setText('settings-sensitivity-fast', copy.sensitivityFast);
+  setText('settings-controls-note', copy.smoothAimNote);
   document.getElementById('history-close')?.setAttribute('aria-label', copy.close);
   document.getElementById('settings-close')?.setAttribute('aria-label', copy.close);
 }
@@ -1229,9 +1216,6 @@ async function init(): Promise<void> {
   });
   document.getElementById('settings-open')?.addEventListener('click', showSettingsPanel);
   document.getElementById('settings-close')?.addEventListener('click', hideSettingsPanel);
-  document.getElementById('settings-sensitivity')?.addEventListener('change', saveAimControlSettingsFromPanel);
-  document.getElementById('settings-power-step')?.addEventListener('change', saveAimControlSettingsFromPanel);
-  document.getElementById('settings-power-lock')?.addEventListener('change', saveAimControlSettingsFromPanel);
   document.getElementById('profile-open')?.addEventListener('click', showProfilePanel);
   document.getElementById('profile-close')?.addEventListener('click', hideProfilePanel);
   document.getElementById('profile-cancel')?.addEventListener('click', hideProfilePanel);
