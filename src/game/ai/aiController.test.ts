@@ -4,6 +4,7 @@ import type { Vector } from '../constants';
 import { PLAY_AREA, BALL_RADIUS, POCKETS } from '../constants';
 import { createEightBallState } from '../eightBallRules';
 import { simulateShot } from './fastPhysics';
+import { simulateProShot } from './proPhysicsSimulator';
 import { computeNextTarget } from './positionPlay';
 
 describe('aiController', () => {
@@ -103,7 +104,7 @@ describe('aiController', () => {
       expect(decision!.shot.power).toBeGreaterThan(0.2);
     });
 
-    it('AI shot direction actually pots a ball in simulation', () => {
+    it('AI shot direction actually pots a ball in the real physics engine', () => {
       const controller = new AIController({ timeBudgetMs: 50, maxDepth: 2, explorationConstant: 1.41 });
       const pocket = POCKETS[1];
       const targetPos = { x: pocket.x, y: pocket.y + 100 };
@@ -118,13 +119,41 @@ describe('aiController', () => {
       const decision = controller.computeDecision(ballPositions, rules);
       expect(decision).not.toBeNull();
 
-      const simResult = simulateShot(
+      const simResult = simulateProShot(
         ballPositions,
         decision!.shot.direction,
         decision!.shot.power,
         decision!.shot.spin,
       );
       expect(simResult.pocketedBalls).toContain(9);
+    });
+
+    it('AI planned pot must pocket the intended target in the real physics engine', () => {
+      const controller = new AIController({ timeBudgetMs: 100, maxDepth: 2, explorationConstant: 1.41 });
+      const pocket = POCKETS[1];
+      const ballPositions = new Map<number, Vector>([
+        [0, { x: 300, y: 400 }],
+        [9, { x: pocket.x, y: pocket.y + 120 }],
+        [10, { x: 800, y: 200 }],
+      ]);
+      const rules = createEightBallState();
+      rules.currentPlayer = 1;
+      rules.players[1].group = 'stripes';
+
+      const decision = controller.computeDecision(ballPositions, rules);
+
+      expect(decision).not.toBeNull();
+      expect(decision!.shot.type).toBe('pot');
+
+      const simResult = simulateProShot(
+        ballPositions,
+        decision!.shot.direction,
+        decision!.shot.power,
+        decision!.shot.spin,
+      );
+      expect(simResult.pocketedBalls).toContain(decision!.shot.targetBallId);
+      expect(simResult.firstContact).toBe(decision!.shot.targetBallId);
+      expect(simResult.cueBallPocketed).toBe(false);
     });
 
     it('AI prefers lower power for easy straight shots', () => {
@@ -159,7 +188,7 @@ describe('aiController', () => {
       const decision = controller.computeDecision(ballPositions, rules);
       expect(decision).not.toBeNull();
 
-      const sim = simulateShot(
+      const sim = simulateProShot(
         ballPositions,
         decision!.shot.direction,
         decision!.shot.power,
@@ -188,6 +217,32 @@ describe('aiController', () => {
       // Should find some shot (kick, safety, or MCTS)
       expect(decision!.shot.direction).toBeDefined();
       expect(decision!.shot.power).toBeGreaterThan(0);
+    });
+
+    it('does not foul by shooting straight into a blocking opponent ball', () => {
+      const controller = new AIController({ timeBudgetMs: 100, maxDepth: 2, explorationConstant: 1.41 });
+      const ballPositions = new Map<number, Vector>([
+        [0, { x: 220, y: 320 }],
+        [9, { x: 650, y: 320 }],
+        [1, { x: 390, y: 320 }],
+        [2, { x: 390, y: 280 }],
+        [3, { x: 390, y: 360 }],
+      ]);
+      const rules = createEightBallState();
+      rules.currentPlayer = 1;
+      rules.players[1].group = 'stripes';
+
+      const decision = controller.computeDecision(ballPositions, rules);
+
+      expect(decision).not.toBeNull();
+      const sim = simulateProShot(
+        ballPositions,
+        decision!.shot.direction,
+        decision!.shot.power,
+        decision!.shot.spin,
+      );
+      expect(sim.firstContact).toBe(9);
+      expect(sim.cueBallPocketed).toBe(false);
     });
 
     it('AI breaks clusters when no direct pot available', () => {
@@ -261,15 +316,15 @@ describe('aiController', () => {
       const decision = controller.computeDecision(ballPositions, rules);
       expect(decision).not.toBeNull();
 
-      const sim = simulateShot(
+      const sim = simulateProShot(
         ballPositions,
         decision!.shot.direction,
         decision!.shot.power,
         decision!.shot.spin,
       );
 
-      // Must pot the target
-      expect(sim.pocketedBalls).toContain(9);
+      // Must pot the planned target in the real engine.
+      expect(sim.pocketedBalls).toContain(decision!.shot.targetBallId);
       expect(sim.cueBallPocketed).toBe(false);
 
       // Cue ball should end up closer to ball 10's side of the table
@@ -296,7 +351,7 @@ describe('aiController', () => {
         const decision = controller.computeDecision(positions, rules);
         if (!decision) continue;
 
-        const sim = simulateShot(
+        const sim = simulateProShot(
           positions,
           decision.shot.direction,
           decision.shot.power,
@@ -328,22 +383,22 @@ describe('aiController', () => {
       const decision = controller.computeDecision(ballPositions, rules);
       expect(decision).not.toBeNull();
 
-      const sim = simulateShot(
+      const sim = simulateProShot(
         ballPositions,
         decision!.shot.direction,
         decision!.shot.power,
         decision!.shot.spin,
       );
-      expect(sim.pocketedBalls).toContain(9);
+      expect(sim.pocketedBalls).toContain(decision!.shot.targetBallId);
       expect(sim.cueBallPocketed).toBe(false);
 
       const cueEnd = sim.ballPositions.get(0)!;
-      const next = computeNextTarget(ballPositions, 9, [9, 10], []);
+      const next = computeNextTarget(ballPositions, decision!.shot.targetBallId, [9, 10], []);
       expect(next).not.toBeNull();
       const idealZone = next!.idealZone;
       const distToIdeal = Math.hypot(cueEnd.x - idealZone.x, cueEnd.y - idealZone.y);
       const spinMagnitude = Math.hypot(decision!.shot.spin.x, decision!.shot.spin.y);
-      const noSpinSim = simulateShot(
+      const noSpinSim = simulateProShot(
         ballPositions,
         decision!.shot.direction,
         decision!.shot.power,

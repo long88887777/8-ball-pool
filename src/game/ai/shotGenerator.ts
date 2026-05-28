@@ -186,26 +186,6 @@ export function generateSafetyCandidates(
     }
   }
 
-  if (candidates.length === 0 && legalTargets.length > 0) {
-    const targetPos = ballPositions.get(legalTargets[0]);
-    if (targetPos) {
-      const dx = targetPos.x - cuePos.x;
-      const dy = targetPos.y - cuePos.y;
-      const len = Math.hypot(dx, dy);
-      if (len > 0.001) {
-        candidates.push({
-          targetBallId: legalTargets[0],
-          pocketIndex: -1,
-          direction: { x: dx / len, y: dy / len },
-          power: 0.3,
-          spin: { x: 0, y: 0 },
-          type: 'safety',
-          ghostBallPos: targetPos,
-        });
-      }
-    }
-  }
-
   return candidates;
 }
 

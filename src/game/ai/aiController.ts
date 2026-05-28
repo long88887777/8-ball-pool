@@ -5,7 +5,7 @@ import type { NineBallState } from '../nineBallRules';
 import type { AIDecision, MCTSConfig, ShotCandidate, TableState } from './types';
 import { mctsSearch } from './mcts';
 import { generateShotCandidates, generateKickShots, generateClusterBreakShots, getAILegalTargets, isPathClear, isOnTable } from './shotGenerator';
-import { simulateShot } from './fastPhysics';
+import { simulateProShot as simulateShot } from './proPhysicsSimulator';
 import { evaluateState, scorePositionPlay } from './evaluator';
 import { generatePositionAwareShots, computeNextTarget, scoreFuturePotRoute } from './positionPlay';
 import {
@@ -138,6 +138,10 @@ export class AIController {
     return Math.max(5, Math.floor(this.difficultyProfile.candidateLimit / 6));
   }
 
+  private proConfirmationLimit(): number {
+    return Math.max(12, this.difficultyProfile.candidateLimit);
+  }
+
   private findBestConfirmedPot(
     state: TableState,
     aiPlayer: PlayerIndex,
@@ -145,19 +149,22 @@ export class AIController {
     pocketedBallIds: number[],
   ): ScoredShot | null {
     const candidates = generateShotCandidates(state.ballPositions, aiGroup, pocketedBallIds, state.ruleset);
-    const potCandidates = candidates.filter((c) => c.type === 'pot');
+    const potCandidates = sortPotCandidates(
+      candidates.filter((c) => c.type === 'pot'),
+      state.ballPositions,
+    );
     if (potCandidates.length === 0) return null;
 
     // Phase 1: Find which (target, pocket) combos actually pot
     const confirmedPots: { targetBallId: number; pocketIndex: number }[] = [];
-    for (const candidate of potCandidates) {
+    for (const candidate of potCandidates.slice(0, this.proConfirmationLimit())) {
       const simResult = simulateShot(
         state.ballPositions,
         candidate.direction,
         candidate.power,
         candidate.spin,
       );
-      if (simResult.pocketedBalls.length > 0 && !simResult.cueBallPocketed) {
+      if (simResult.pocketedBalls.includes(candidate.targetBallId) && !simResult.cueBallPocketed) {
         const key = `${candidate.targetBallId}-${candidate.pocketIndex}`;
         if (!confirmedPots.some((p) => `${p.targetBallId}-${p.pocketIndex}` === key)) {
           confirmedPots.push({
@@ -203,7 +210,7 @@ export class AIController {
           candidate.spin,
         );
 
-        if (simResult.pocketedBalls.length === 0) continue;
+        if (!simResult.pocketedBalls.includes(candidate.targetBallId)) continue;
         if (simResult.cueBallPocketed) continue;
         if (isIllegalEightBallResult(state, simResult, aiGroup)) continue;
 
@@ -269,6 +276,7 @@ export class AIController {
       );
 
       if (simResult.cueBallPocketed) continue;
+      if (!isLegalFirstContact(state, simResult, aiGroup)) continue;
 
       const potted = simResult.pocketedBalls.length > 0;
       let score: number;
@@ -309,6 +317,7 @@ export class AIController {
       );
 
       if (simResult.cueBallPocketed) continue;
+      if (!isLegalFirstContact(state, simResult, aiGroup)) continue;
 
       const score = evaluateState(state, simResult, aiPlayer, aiGroup) + this.personalityBias(candidate);
       if (score > bestScore) {
@@ -342,6 +351,7 @@ export class AIController {
         candidate.spin,
       );
       if (simResult.cueBallPocketed) continue;
+      if (!isLegalFirstContact(state, simResult, aiGroup)) continue;
 
       const baseScore = evaluateState(state, simResult, aiPlayer, aiGroup);
       const snookerScore = scoreOpponentDeniedRoutes(state, simResult, aiGroup);
@@ -395,6 +405,8 @@ export class AIController {
         candidate.power,
         candidate.spin,
       );
+      if (simResult.cueBallPocketed) continue;
+      if (!isLegalFirstContact(state, simResult, aiGroup)) continue;
       const score = evaluateState(state, simResult, aiPlayer, aiGroup) + this.personalityBias(candidate);
       if (score > bestScore) {
         bestScore = score;
@@ -419,6 +431,49 @@ function isControllerOptions(value: MCTSConfig | {
     value &&
     ('difficulty' in value || 'config' in value || 'rng' in value)
   );
+}
+
+function sortPotCandidates(candidates: ShotCandidate[], ballPositions: Map<number, Vector>): ShotCandidate[] {
+  const cuePos = ballPositions.get(0);
+  if (!cuePos) return candidates;
+
+  return candidates.slice().sort((a, b) => {
+    return estimateCandidateQuality(b, ballPositions, cuePos) - estimateCandidateQuality(a, ballPositions, cuePos);
+  });
+}
+
+function estimateCandidateQuality(
+  candidate: ShotCandidate,
+  ballPositions: Map<number, Vector>,
+  cuePos: Vector,
+): number {
+  const targetPos = ballPositions.get(candidate.targetBallId);
+  const pocket = POCKETS[candidate.pocketIndex];
+  if (!targetPos || !pocket) return -Infinity;
+
+  const cueDist = Math.hypot(candidate.ghostBallPos.x - cuePos.x, candidate.ghostBallPos.y - cuePos.y);
+  const pocketDist = Math.hypot(pocket.x - targetPos.x, pocket.y - targetPos.y);
+  const targetLine = Math.atan2(pocket.y - targetPos.y, pocket.x - targetPos.x);
+  const cueLine = Math.atan2(candidate.ghostBallPos.y - cuePos.y, candidate.ghostBallPos.x - cuePos.x);
+  let cutAngle = Math.abs(targetLine - cueLine);
+  if (cutAngle > Math.PI) cutAngle = 2 * Math.PI - cutAngle;
+
+  const distanceScore = Math.max(0, 1 - (cueDist + pocketDist) / 1300);
+  const cutScore = Math.max(0, 1 - cutAngle / (Math.PI * 0.7));
+  const powerScore = 1 - candidate.power;
+  const spinScore = 1 - Math.min(1, Math.hypot(candidate.spin.x, candidate.spin.y));
+
+  return distanceScore * 0.36 + cutScore * 0.34 + powerScore * 0.18 + spinScore * 0.12;
+}
+
+function isLegalFirstContact(
+  state: TableState,
+  simResult: ReturnType<typeof simulateShot>,
+  aiGroup: BallGroup | null,
+): boolean {
+  if (simResult.firstContact === null) return false;
+  const legalTargets = getAILegalTargets(aiGroup, state.pocketedBallIds, state.ruleset);
+  return legalTargets.includes(simResult.firstContact);
 }
 
 function isIllegalEightBallResult(
@@ -518,7 +573,7 @@ export function computeBestPlacement(
           candidate.power,
           candidate.spin,
         );
-        if (simResult.pocketedBalls.length > 0 && !simResult.cueBallPocketed) {
+        if (simResult.pocketedBalls.includes(candidate.targetBallId) && !simResult.cueBallPocketed) {
           confirmedPot = true;
           break;
         }
@@ -675,7 +730,7 @@ function gridFallbackPlacement(
         candidate.power,
         candidate.spin,
       );
-      if (simResult.pocketedBalls.length === 0) continue;
+      if (!simResult.pocketedBalls.includes(candidate.targetBallId)) continue;
       if (simResult.cueBallPocketed) continue;
 
       const dist = Math.hypot(

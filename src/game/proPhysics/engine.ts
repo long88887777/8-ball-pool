@@ -68,7 +68,7 @@ export class ProfessionalPoolEngine {
     this.postUpdateCushionContacts.clear();
     this.balls = starts.map((start) => {
       const point = this.mapper.toPhysics(start.position);
-      const ball = new Ball(new Vector3(point.x, point.y, 0), undefined, start.label) as EngineBall;
+      const ball = new Ball(new Vector3(point.x, point.y, 0), ballColor(start), start.label) as EngineBall;
       ball.localId = start.id;
       ball.localKind = start.kind;
       ball.emittedPocket = false;
@@ -660,4 +660,14 @@ export class ProfessionalPoolEngine {
     if (state === State.Sliding) return 'sliding';
     return 'stationary';
   }
+}
+
+function ballColor(start: PhysicsBallStart): number {
+  if (start.color?.startsWith('#')) {
+    const parsed = Number.parseInt(start.color.slice(1), 16);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+  return start.kind === 'cue' ? 0xf8f0dd : 0xeeeeee;
 }

@@ -2,7 +2,7 @@ import type { BallGroup, PlayerIndex } from '../eightBallRules';
 import type { Vector } from '../constants';
 import type { MCTSConfig, MCTSNode, ShotCandidate, TableState, FastSimResult } from './types';
 import { generateShotCandidates } from './shotGenerator';
-import { simulateShot } from './fastPhysics';
+import { simulateProShot as simulateShot } from './proPhysicsSimulator';
 import { evaluateState } from './evaluator';
 
 const DEFAULT_CONFIG: MCTSConfig = {
@@ -26,7 +26,7 @@ export function createRootNode(
     children: [],
     visits: 0,
     totalValue: 0,
-    untriedShots: sorted,
+    untriedShots: sorted.reverse(),
   };
 }
 
@@ -87,7 +87,7 @@ export function mctsSearch(
         children: [],
         visits: 0,
         totalValue: 0,
-        untriedShots: limitCandidates(sortCandidates(childCandidates), config.candidateLimit),
+        untriedShots: limitCandidates(sortCandidates(childCandidates), config.candidateLimit).reverse(),
       };
       node.children.push(child);
       node = child;

@@ -78,21 +78,30 @@ describe('shotGenerator', () => {
     });
 
     it('generates safety candidates when no pot is available', () => {
-      // Ball 1 surrounded by blockers so no clear pot line exists
+      // Ball 1 can be contacted safely, but its pocket routes are blocked.
       const ballPositions = new Map<number, Vector>([
         [0, { x: 200, y: 320 }],
-        [1, { x: 550, y: 320 }],
-        [9, { x: 550, y: 290 }],
-        [10, { x: 550, y: 350 }],
-        [11, { x: 520, y: 320 }],
-        [12, { x: 580, y: 320 }],
-        [13, { x: 520, y: 290 }],
-        [14, { x: 580, y: 290 }],
-        [15, { x: 520, y: 350 }],
+        [1, { x: 420, y: 320 }],
+        [9, { x: 420, y: 110 }],
+        [10, { x: 420, y: 530 }],
+        [11, { x: 90, y: 320 }],
+        [12, { x: 1010, y: 320 }],
       ]);
       const candidates = generateShotCandidates(ballPositions, 'solids', []);
       const safetyCandidates = candidates.filter((c) => c.type === 'safety');
       expect(safetyCandidates.length).toBeGreaterThan(0);
+    });
+
+    it('does not create a direct safety fallback when the target path is blocked', () => {
+      const ballPositions = new Map<number, Vector>([
+        [0, { x: 200, y: 320 }],
+        [9, { x: 550, y: 320 }],
+        [1, { x: 350, y: 320 }],
+      ]);
+
+      const candidates = generateShotCandidates(ballPositions, 'stripes', []);
+
+      expect(candidates.filter((c) => c.type === 'safety')).toEqual([]);
     });
   });
 
