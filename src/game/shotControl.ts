@@ -25,7 +25,7 @@ export type AimControlSettings = {
 };
 
 const AIM_SMOOTHING_RESPONSE = 26;
-const AIM_SETTLE_DISTANCE = 0.02;
+const AIM_SETTLE_DISTANCE = 0.0005;
 
 export function createDefaultAimControlSettings(): AimControlSettings {
   return { sensitivity: 'normal', powerStep: 5, powerLocked: false };

@@ -64,10 +64,22 @@ describe('shot control helpers', () => {
     expect(next.x).not.toBe(Math.round(next.x));
   });
 
+  it('responds smoothly to very small aim adjustments instead of snapping them away', () => {
+    const current = { x: 300, y: 220 };
+    const target = { x: 300.012, y: 219.991 };
+
+    const next = smoothAimPoint(current, target, 1 / 60);
+
+    expect(next.x).toBeGreaterThan(current.x);
+    expect(next.x).toBeLessThan(target.x);
+    expect(next.y).toBeLessThan(current.y);
+    expect(next.y).toBeGreaterThan(target.y);
+  });
+
   it('settles precisely on the target when smoothed aiming is close enough', () => {
     const target = { x: 300.125, y: 220.875 };
 
-    expect(smoothAimPoint({ x: 300.13, y: 220.88 }, target, 1 / 60)).toEqual(target);
+    expect(smoothAimPoint({ x: 300.1251, y: 220.8751 }, target, 1 / 60)).toEqual(target);
   });
 
   it('targets the first wrong-contact ball for foul feedback', () => {
