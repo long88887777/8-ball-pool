@@ -134,6 +134,7 @@ type ShotHandlerHarness = {
   opponentResultApplied: boolean;
   opponentTurnEndApplied: boolean;
   opponentShotResolved: boolean;
+  shotClockRemaining: number;
   ballPocketMap: Map<number, number>;
   wasMoving: boolean;
   physicsEngine: {
@@ -1342,6 +1343,21 @@ describe('PoolScene online turn state', () => {
     } finally {
       globalThis.document = previousDocument;
     }
+  });
+
+  it('counts down the visible clock while waiting for the online opponent to shoot', () => {
+    const scene = createOnlineSceneHarness();
+    scene.onlineState = transitionToOpponentTurn(scene.onlineState);
+    scene.shotClockRemaining = 30;
+    scene.updateShotClockHud = vi.fn();
+    scene.updateOnlineNetworkHud = vi.fn();
+    scene.handleOnlineTimeout = vi.fn();
+
+    scene.updateOnlineTick(4);
+
+    expect(scene.shotClockRemaining).toBe(26);
+    expect(scene.updateShotClockHud).toHaveBeenCalledOnce();
+    expect(scene.handleOnlineTimeout).not.toHaveBeenCalled();
   });
 
   it('logs late moving snapshots as sync anomalies when an authoritative result already exists', () => {

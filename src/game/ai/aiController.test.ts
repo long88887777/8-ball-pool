@@ -75,7 +75,10 @@ describe('aiController', () => {
     });
 
     it('AI finds pot shots in realistic post-break positions', () => {
-      const controller = new AIController({ timeBudgetMs: 50, maxDepth: 2, explorationConstant: 1.41 });
+      const controller = new AIController({
+        difficulty: 'normal',
+        config: { timeBudgetMs: 50, maxDepth: 2, explorationConstant: 1.41 },
+      });
       const ballPositions = new Map<number, Vector>([
         [0, { x: 265, y: 320 }],
         [1, { x: 400, y: 200 }],
@@ -268,6 +271,30 @@ describe('aiController', () => {
       );
       expect(sim.firstContact).toBe(9);
       expect(sim.cueBallPocketed).toBe(false);
+    });
+
+    it('returns a kick fallback when every direct route to the target is blocked', () => {
+      const controller = new AIController({ timeBudgetMs: 20, maxDepth: 1, explorationConstant: 1.41 });
+      const ballPositions = new Map<number, Vector>([
+        [0, { x: 220, y: 320 }],
+        [9, { x: 760, y: 320 }],
+        [1, { x: 330, y: 320 }],
+        [2, { x: 330, y: 260 }],
+        [3, { x: 330, y: 380 }],
+        [4, { x: 450, y: 320 }],
+        [5, { x: 580, y: 320 }],
+      ]);
+      const rules = createEightBallState();
+      rules.currentPlayer = 1;
+      rules.players[1].group = 'stripes';
+
+      const decision = controller.computeDecision(ballPositions, rules);
+
+      expect(decision).not.toBeNull();
+      expect(decision!.shot.type).toBe('kick');
+      expect(decision!.shot.targetBallId).toBe(9);
+      expect(decision!.shot.power).toBeGreaterThan(0);
+      expect(Math.hypot(decision!.shot.direction.x, decision!.shot.direction.y)).toBeCloseTo(1);
     });
 
     it('AI breaks clusters when no direct pot available', () => {

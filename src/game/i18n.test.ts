@@ -5,7 +5,7 @@ describe('localized copy', () => {
   it('formats HUD and game messages in English', () => {
     const copy = getCopy('en');
 
-    expect(copy.eyebrow).toBe('Local Two-Player');
+    expect(copy.eyebrow).toBe('Self Practice');
     expect(copy.hud.score(120)).toBe('Score 120');
     expect(copy.aimLabel).toBe('Aim Line');
     expect(copy.aimOn).toBe('On');
@@ -16,7 +16,7 @@ describe('localized copy', () => {
     expect(copy.spin.left).toBe('Left');
     expect(copy.spin.right).toBe('Right');
     expect(copy.spin.selected(copy.spin.high)).toBe('High');
-    expect(copy.hud.eightBallMode).toBe('Local 8-Ball');
+    expect(copy.hud.eightBallMode).toBe('Self Practice · 8-Ball');
     expect(copy.hud.playerName(1)).toBe('Player One');
     expect(copy.hud.pocketedBalls).toBe('Pocketed Balls');
     expect(copy.hud.targetBalls).toBe('Targets');
@@ -43,7 +43,7 @@ describe('localized copy', () => {
   it('formats HUD and game messages in Chinese', () => {
     const copy = getCopy('zh');
 
-    expect(copy.eyebrow).toBe('本地双人模式');
+    expect(copy.eyebrow).toBe('自我练习');
     expect(copy.hud.score(120)).toBe('得分 120');
     expect(copy.aimLabel).toBe('瞄准线');
     expect(copy.aimOn).toBe('开');
@@ -54,7 +54,7 @@ describe('localized copy', () => {
     expect(copy.spin.left).toBe('左塞');
     expect(copy.spin.right).toBe('右塞');
     expect(copy.spin.selected(copy.spin.left)).toBe('左塞');
-    expect(copy.hud.eightBallMode).toBe('本地双人 8 球');
+    expect(copy.hud.eightBallMode).toBe('自我练习 · 8 球');
     expect(copy.hud.playerName(1)).toBe('玩家一');
     expect(copy.hud.pocketedBalls).toBe('已进球');
     expect(copy.hud.targetBalls).toBe('目标球');
@@ -91,7 +91,7 @@ describe('i18n AI keys', () => {
     expect(copy.ai.thinkingWithDifficulty('Skilled')).toBe('AI thinking · Skilled');
     expect(copy.ai.aimingWithDifficulty('Skilled')).toBe('AI aiming · Skilled');
     expect(copy.hud.modeLabel).toBe('Mode');
-    expect(copy.hud.modePvp).toBe('PVP');
+    expect(copy.hud.modePvp).toBe('Self Practice');
     expect(copy.hud.modeAi).toBe('VS AI');
     expect(copy.shell.settings).toBe('Settings');
     expect(copy.shell.history).toBe('Match History');
@@ -111,7 +111,7 @@ describe('i18n AI keys', () => {
     expect(copy.ai.thinkingWithDifficulty('熟练')).toBe('AI 思考中 · 熟练');
     expect(copy.ai.aimingWithDifficulty('熟练')).toBe('AI 瞄准中 · 熟练');
     expect(copy.hud.modeLabel).toBe('模式');
-    expect(copy.hud.modePvp).toBe('双人对战');
+    expect(copy.hud.modePvp).toBe('自我练习');
     expect(copy.hud.modeAi).toBe('人机对战');
     expect(copy.shell.settings).toBe('设置');
     expect(copy.shell.history).toBe('对局历史');

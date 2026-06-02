@@ -207,7 +207,7 @@ function showRulesetMenu(mode: MenuGameMode): void {
   const title = document.getElementById('ruleset-title');
   const hint = document.getElementById('ruleset-hint');
   if (title) {
-    title.textContent = mode === 'online' ? '联网对战' : mode === 'ai' ? '人机对战' : '双人对战';
+    title.textContent = mode === 'online' ? '联网对战' : mode === 'ai' ? '人机对战' : '自我练习';
   }
   if (hint) {
     hint.textContent = mode === 'online' ? '选择玩法后进入匹配菜单' : '选择玩法后开始对局';

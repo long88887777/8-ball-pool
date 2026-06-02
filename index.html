@@ -138,11 +138,11 @@
             </span>
             <span class="menu-btn-chevron" aria-hidden="true">›</span>
           </button>
-          <button class="menu-btn" data-mode="pvp" aria-label="Two player local mode">
+          <button class="menu-btn" data-mode="pvp" aria-label="Self practice mode">
             <span class="menu-btn-icon">👥</span>
             <span class="menu-btn-text">
-              <strong>双人对战</strong>
-              <small>Two Players</small>
+              <strong>自我练习</strong>
+              <small>Self Practice</small>
             </span>
             <span class="menu-btn-chevron" aria-hidden="true">›</span>
           </button>
@@ -418,13 +418,13 @@
           </button>
         </nav>
         <div class="game-title">
-          <p id="eyebrow" class="eyebrow">Local Two-Player</p>
+          <p id="eyebrow" class="eyebrow">Self Practice</p>
           <h1 id="title">Pool Hall</h1>
         </div>
         <div class="hud" aria-live="polite">
           <span id="coin-balance" class="coin-balance">金币 260</span>
           <button id="daily-checkin" type="button">每日签到 +180</button>
-          <span id="mode">Local 8-Ball</span>
+          <span id="mode">Self Practice · 8-Ball</span>
           <span id="remaining">Balls 15</span>
           <span id="strokes">Strokes 0</span>
           <span id="network-status" class="network-status" data-status="connecting" hidden>Connecting...</span>
@@ -449,7 +449,10 @@
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
                 </button>
               </div>
-              <span id="player-one-turn" class="turn-state">Shooting</span>
+              <span class="turn-meta">
+                <span id="player-one-turn" class="turn-state">Shooting</span>
+                <span class="turn-clock" data-shot-clock>20s</span>
+              </span>
             </div>
             <div id="player-one-group" class="group-pill">Open</div>
             <div>
@@ -474,7 +477,10 @@
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
                 </button>
               </div>
-              <span id="player-two-turn" class="turn-state">Waiting</span>
+              <span class="turn-meta">
+                <span id="player-two-turn" class="turn-state">Waiting</span>
+                <span class="turn-clock" data-shot-clock>20s</span>
+              </span>
             </div>
             <div id="player-two-group" class="group-pill">Open</div>
             <div>

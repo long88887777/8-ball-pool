@@ -37,12 +37,45 @@ type MatchHudHarness = HudHarness & {
   gameRuleset: 'eight-ball' | 'nine-ball';
   nineBallRules: ReturnType<typeof createNineBallState>;
   aiDifficulty: 'easy' | 'normal' | 'hard';
+  shotClockRemaining: number;
+  lastShotClockHudSecond: number | null;
+  lastShotClockHudPlayer: 0 | 1 | null;
+  lastShotClockHudMaxTime: number | null;
   renderEconomyHud: ReturnType<typeof vi.fn>;
   updateAimHud: ReturnType<typeof vi.fn>;
   updateSpinControl: ReturnType<typeof vi.fn>;
   renderDomBallList: ReturnType<typeof vi.fn>;
   updateShotClockHud: ReturnType<typeof vi.fn>;
   updateOnlineNetworkHud: ReturnType<typeof vi.fn>;
+};
+
+type ShotClockHudHarness = {
+  gameMode: 'pvp' | 'ai' | 'challenge' | 'online';
+  gameRuleset: 'eight-ball' | 'nine-ball';
+  rules: { currentPlayer: 0 | 1; gameOver: boolean };
+  nineBallRules: { currentPlayer: 0 | 1; gameOver: boolean };
+  onlineState: null;
+  roomInfo: null;
+  shotClockRemaining: number;
+  lastShotClockHudSecond: number | null;
+  lastShotClockHudPlayer: 0 | 1 | null;
+  lastShotClockHudMaxTime: number | null;
+  updateShotClockHud: () => void;
+};
+
+type BreakerHarness = {
+  gameMode: 'pvp' | 'ai' | 'challenge' | 'online';
+  gameRuleset: 'eight-ball' | 'nine-ball';
+  rules: { currentPlayer: 0 | 1 };
+  nineBallRules: { currentPlayer: 0 | 1 };
+  createBalls: ReturnType<typeof vi.fn>;
+  rackBallCount: ReturnType<typeof vi.fn>;
+  hideVictoryScreen: ReturnType<typeof vi.fn>;
+  updateHud: ReturnType<typeof vi.fn>;
+  updateAimHud: ReturnType<typeof vi.fn>;
+  setSelectedSpin: ReturnType<typeof vi.fn>;
+  scheduleAITurn: ReturnType<typeof vi.fn>;
+  restartRack: () => void;
 };
 
 type ChallengeUiHarness = {
@@ -82,6 +115,82 @@ function createFakeButton(): HTMLButtonElement & { click: () => void } {
 }
 
 describe('PoolScene HUD', () => {
+  it('shows each player card shot clock while only the active player counts down', () => {
+    const scene = new PoolScene() as unknown as ShotClockHudHarness;
+    const previousDocument = globalThis.document;
+
+    const shotClock = { textContent: '' } as HTMLElement;
+    const playerOneClock = { textContent: '' } as HTMLElement;
+    const playerTwoClock = { textContent: '' } as HTMLElement;
+    const playerOneCard = {
+      classList: { toggle: vi.fn() },
+      style: { setProperty: vi.fn() },
+      querySelector: vi.fn((selector: string) => selector === '[data-shot-clock]' ? playerOneClock : null),
+    } as unknown as HTMLElement;
+    const playerTwoCard = {
+      classList: { toggle: vi.fn() },
+      style: { setProperty: vi.fn() },
+      querySelector: vi.fn((selector: string) => selector === '[data-shot-clock]' ? playerTwoClock : null),
+    } as unknown as HTMLElement;
+
+    scene.gameMode = 'pvp';
+    scene.gameRuleset = 'eight-ball';
+    scene.rules = { currentPlayer: 1, gameOver: false };
+    scene.nineBallRules = { currentPlayer: 0, gameOver: false };
+    scene.onlineState = null;
+    scene.roomInfo = null;
+    scene.shotClockRemaining = 13.2;
+    scene.lastShotClockHudSecond = null;
+    scene.lastShotClockHudPlayer = null;
+    scene.lastShotClockHudMaxTime = null;
+
+    globalThis.document = {
+      querySelector: vi.fn((selector: string) => {
+        if (selector === '#shot-clock') return shotClock;
+        if (selector === '#player-one-card') return playerOneCard;
+        if (selector === '#player-two-card') return playerTwoCard;
+        return null;
+      }),
+    } as unknown as Document;
+
+    try {
+      scene.updateShotClockHud();
+
+      expect(shotClock.textContent).toBe('14');
+      expect(playerOneClock.textContent).toBe('20s');
+      expect(playerTwoClock.textContent).toBe('14s');
+      expect(playerOneCard.classList.toggle).toHaveBeenCalledWith('is-active-turn', false);
+      expect(playerTwoCard.classList.toggle).toHaveBeenCalledWith('is-active-turn', true);
+    } finally {
+      globalThis.document = previousDocument;
+    }
+  });
+
+  it('lets an AI rack start with player two breaking and schedules the AI turn', () => {
+    const scene = new PoolScene() as unknown as BreakerHarness;
+    const originalRandom = Math.random;
+
+    scene.gameMode = 'ai';
+    scene.gameRuleset = 'eight-ball';
+    scene.createBalls = vi.fn();
+    scene.rackBallCount = vi.fn(() => 15);
+    scene.hideVictoryScreen = vi.fn();
+    scene.updateHud = vi.fn();
+    scene.updateAimHud = vi.fn();
+    scene.setSelectedSpin = vi.fn();
+    scene.scheduleAITurn = vi.fn();
+
+    Math.random = vi.fn(() => 0.75);
+    try {
+      scene.restartRack();
+
+      expect(scene.rules.currentPlayer).toBe(1);
+      expect(scene.scheduleAITurn).toHaveBeenCalledOnce();
+    } finally {
+      Math.random = originalRandom;
+    }
+  });
+
   it('labels an AI nine-ball match as AI mode instead of local two-player mode', () => {
     const scene = new PoolScene() as unknown as MatchHudHarness;
     const previousDocument = globalThis.document;
@@ -98,6 +207,10 @@ describe('PoolScene HUD', () => {
     scene.gameRuleset = 'nine-ball';
     scene.language = 'zh';
     scene.aiDifficulty = 'normal';
+    scene.shotClockRemaining = 20;
+    scene.lastShotClockHudSecond = null;
+    scene.lastShotClockHudPlayer = null;
+    scene.lastShotClockHudMaxTime = null;
     scene.nineBallRules = createNineBallState();
     scene.renderEconomyHud = vi.fn();
     scene.updateAimHud = vi.fn();
@@ -129,7 +242,7 @@ describe('PoolScene HUD', () => {
 
     const nodes: Record<string, HTMLElement> = {
       '.match-panel': { hidden: false } as HTMLElement,
-      '#mode': { hidden: false, textContent: '双人对战' } as HTMLElement,
+      '#mode': { hidden: false, textContent: '自我练习' } as HTMLElement,
       '#remaining': { hidden: false, textContent: '剩余 15' } as HTMLElement,
       '#strokes': { hidden: false, textContent: '杆数 0' } as HTMLElement,
       '#challenge-level-name': { hidden: false, textContent: '' } as HTMLElement,

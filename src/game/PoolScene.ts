@@ -515,6 +515,7 @@ export class PoolScene extends Phaser.Scene {
     this.bindAimAssistUI();
     this.bindEconomyUI();
     this.bindChallengeUI();
+    this.chooseOpeningBreaker();
     this.updateHud();
     void this.loadPlayerWallet();
     void this.loadGrowthData();
@@ -532,6 +533,8 @@ export class PoolScene extends Phaser.Scene {
       this.roomInfo = this.game.registry.get('roomInfo') as RoomInfo | null;
       if (this.roomInfo) this.initOnlineMode();
     }
+
+    this.scheduleOpeningAITurnIfNeeded();
 
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       this.reportOnlineLeave();
@@ -2614,6 +2617,21 @@ export class PoolScene extends Phaser.Scene {
     return this.gameMode === 'ai' && this.activeCurrentPlayer() === 1;
   }
 
+  private chooseOpeningBreaker(): void {
+    if (this.gameMode !== 'ai') return;
+
+    const breaker: 0 | 1 = Math.random() < 0.5 ? 0 : 1;
+    this.rules = { ...this.rules, currentPlayer: breaker };
+    this.nineBallRules = { ...this.nineBallRules, currentPlayer: breaker };
+  }
+
+  private scheduleOpeningAITurnIfNeeded(): void {
+    if (this.gameMode !== 'ai' || !this.isAITurn() || this.aiThinking || this.activeGameOver()) {
+      return;
+    }
+    this.scheduleAITurn();
+  }
+
   private scheduleAITurn(): void {
     if (this.aiThinking || this.activeGameOver()) return;
     this.aiThinking = true;
@@ -2749,6 +2767,7 @@ export class PoolScene extends Phaser.Scene {
     this.state = restartGame(this.rackBallCount(), null);
     this.rules = createEightBallState();
     this.nineBallRules = createNineBallState();
+    this.chooseOpeningBreaker();
     this.localMatchTracker = createLocalMatchTracker();
     this.currentShotHistory = [];
     this.pendingShotHistoryEntry = null;
@@ -2764,6 +2783,7 @@ export class PoolScene extends Phaser.Scene {
     this.hideVictoryScreen();
     this.updateHud();
     this.updateAimHud();
+    this.scheduleOpeningAITurnIfNeeded();
   }
 
   private updateHud(): void {
@@ -2945,8 +2965,8 @@ export class PoolScene extends Phaser.Scene {
     const playerTwoCard = document.querySelector<HTMLElement>('#player-two-card');
 
     if (shotClock) shotClock.textContent = String(visibleSecond);
-    this.updatePlayerClockCard(playerOneCard, activePlayer === 0, progress);
-    this.updatePlayerClockCard(playerTwoCard, activePlayer === 1, progress);
+    this.updatePlayerClockCard(playerOneCard, activePlayer === 0, activePlayer === 0 ? visibleSecond : maxTime, progress);
+    this.updatePlayerClockCard(playerTwoCard, activePlayer === 1, activePlayer === 1 ? visibleSecond : maxTime, progress);
   }
 
   private activeHudPlayer(): 0 | 1 | null {
@@ -2969,13 +2989,19 @@ export class PoolScene extends Phaser.Scene {
     return this.activeCurrentPlayer();
   }
 
-  private updatePlayerClockCard(card: HTMLElement | null, active: boolean, progress: number): void {
+  private updatePlayerClockCard(card: HTMLElement | null, active: boolean, seconds: number, progress: number): void {
     if (!card) {
       return;
     }
 
     card.classList.toggle('is-active-turn', active);
     card.style.setProperty('--turn-progress', active ? `${progress * 100}%` : '0%');
+    const clock = typeof card.querySelector === 'function'
+      ? card.querySelector<HTMLElement>('[data-shot-clock]')
+      : null;
+    if (clock) {
+      clock.textContent = `${Math.max(0, seconds)}s`;
+    }
   }
 
   private setSpinFromPadEvent(event: PointerEvent): void {
@@ -4206,6 +4232,10 @@ export class PoolScene extends Phaser.Scene {
         this.handleOnlineTimeout();
         return;
       }
+    }
+    if (this.onlineState.phase === 'opponent_turn') {
+      this.shotClockRemaining = Math.max(0, this.shotClockRemaining - deltaSeconds);
+      this.updateShotClockHud();
     }
     if (this.onlineState.phase === 'watching_my_shot' && !this.physicsEngine.isSettled()) {
       if (now - this.lastSnapshotSentAt >= ONLINE_SNAPSHOT_INTERVAL_MS) {

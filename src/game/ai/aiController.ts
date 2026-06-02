@@ -112,6 +112,11 @@ export class AIController {
       return this.createDecision(fallbackShot, placementPosition);
     }
 
+    const rescueShot = this.findRescueKickShot(state, aiGroup, pocketedBallIds);
+    if (rescueShot) {
+      return this.createDecision(rescueShot, placementPosition);
+    }
+
     return null;
   }
 
@@ -169,6 +174,9 @@ export class AIController {
             targetBallId: candidate.targetBallId,
             pocketIndex: candidate.pocketIndex,
           });
+          if (confirmedPots.length >= this.confirmedPotLimit()) {
+            break;
+          }
         }
       }
     }
@@ -417,6 +425,49 @@ export class AIController {
 
     return bestShot;
   }
+
+  private findRescueKickShot(
+    state: TableState,
+    aiGroup: BallGroup | null,
+    pocketedBallIds: number[],
+  ): ShotCandidate | null {
+    const cuePos = state.ballPositions.get(0);
+    if (!cuePos) return null;
+
+    const legalTargets = getAILegalTargets(aiGroup, pocketedBallIds, state.ruleset)
+      .filter((ballId) => state.ballPositions.has(ballId));
+    if (legalTargets.length === 0) return null;
+
+    let bestShot: ShotCandidate | null = null;
+    let bestScore = -Infinity;
+    const powers = [0.55, 0.8];
+
+    for (const targetBallId of legalTargets) {
+      const targetPos = state.ballPositions.get(targetBallId);
+      if (!targetPos) continue;
+
+      for (const direction of generateRescueDirections(cuePos, targetPos)) {
+        for (const power of powers) {
+          const simResult = simulateShot(state.ballPositions, direction, power, { x: 0, y: 0 });
+          const score = scoreRescueKick(simResult, targetBallId, legalTargets, targetPos, power);
+          if (score > bestScore) {
+            bestScore = score;
+            bestShot = {
+              targetBallId,
+              pocketIndex: -1,
+              direction,
+              power,
+              spin: { x: 0, y: 0 },
+              type: 'kick',
+              ghostBallPos: { x: targetPos.x, y: targetPos.y },
+            };
+          }
+        }
+      }
+    }
+
+    return bestShot;
+  }
 }
 
 function isControllerOptions(value: MCTSConfig | {
@@ -540,6 +591,79 @@ function scoreOpponentDeniedRoutes(
   );
 
   return Math.max(0, Math.min(1, 1 - opponentRoute));
+}
+
+function generateRescueDirections(cuePos: Vector, targetPos: Vector): Vector[] {
+  const candidates: Vector[] = [];
+  const railPoints = [
+    { x: PLAY_AREA.left + BALL_RADIUS, y: targetPos.y },
+    { x: PLAY_AREA.right - BALL_RADIUS, y: targetPos.y },
+    { x: targetPos.x, y: PLAY_AREA.top + BALL_RADIUS },
+    { x: targetPos.x, y: PLAY_AREA.bottom - BALL_RADIUS },
+    { x: PLAY_AREA.left + BALL_RADIUS, y: PLAY_AREA.top + BALL_RADIUS },
+    { x: PLAY_AREA.right - BALL_RADIUS, y: PLAY_AREA.top + BALL_RADIUS },
+    { x: PLAY_AREA.left + BALL_RADIUS, y: PLAY_AREA.bottom - BALL_RADIUS },
+    { x: PLAY_AREA.right - BALL_RADIUS, y: PLAY_AREA.bottom - BALL_RADIUS },
+  ];
+
+  for (const point of railPoints) {
+    const direction = unitDirection(cuePos, point);
+    if (direction) candidates.push(direction);
+  }
+
+  for (let i = 0; i < 16; i += 1) {
+    const angle = (Math.PI * 2 * i) / 16;
+    candidates.push({ x: Math.cos(angle), y: Math.sin(angle) });
+  }
+
+  return dedupeDirections(candidates);
+}
+
+function scoreRescueKick(
+  simResult: ReturnType<typeof simulateShot>,
+  targetBallId: number,
+  legalTargets: number[],
+  targetStart: Vector,
+  power: number,
+): number {
+  if (simResult.cueBallPocketed) {
+    return -100;
+  }
+
+  const firstContactScore =
+    simResult.firstContact === targetBallId
+      ? 20
+      : simResult.firstContact !== null && legalTargets.includes(simResult.firstContact)
+        ? 12
+        : 0;
+  const targetEnd = simResult.ballPositions.get(targetBallId);
+  const targetMovement = targetEnd
+    ? Math.hypot(targetEnd.x - targetStart.x, targetEnd.y - targetStart.y)
+    : BALL_RADIUS * 6;
+  const pocketBonus = simResult.pocketedBalls.some((id) => legalTargets.includes(id)) ? 4 : 0;
+  const cushionBonus = simResult.cushionAfterContact ? 1.5 : 0;
+
+  return firstContactScore + Math.min(6, targetMovement / BALL_RADIUS) + pocketBonus + cushionBonus - power * 0.1;
+}
+
+function unitDirection(from: Vector, to: Vector): Vector | null {
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  const len = Math.hypot(dx, dy);
+  if (len < 0.001) return null;
+  return { x: dx / len, y: dy / len };
+}
+
+function dedupeDirections(directions: Vector[]): Vector[] {
+  const seen = new Set<string>();
+  const unique: Vector[] = [];
+  for (const direction of directions) {
+    const key = `${Math.round(direction.x * 1000)},${Math.round(direction.y * 1000)}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(direction);
+  }
+  return unique;
 }
 
 export function computeBestPlacement(

@@ -126,12 +126,12 @@ export function resolveHistorySelectionIndex(
 function modeLabel(mode: RecentMatchRecord['mode'], language: Language): string {
   if (language === 'zh') {
     if (mode === 'ai') return '人机';
-    if (mode === 'pvp') return '本地';
+    if (mode === 'pvp') return '练习';
     if (mode === 'challenge') return '挑战';
     return '联网';
   }
   if (mode === 'ai') return 'AI';
-  if (mode === 'pvp') return 'Local';
+  if (mode === 'pvp') return 'Practice';
   if (mode === 'challenge') return 'Challenge';
   return 'Online';
 }
