@@ -1,6 +1,7 @@
-import { BALL_RADIUS, PLAY_AREA, POCKETS, type Vector } from '../constants';
+import { BALL_RADIUS, PLAY_AREA, POCKETS, RACK_CENTER, TABLE, type Vector } from '../constants';
 import type { BallGroup, EightBallState, PlayerIndex } from '../eightBallRules';
 import type { GameRuleset } from '../gameRules';
+import { breakLineX, clampBreakCuePosition, createNineBallRack, createTriangleRack } from '../geometry';
 import type { NineBallState } from '../nineBallRules';
 import type { AIDecision, MCTSConfig, ShotCandidate, TableState } from './types';
 import { mctsSearch } from './mcts';
@@ -33,6 +34,7 @@ const PLACEMENT_GRID_SPACING = 40;
 const PLACEMENT_MIN_BALL_DIST = BALL_RADIUS * 2 + 4;
 const PLACEMENT_MIN_POCKET_DIST = 50;
 const STRONG_ATTACK_SCORE = 0.55;
+const BREAK_POWER = 0.86;
 
 type ScoredShot = {
   shot: ShotCandidate;
@@ -70,6 +72,11 @@ export class AIController {
     const aiGroup: BallGroup | null = ruleset === 'nine-ball' ? null : rules.players[aiPlayer].group;
     const pocketedBallIds = ruleset === 'nine-ball' && nineBallRules ? nineBallRules.pocketedBallIds : rules.pocketedBallIds;
     const cueBallInHand = ruleset === 'nine-ball' && nineBallRules ? nineBallRules.cueBallInHand : rules.cueBallInHand;
+
+    const breakDecision = this.computeOpeningBreakDecision(ballPositions, rules, ruleset, nineBallRules);
+    if (breakDecision) {
+      return this.createDecision(breakDecision.shot, breakDecision.placementPosition);
+    }
 
     let positions = ballPositions;
     let placementPosition: Vector | undefined;
@@ -122,6 +129,46 @@ export class AIController {
 
   private createDecision(shot: ShotCandidate, placementPosition?: Vector): AIDecision {
     return applyDifficultyToDecision({ shot, placementPosition }, this.difficultyProfile, this.rng);
+  }
+
+  private computeOpeningBreakDecision(
+    ballPositions: Map<number, Vector>,
+    rules: EightBallState,
+    ruleset: GameRuleset,
+    nineBallRules?: NineBallState,
+  ): AIDecision | null {
+    const shotCount = ruleset === 'nine-ball' && nineBallRules ? nineBallRules.shotCount : rules.shotCount;
+    if (shotCount !== 0) return null;
+    const cueBallInHand = ruleset === 'nine-ball' && nineBallRules ? nineBallRules.cueBallInHand : rules.cueBallInHand;
+    if (cueBallInHand) return null;
+
+    const pocketedBallIds = ruleset === 'nine-ball' && nineBallRules ? nineBallRules.pocketedBallIds : rules.pocketedBallIds;
+    if (pocketedBallIds.length > 0) return null;
+    if (!hasOpeningRackBallCount(ballPositions, ruleset)) return null;
+    if (!isOpeningRackIntact(ballPositions, ruleset)) return null;
+
+    const targetBallId = ruleset === 'nine-ball' ? 1 : findClosestBallToRackCenter(ballPositions);
+    if (targetBallId === null) return null;
+
+    const targetPos = ballPositions.get(targetBallId);
+    if (!targetPos) return null;
+
+    const placementPosition = chooseOpeningBreakPlacement(targetPos);
+    const direction = unitDirection(placementPosition, targetPos);
+    if (!direction) return null;
+
+    return {
+      placementPosition,
+      shot: {
+        targetBallId,
+        pocketIndex: -1,
+        direction,
+        power: BREAK_POWER,
+        spin: { x: 0, y: 0 },
+        type: 'break_cluster',
+        ghostBallPos: targetPos,
+      },
+    };
   }
 
   private personalityBias(candidate: ShotCandidate): number {
@@ -664,6 +711,52 @@ function dedupeDirections(directions: Vector[]): Vector[] {
     unique.push(direction);
   }
   return unique;
+}
+
+function findClosestBallToRackCenter(ballPositions: Map<number, Vector>): number | null {
+  let closestId: number | null = null;
+  let closestDist = Infinity;
+
+  for (const [id, pos] of ballPositions) {
+    if (id === 0 || id === 8) continue;
+    const dist = Math.hypot(pos.x - RACK_CENTER.x, pos.y - RACK_CENTER.y);
+    if (dist < closestDist) {
+      closestDist = dist;
+      closestId = id;
+    }
+  }
+
+  return closestId;
+}
+
+function hasOpeningRackBallCount(ballPositions: Map<number, Vector>, ruleset: GameRuleset): boolean {
+  const objectBallCount = Array.from(ballPositions.keys()).filter((id) => id !== 0).length;
+  return ruleset === 'nine-ball' ? objectBallCount >= 9 : objectBallCount >= 15;
+}
+
+function isOpeningRackIntact(ballPositions: Map<number, Vector>, ruleset: GameRuleset): boolean {
+  const tolerance = BALL_RADIUS * 0.75;
+  if (ruleset === 'nine-ball') {
+    const rack = createNineBallRack(RACK_CENTER);
+    return rack.every(({ id, position }) => isBallNear(ballPositions.get(id), position, tolerance));
+  }
+
+  const rack = createTriangleRack(RACK_CENTER, 15);
+  return rack.every((position, index) => isBallNear(ballPositions.get(index + 1), position, tolerance));
+}
+
+function isBallNear(actual: Vector | undefined, expected: Vector, tolerance: number): boolean {
+  return actual !== undefined && Math.hypot(actual.x - expected.x, actual.y - expected.y) <= tolerance;
+}
+
+function chooseOpeningBreakPlacement(targetPos: Vector): Vector {
+  const candidateY = targetPos.y <= TABLE.height / 2
+    ? targetPos.y + BALL_RADIUS * 1.2
+    : targetPos.y - BALL_RADIUS * 1.2;
+  return clampBreakCuePosition({
+    x: breakLineX(),
+    y: candidateY,
+  });
 }
 
 export function computeBestPlacement(

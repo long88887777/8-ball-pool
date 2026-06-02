@@ -1829,8 +1829,7 @@ export class PoolScene extends Phaser.Scene {
 
   private placeCueBall(point: Vector): void {
     const next = clampBreakCuePosition(point);
-    this.cueBall.setPosition(next.x, next.y);
-    this.physicsEngine.resetCueBall(next);
+    this.resetCueBallToTable(next);
   }
 
   private static readonly BALL_CUSHION_MARGIN = BALL_RADIUS;
@@ -1841,10 +1840,28 @@ export class PoolScene extends Phaser.Scene {
       x: Math.min(Math.max(point.x, PLAY_AREA.left + PoolScene.BALL_CUSHION_MARGIN), PLAY_AREA.right - PoolScene.BALL_CUSHION_MARGIN),
       y: Math.min(Math.max(point.y, PLAY_AREA.top + PoolScene.BALL_CUSHION_MARGIN), PLAY_AREA.bottom - PoolScene.BALL_CUSHION_MARGIN),
     };
-    this.cueBall.setPosition(next.x, next.y);
-    this.physicsEngine.resetCueBall(next);
+    this.resetCueBallToTable(next);
     this.cuePlacementValid = this.isPlacementClear(next);
     this.updateForbiddenIcon();
+  }
+
+  private resetCueBallToTable(position: Vector): void {
+    if (this.tweens) {
+      this.tweens.killTweensOf(this.cueBall);
+    }
+    this.pocketAnimatingBalls.delete(0);
+    this.ballPocketMap.delete(0);
+    this.netDeformGraphics?.clear();
+
+    this.physicsEngine.resetCueBall(position);
+    this.cueBall.pocketed = false;
+    this.cueBall.setPosition(position.x, position.y);
+    this.cueBall.setVisible(true);
+    this.cueBall.setScale?.(1);
+    this.cueBall.setAlpha?.(1);
+    this.cueBall.setDepth?.(DEPTH.ball);
+    this.ballPrevPositions.set(0, { x: position.x, y: position.y });
+    this.markHandSpriteDirty();
   }
 
   private isPlacementClear(point: Vector): boolean {
@@ -2420,7 +2437,7 @@ export class PoolScene extends Phaser.Scene {
         return;
       }
       if (cueBallPocketed) {
-        this.physicsEngine.resetCueBall(CUE_START);
+        this.resetCueBallToTable(CUE_START);
         this.rules = this.setChallengeBallInHand(this.rules, true);
         this.syncBallsFromPhysics(this.physicsEngine.getBalls());
       }
@@ -2457,7 +2474,7 @@ export class PoolScene extends Phaser.Scene {
     }
 
     if (this.activeShotPocketedBallIds().includes(0)) {
-      this.physicsEngine.resetCueBall(CUE_START);
+      this.resetCueBallToTable(CUE_START);
       this.syncBallsFromPhysics(this.physicsEngine.getBalls());
     }
     const playerBeforeResolve = this.activeCurrentPlayer();
@@ -2659,7 +2676,7 @@ export class PoolScene extends Phaser.Scene {
     this.aiDecision = decision;
 
     if (decision.placementPosition) {
-      this.physicsEngine.resetCueBall(decision.placementPosition);
+      this.resetCueBallToTable(decision.placementPosition);
       this.syncBallsFromPhysics(this.physicsEngine.getBalls());
       this.clearActiveBallInHand();
     }
@@ -3505,7 +3522,7 @@ export class PoolScene extends Phaser.Scene {
     if (msg.ballsSnapshot && msg.ballsSnapshot.length > 0) {
       this.physicsEngine.applyNetworkSnapshot(this.protectPocketedSnapshotBalls(msg.ballsSnapshot));
     }
-    this.physicsEngine.resetCueBall(msg.cueBallPos);
+    this.resetCueBallToTable(msg.cueBallPos);
     this.syncBallsFromPhysics(this.physicsEngine.getBalls());
     this.physicsEngine.strikeCueBall({
       direction: msg.direction,
@@ -3788,7 +3805,7 @@ export class PoolScene extends Phaser.Scene {
     this.sendOnlineResult();
     const pocketedBallIds = this.activeShotPocketedBallIds().slice();
     if (pocketedBallIds.includes(0)) {
-      this.physicsEngine.resetCueBall(CUE_START);
+      this.resetCueBallToTable(CUE_START);
       this.syncBallsFromPhysics(this.physicsEngine.getBalls());
     }
     const playerBeforeResolve = this.activeCurrentPlayer();
@@ -3857,7 +3874,7 @@ export class PoolScene extends Phaser.Scene {
       this.rules = { ...this.rules, currentPlayer: shooterIndex };
       if (msg.foul && msg.cueBallInHand) {
         this.rules = { ...this.rules, cueBallInHand: true };
-        this.physicsEngine.resetCueBall(CUE_START);
+        this.resetCueBallToTable(CUE_START);
         this.syncBallsFromPhysics(this.physicsEngine.getBalls());
       }
       for (const ballId of msg.pocketedBallIds) {

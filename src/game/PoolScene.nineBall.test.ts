@@ -12,7 +12,7 @@ vi.mock('phaser', () => ({
   },
 }));
 
-import { BALL_RADIUS, CUE_START, RACK_CENTER, type Vector } from './constants';
+import { BALL_RADIUS, CUE_START, POCKETS, RACK_CENTER, type Vector } from './constants';
 import { PoolScene } from './PoolScene';
 import { createNineBallState, type NineBallState } from './nineBallRules';
 
@@ -40,6 +40,16 @@ type NineBallRackHarness = {
   };
   createBall: ReturnType<typeof vi.fn>;
   createBalls: () => void;
+};
+
+type CueResetHarness = {
+  cueBall: FakeBall;
+  pocketAnimatingBalls: Set<number>;
+  ballPocketMap: Map<number, number>;
+  netDeformGraphics: { clear: ReturnType<typeof vi.fn> };
+  tweens: { killTweensOf: ReturnType<typeof vi.fn> };
+  physicsEngine: { resetCueBall: ReturnType<typeof vi.fn> };
+  resetCueBallToTable: (position: Vector) => void;
 };
 
 function createFakeBall(ballId: number): FakeBall {
@@ -94,6 +104,32 @@ describe('PoolScene nine-ball rack', () => {
         expect.objectContaining({ id: 9, kind: 'target', label: 9 }),
       ]),
     );
+  });
+
+  it('restores a pocket-animated cue ball visibly when it is reset to the table', () => {
+    const scene = new PoolScene() as unknown as CueResetHarness;
+    const cueBall = createFakeBall(0);
+    cueBall.pocketed = true;
+    cueBall.x = POCKETS[0].x;
+    cueBall.y = POCKETS[0].y;
+    scene.cueBall = cueBall;
+    scene.pocketAnimatingBalls = new Set([0]);
+    scene.ballPocketMap = new Map([[0, 0]]);
+    scene.netDeformGraphics = { clear: vi.fn() };
+    scene.tweens = { killTweensOf: vi.fn() };
+    scene.physicsEngine = { resetCueBall: vi.fn() };
+
+    scene.resetCueBallToTable(CUE_START);
+
+    expect(scene.tweens.killTweensOf).toHaveBeenCalledWith(cueBall);
+    expect(scene.physicsEngine.resetCueBall).toHaveBeenCalledWith(CUE_START);
+    expect(cueBall.pocketed).toBe(false);
+    expect(cueBall.setPosition).toHaveBeenCalledWith(CUE_START.x, CUE_START.y);
+    expect(cueBall.setVisible).toHaveBeenCalledWith(true);
+    expect(cueBall.setScale).toHaveBeenCalledWith(1);
+    expect(cueBall.setAlpha).toHaveBeenCalledWith(1);
+    expect(scene.pocketAnimatingBalls.has(0)).toBe(false);
+    expect(scene.ballPocketMap.has(0)).toBe(false);
   });
 
   it('declares push out on the next nine-ball shot when the button action is used', () => {

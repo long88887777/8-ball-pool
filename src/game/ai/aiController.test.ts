@@ -1,8 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import { AIController, computeBestPlacement } from './aiController';
 import type { Vector } from '../constants';
-import { PLAY_AREA, BALL_RADIUS, POCKETS } from '../constants';
+import { PLAY_AREA, BALL_RADIUS, POCKETS, RACK_CENTER } from '../constants';
 import { createEightBallState } from '../eightBallRules';
+import { breakLineX, createTriangleRack, isLegalBreakCuePosition } from '../geometry';
 import { simulateShot } from './fastPhysics';
 import { simulateProShot } from './proPhysicsSimulator';
 import { computeNextTarget } from './positionPlay';
@@ -72,6 +73,39 @@ describe('aiController', () => {
       if (decision) {
         expect(decision.placementPosition).toBeDefined();
       }
+    });
+
+    it('places the cue ball on the break side and drives directly into the opening rack', () => {
+      const controller = new AIController({
+        difficulty: 'normal',
+        config: { timeBudgetMs: 20, maxDepth: 1, explorationConstant: 1.41 },
+      });
+      const rack = createTriangleRack(RACK_CENTER, 15);
+      const ballPositions = new Map<number, Vector>([
+        [0, { x: PLAY_AREA.left + BALL_RADIUS, y: PLAY_AREA.top + BALL_RADIUS }],
+        ...rack.map((position, index) => [index + 1, position] as [number, Vector]),
+      ]);
+      const rules = createEightBallState();
+      rules.currentPlayer = 1;
+
+      const decision = controller.computeDecision(ballPositions, rules);
+
+      expect(decision).not.toBeNull();
+      expect(decision!.placementPosition).toBeDefined();
+      expect(isLegalBreakCuePosition(decision!.placementPosition!)).toBe(true);
+      expect(decision!.placementPosition!.x).toBeLessThanOrEqual(breakLineX());
+      expect(decision!.shot.type).toBe('break_cluster');
+      expect(decision!.shot.targetBallId).toBe(1);
+
+      const placedCue = decision!.placementPosition!;
+      const directionToApex = {
+        x: RACK_CENTER.x - placedCue.x,
+        y: RACK_CENTER.y - placedCue.y,
+      };
+      const len = Math.hypot(directionToApex.x, directionToApex.y);
+      expect(decision!.shot.direction.x).toBeCloseTo(directionToApex.x / len, 5);
+      expect(decision!.shot.direction.y).toBeCloseTo(directionToApex.y / len, 5);
+      expect(decision!.shot.power).toBeGreaterThanOrEqual(0.8);
     });
 
     it('AI finds pot shots in realistic post-break positions', () => {
