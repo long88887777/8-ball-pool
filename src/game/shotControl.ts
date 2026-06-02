@@ -24,7 +24,7 @@ export type AimControlSettings = {
   powerLocked: boolean;
 };
 
-const AIM_SMOOTHING_RESPONSE = 26;
+const AIM_SMOOTHING_RESPONSE = 48;
 const AIM_SETTLE_DISTANCE = 0.0005;
 
 export function createDefaultAimControlSettings(): AimControlSettings {
