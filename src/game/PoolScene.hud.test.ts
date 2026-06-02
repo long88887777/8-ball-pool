@@ -56,11 +56,14 @@ type ShotClockHudHarness = {
   nineBallRules: { currentPlayer: 0 | 1; gameOver: boolean };
   onlineState: null;
   roomInfo: null;
+  strikeLocked?: boolean;
+  physicsEngine?: { isSettled: ReturnType<typeof vi.fn> };
   shotClockRemaining: number;
   lastShotClockHudSecond: number | null;
   lastShotClockHudPlayer: 0 | 1 | null;
   lastShotClockHudMaxTime: number | null;
   updateShotClockHud: () => void;
+  updateShotClock?: (deltaSeconds: number) => void;
 };
 
 type BreakerHarness = {
@@ -159,6 +162,59 @@ describe('PoolScene HUD', () => {
       expect(shotClock.textContent).toBe('14');
       expect(playerOneClock.textContent).toBe('20s');
       expect(playerTwoClock.textContent).toBe('14s');
+      expect(playerOneCard.classList.toggle).toHaveBeenCalledWith('is-active-turn', false);
+      expect(playerTwoCard.classList.toggle).toHaveBeenCalledWith('is-active-turn', true);
+    } finally {
+      globalThis.document = previousDocument;
+    }
+  });
+
+  it('counts down the AI opponent clock on the player two card', () => {
+    const scene = new PoolScene() as unknown as ShotClockHudHarness;
+    const previousDocument = globalThis.document;
+
+    const shotClock = { textContent: '' } as HTMLElement;
+    const playerOneClock = { textContent: '' } as HTMLElement;
+    const playerTwoClock = { textContent: '' } as HTMLElement;
+    const playerOneCard = {
+      classList: { toggle: vi.fn() },
+      style: { setProperty: vi.fn() },
+      querySelector: vi.fn((selector: string) => selector === '[data-shot-clock]' ? playerOneClock : null),
+    } as unknown as HTMLElement;
+    const playerTwoCard = {
+      classList: { toggle: vi.fn() },
+      style: { setProperty: vi.fn() },
+      querySelector: vi.fn((selector: string) => selector === '[data-shot-clock]' ? playerTwoClock : null),
+    } as unknown as HTMLElement;
+
+    scene.gameMode = 'ai';
+    scene.gameRuleset = 'eight-ball';
+    scene.rules = { currentPlayer: 1, gameOver: false };
+    scene.nineBallRules = { currentPlayer: 0, gameOver: false };
+    scene.onlineState = null;
+    scene.roomInfo = null;
+    scene.strikeLocked = false;
+    scene.physicsEngine = { isSettled: vi.fn(() => true) };
+    scene.shotClockRemaining = 20;
+    scene.lastShotClockHudSecond = null;
+    scene.lastShotClockHudPlayer = null;
+    scene.lastShotClockHudMaxTime = null;
+
+    globalThis.document = {
+      querySelector: vi.fn((selector: string) => {
+        if (selector === '#shot-clock') return shotClock;
+        if (selector === '#player-one-card') return playerOneCard;
+        if (selector === '#player-two-card') return playerTwoCard;
+        return null;
+      }),
+    } as unknown as Document;
+
+    try {
+      scene.updateShotClock!(4);
+
+      expect(shotClock.textContent).toBe('16');
+      expect(playerOneClock.textContent).toBe('20s');
+      expect(playerTwoClock.textContent).toBe('16s');
       expect(playerOneCard.classList.toggle).toHaveBeenCalledWith('is-active-turn', false);
       expect(playerTwoCard.classList.toggle).toHaveBeenCalledWith('is-active-turn', true);
     } finally {

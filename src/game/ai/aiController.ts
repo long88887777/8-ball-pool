@@ -153,7 +153,7 @@ export class AIController {
     const targetPos = ballPositions.get(targetBallId);
     if (!targetPos) return null;
 
-    const placementPosition = chooseOpeningBreakPlacement(targetPos);
+    const placementPosition = chooseOpeningBreakPlacement(targetPos, this.rng);
     const direction = unitDirection(placementPosition, targetPos);
     if (!direction) return null;
 
@@ -749,14 +749,31 @@ function isBallNear(actual: Vector | undefined, expected: Vector, tolerance: num
   return actual !== undefined && Math.hypot(actual.x - expected.x, actual.y - expected.y) <= tolerance;
 }
 
-function chooseOpeningBreakPlacement(targetPos: Vector): Vector {
-  const candidateY = targetPos.y <= TABLE.height / 2
+function chooseOpeningBreakPlacement(targetPos: Vector, rng: RandomSource): Vector {
+  const minX = PLAY_AREA.left + BALL_RADIUS;
+  const maxX = breakLineX();
+  const minY = PLAY_AREA.top + BALL_RADIUS;
+  const maxY = PLAY_AREA.bottom - BALL_RADIUS;
+
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    const point = {
+      x: minX + clampUnit(rng()) * (maxX - minX),
+      y: minY + clampUnit(rng()) * (maxY - minY),
+    };
+    const clamped = clampBreakCuePosition(point);
+    if (Math.abs(clamped.x - point.x) < 0.001 && Math.abs(clamped.y - point.y) < 0.001) {
+      return clamped;
+    }
+  }
+
+  const fallbackY = targetPos.y <= TABLE.height / 2
     ? targetPos.y + BALL_RADIUS * 1.2
     : targetPos.y - BALL_RADIUS * 1.2;
-  return clampBreakCuePosition({
-    x: breakLineX(),
-    y: candidateY,
-  });
+  return clampBreakCuePosition({ x: breakLineX(), y: fallbackY });
+}
+
+function clampUnit(value: number): number {
+  return Math.max(0, Math.min(1, value));
 }
 
 export function computeBestPlacement(

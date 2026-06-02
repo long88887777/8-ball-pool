@@ -1,12 +1,16 @@
 import { describe, it, expect } from 'vitest';
 import { AIController, computeBestPlacement } from './aiController';
-import type { Vector } from '../constants';
-import { PLAY_AREA, BALL_RADIUS, POCKETS, RACK_CENTER } from '../constants';
+import { PLAY_AREA, BALL_RADIUS, POCKETS, RACK_CENTER, type Vector } from '../constants';
 import { createEightBallState } from '../eightBallRules';
 import { breakLineX, createTriangleRack, isLegalBreakCuePosition } from '../geometry';
 import { simulateShot } from './fastPhysics';
 import { simulateProShot } from './proPhysicsSimulator';
 import { computeNextTarget } from './positionPlay';
+
+function sequence(values: number[]): () => number {
+  let index = 0;
+  return () => values[Math.min(index++, values.length - 1)];
+}
 
 describe('aiController', () => {
   describe('computeBestPlacement', () => {
@@ -75,10 +79,16 @@ describe('aiController', () => {
       }
     });
 
-    it('places the cue ball on the break side and drives directly into the opening rack', () => {
+    it('randomizes legal break-side cue placement and drives directly into the opening rack', () => {
       const controller = new AIController({
         difficulty: 'normal',
         config: { timeBudgetMs: 20, maxDepth: 1, explorationConstant: 1.41 },
+        rng: sequence([0, 0.1]),
+      });
+      const otherController = new AIController({
+        difficulty: 'normal',
+        config: { timeBudgetMs: 20, maxDepth: 1, explorationConstant: 1.41 },
+        rng: sequence([1, 0.9]),
       });
       const rack = createTriangleRack(RACK_CENTER, 15);
       const ballPositions = new Map<number, Vector>([
@@ -89,11 +99,17 @@ describe('aiController', () => {
       rules.currentPlayer = 1;
 
       const decision = controller.computeDecision(ballPositions, rules);
+      const otherDecision = otherController.computeDecision(ballPositions, rules);
 
       expect(decision).not.toBeNull();
+      expect(otherDecision).not.toBeNull();
       expect(decision!.placementPosition).toBeDefined();
+      expect(otherDecision!.placementPosition).toBeDefined();
       expect(isLegalBreakCuePosition(decision!.placementPosition!)).toBe(true);
+      expect(isLegalBreakCuePosition(otherDecision!.placementPosition!)).toBe(true);
       expect(decision!.placementPosition!.x).toBeLessThanOrEqual(breakLineX());
+      expect(otherDecision!.placementPosition!.x).toBeLessThanOrEqual(breakLineX());
+      expect(decision!.placementPosition).not.toEqual(otherDecision!.placementPosition);
       expect(decision!.shot.type).toBe('break_cluster');
       expect(decision!.shot.targetBallId).toBe(1);
 

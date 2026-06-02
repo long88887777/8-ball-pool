@@ -1360,6 +1360,30 @@ describe('PoolScene online turn state', () => {
     expect(scene.handleOnlineTimeout).not.toHaveBeenCalled();
   });
 
+  it('resets the visible opponent clock after my online shot passes the turn', () => {
+    const scene = createOnlineSceneHarness();
+    const send = vi.fn();
+    scene.onlineChannel = { send };
+    scene.onlineState = { ...scene.onlineState, phase: 'watching_my_shot', isMyTurn: false };
+    scene.shotClockRemaining = 9;
+    scene.physicsEngine.getBalls.mockReturnValue([]);
+    scene.rules = {
+      ...createEightBallState(),
+      currentPlayer: 0,
+      shotCount: 2,
+      shot: {
+        firstContactBallId: 1,
+        pocketedBallIds: [],
+        cushionAfterContact: true,
+      },
+    };
+
+    scene.handleOnlineSettled();
+
+    expect(scene.onlineState.phase).toBe('opponent_turn');
+    expect(scene.shotClockRemaining).toBe(30);
+  });
+
   it('logs late moving snapshots as sync anomalies when an authoritative result already exists', () => {
     const scene = createOnlineSceneHarness();
     scene.onlineState = { ...scene.onlineState, phase: 'watching_opponent_shot' };

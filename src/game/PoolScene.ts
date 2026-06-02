@@ -2625,9 +2625,12 @@ export class PoolScene extends Phaser.Scene {
     return (
       !this.activeGameOver() &&
       !this.strikeLocked &&
-      !this.isAITurn() &&
       this.physicsEngine.isSettled()
     );
+  }
+
+  private resetShotClockForTurn(): void {
+    this.shotClockRemaining = this.onlineState ? this.onlineState.turnTimeLimit : SHOT_CLOCK_SECONDS;
   }
 
   private isAITurn(): boolean {
@@ -3427,7 +3430,7 @@ export class PoolScene extends Phaser.Scene {
       } else {
         this.onlineState = transitionToOpponentTurn(this.onlineState);
       }
-      this.shotClockRemaining = 30;
+      this.resetShotClockForTurn();
       this.updateHud();
       return;
     }
@@ -3557,6 +3560,7 @@ export class PoolScene extends Phaser.Scene {
     this.onlineState = msg.nextPlayer === myIndex
       ? transitionToMyTurn(this.onlineState)
       : transitionToOpponentTurn(this.onlineState);
+    this.resetShotClockForTurn();
     this.updateHud();
   }
 
@@ -3829,9 +3833,10 @@ export class PoolScene extends Phaser.Scene {
       void this.updateOnlineStats(winner === myIndex, 'normal');
     } else if (nextPlayer === myIndex) {
       this.onlineState = transitionToMyTurn(this.onlineState);
-      this.shotClockRemaining = 30;
+      this.resetShotClockForTurn();
     } else {
       this.onlineState = transitionToOpponentTurn(this.onlineState);
+      this.resetShotClockForTurn();
     }
     this.updateHud();
   }
@@ -3914,7 +3919,7 @@ export class PoolScene extends Phaser.Scene {
       } else {
         this.onlineState = transitionToOpponentTurn(this.onlineState);
       }
-      this.shotClockRemaining = 30;
+      this.resetShotClockForTurn();
       this.wasMoving = false;
       this.opponentTurnEndApplied = true;
       this.updateHud();
@@ -4165,7 +4170,7 @@ export class PoolScene extends Phaser.Scene {
     const opponentIndex: 0 | 1 = this.roomInfo!.isHost ? 1 : 0;
     this.sendOnlineTurnEnd(true, true, opponentIndex, [], false, null, 'shotClockExpired');
     this.onlineState = transitionToOpponentTurn(this.onlineState);
-    this.shotClockRemaining = 30;
+    this.resetShotClockForTurn();
     this.updateHud();
   }
 
@@ -4480,7 +4485,7 @@ export class PoolScene extends Phaser.Scene {
       } else {
         this.onlineState = transitionToOpponentTurn(this.onlineState);
       }
-      this.shotClockRemaining = 30;
+      this.resetShotClockForTurn();
       this.updateHud();
     }
   }
