@@ -36,10 +36,12 @@ type InputHarness = {
       setPointerCapture: ReturnType<typeof vi.fn>;
       releasePointerCapture: ReturnType<typeof vi.fn>;
       hasPointerCapture: ReturnType<typeof vi.fn>;
+      getBoundingClientRect: () => Pick<DOMRect, 'left' | 'top' | 'width' | 'height'>;
     };
     registry: { get: ReturnType<typeof vi.fn> };
     loop: { delta: number };
   };
+  aimState: { target: { x: number; y: number } } | null;
   input: FakeInput;
   audio: { unlock: ReturnType<typeof vi.fn> };
   gameMode: 'pvp' | 'ai' | 'challenge' | 'online';
@@ -73,6 +75,12 @@ function createInputHarness(): {
       setPointerCapture: vi.fn(),
       releasePointerCapture: vi.fn(),
       hasPointerCapture: vi.fn(() => true),
+      getBoundingClientRect: () => ({
+        left: 10,
+        top: 20,
+        width: 550,
+        height: 320,
+      }),
     },
   };
   scene.input = {
@@ -118,5 +126,41 @@ describe('PoolScene aim input', () => {
 
     expect(scene.game.canvas?.setPointerCapture).toHaveBeenCalledWith(pointer.pointerId);
     expect(scene.game.canvas?.releasePointerCapture).toHaveBeenCalledWith(pointer.pointerId);
+  });
+
+  it('updates aim from window mouse movement after the cursor leaves the canvas', () => {
+    const previousWindow = globalThis.window;
+    const listeners = new Map<string, EventListener[]>();
+    globalThis.window = {
+      addEventListener: vi.fn((eventName: string, listener: EventListener) => {
+        listeners.set(eventName, [...(listeners.get(eventName) ?? []), listener]);
+      }),
+      removeEventListener: vi.fn(),
+    } as unknown as Window & typeof globalThis;
+
+    try {
+      const { scene, handlers } = createInputHarness();
+      scene.bindInput();
+
+      const pointer: FakePointer = {
+        id: 42,
+        pointerId: 420,
+        worldX: CUE_START.x,
+        worldY: CUE_START.y,
+        rightButtonDown: () => false,
+      };
+
+      handlers.get('pointerdown')!(pointer);
+      listeners.get('mousemove')![0]({
+        clientX: -540,
+        clientY: 180,
+        preventDefault: vi.fn(),
+      } as unknown as MouseEvent);
+
+      expect(scene.aimState?.target.x).toBeCloseTo(-1100);
+      expect(scene.aimState?.target.y).toBeCloseTo(320);
+    } finally {
+      globalThis.window = previousWindow;
+    }
   });
 });

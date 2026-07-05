@@ -252,6 +252,7 @@ export class PoolScene extends Phaser.Scene {
   private nineBallRules: NineBallState = createNineBallState();
   private aimState: AimState | null = null;
   private capturedAimDomPointerId: number | null = null;
+  private aimWindowTrackingActive = false;
   private cuePlacementState: CuePlacementState | null = null;
   private wasMoving = false;
   private strikeLocked = false;
@@ -788,6 +789,7 @@ export class PoolScene extends Phaser.Scene {
         target: point,
       };
       this.captureAimPointer(pointer);
+      this.bindAimWindowTracking();
       this.markAimRenderDirty();
       this.updateAimHud();
     });
@@ -877,12 +879,92 @@ export class PoolScene extends Phaser.Scene {
   private clearAimState(): void {
     this.aimState = null;
     this.releaseAimPointer();
+    this.unbindAimWindowTracking();
   }
 
   private domPointerId(pointer: Phaser.Input.Pointer): number {
     return typeof pointer.pointerId === 'number' && Number.isFinite(pointer.pointerId)
       ? pointer.pointerId
       : pointer.id;
+  }
+
+  private bindAimWindowTracking(): void {
+    if (this.aimWindowTrackingActive || typeof window === 'undefined') {
+      return;
+    }
+
+    this.aimWindowTrackingActive = true;
+    window.addEventListener('pointermove', this.windowAimPointerMoveHandler);
+    window.addEventListener('pointerup', this.windowAimPointerUpHandler);
+    window.addEventListener('pointercancel', this.windowAimPointerUpHandler);
+    window.addEventListener('mousemove', this.windowAimMouseMoveHandler);
+    window.addEventListener('mouseup', this.windowAimMouseUpHandler);
+  }
+
+  private unbindAimWindowTracking(): void {
+    if (!this.aimWindowTrackingActive || typeof window === 'undefined') {
+      return;
+    }
+
+    this.aimWindowTrackingActive = false;
+    window.removeEventListener('pointermove', this.windowAimPointerMoveHandler);
+    window.removeEventListener('pointerup', this.windowAimPointerUpHandler);
+    window.removeEventListener('pointercancel', this.windowAimPointerUpHandler);
+    window.removeEventListener('mousemove', this.windowAimMouseMoveHandler);
+    window.removeEventListener('mouseup', this.windowAimMouseUpHandler);
+  }
+
+  private readonly windowAimPointerMoveHandler = (event: PointerEvent): void => {
+    if (!this.isActiveAimDomPointer(event.pointerId)) {
+      return;
+    }
+
+    event.preventDefault();
+    this.setAimTarget(this.clientPointToWorld(event.clientX, event.clientY));
+  };
+
+  private readonly windowAimPointerUpHandler = (event: PointerEvent): void => {
+    if (!this.isActiveAimDomPointer(event.pointerId)) {
+      return;
+    }
+
+    event.preventDefault();
+    this.shootFromAim();
+  };
+
+  private readonly windowAimMouseMoveHandler = (event: MouseEvent): void => {
+    if (!this.aimState) {
+      return;
+    }
+
+    event.preventDefault();
+    this.setAimTarget(this.clientPointToWorld(event.clientX, event.clientY));
+  };
+
+  private readonly windowAimMouseUpHandler = (event: MouseEvent): void => {
+    if (!this.aimState) {
+      return;
+    }
+
+    event.preventDefault();
+    this.shootFromAim();
+  };
+
+  private isActiveAimDomPointer(domPointerId: number): boolean {
+    return this.aimState !== null && this.capturedAimDomPointerId === domPointerId;
+  }
+
+  private clientPointToWorld(clientX: number, clientY: number): Vector {
+    const canvas = this.game.canvas as HTMLCanvasElement | undefined;
+    const rect = canvas?.getBoundingClientRect();
+    if (!rect || rect.width <= 0 || rect.height <= 0) {
+      return { x: clientX, y: clientY };
+    }
+
+    return {
+      x: ((clientX - rect.left) / rect.width) * TABLE.width,
+      y: ((clientY - rect.top) / rect.height) * TABLE.height,
+    };
   }
 
   private bindKeyboardAim(): void {
