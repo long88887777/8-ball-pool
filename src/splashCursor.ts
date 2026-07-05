@@ -1,4 +1,5 @@
 export const SPLASH_CURSOR_HOST_ID = 'splash-cursor';
+export const SPLASH_CURSOR_Z_INDEX = '10000';
 
 type MinimalElement = {
   id: string;
@@ -99,7 +100,7 @@ export function createSplashCursorHost<TElement extends MinimalElement = Minimal
   Object.assign(container.style, {
     position: 'fixed',
     inset: '0',
-    zIndex: '50',
+    zIndex: SPLASH_CURSOR_Z_INDEX,
     pointerEvents: 'none',
     width: '100%',
     height: '100%',

@@ -22,7 +22,7 @@ class FakeElement {
 }
 
 describe('splash cursor host', () => {
-  it('creates a fixed full-screen canvas layer that does not intercept gameplay input', () => {
+  it('creates a fixed full-screen canvas layer above app overlays without intercepting gameplay input', () => {
     const doc = {
       createElement: (tagName: string) => new FakeElement(tagName.toUpperCase()),
     };
@@ -34,7 +34,7 @@ describe('splash cursor host', () => {
     expect(container.style).toMatchObject({
       position: 'fixed',
       inset: '0',
-      zIndex: '50',
+      zIndex: '10000',
       pointerEvents: 'none',
       width: '100%',
       height: '100%',
