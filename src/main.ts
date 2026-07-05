@@ -47,6 +47,7 @@ import {
   type ModeSelectionState,
 } from './menuFlow';
 import { showGameShellForNewGame } from './gameShellVisibility';
+import { installSplashCursor } from './splashCursor';
 import {
   formatRecentMatchSummary,
   formatShotHistoryEntry,
@@ -118,6 +119,19 @@ let cropDragStart: { x: number; y: number; state: CropState } | null = null;
 const shellLanguage: Language = 'zh';
 
 const rechargeClient = supabase as unknown as SupabaseRechargeClient;
+const disposeSplashCursor = installSplashCursor({
+  DENSITY_DISSIPATION: 5,
+  VELOCITY_DISSIPATION: 3,
+  PRESSURE: 0.15,
+  CURL: 9,
+  COLOR_UPDATE_SPEED: 30,
+  RAINBOW_MODE: true,
+  COLOR: '#24484d',
+});
+
+if (import.meta.hot) {
+  import.meta.hot.dispose(disposeSplashCursor);
+}
 
 function selectedAIDifficulty(): AIDifficulty {
   const selected = document.querySelector<HTMLInputElement>('input[name="ai-difficulty"]:checked');
