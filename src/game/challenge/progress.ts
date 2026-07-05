@@ -96,7 +96,10 @@ async function writeProgressRow(
 ): Promise<void> {
   const { error } = await supabase
     .from('challenge_progress')
-    .upsert({ user_id: userId, levels: progress.levels, updated_at: new Date().toISOString() });
+    .upsert(
+      { user_id: userId, levels: progress.levels, updated_at: new Date().toISOString() },
+      { onConflict: 'user_id' },
+    );
   if (error) {
     throw error;
   }

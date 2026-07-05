@@ -26,7 +26,7 @@ function createMockSupabase(options: {
   selectError?: unknown;
   upsertError?: unknown;
 } = {}) {
-  const upserts: Array<{ table: string; payload: unknown }> = [];
+  const upserts: Array<{ table: string; payload: unknown; options: unknown }> = [];
   const userId = options.userId === undefined ? 'user-1' : options.userId;
 
   const client = {
@@ -42,8 +42,8 @@ function createMockSupabase(options: {
           }),
         }),
       }),
-      upsert: async (payload: unknown) => {
-        upserts.push({ table, payload });
+      upsert: async (payload: unknown, upsertOptions?: unknown) => {
+        upserts.push({ table, payload, options: upsertOptions });
         return { error: options.upsertError ?? null };
       },
     }),
@@ -105,8 +105,27 @@ describe('progress', () => {
           user_id: 'user-1',
           levels: progress.levels,
         }),
+        options: expect.objectContaining({ onConflict: 'user_id' }),
       },
     ]);
+  });
+
+  it('targets the user_id primary key when upserting authenticated progress', async () => {
+    const progress: ChallengeProgress = {
+      levels: { '1': { stars: 1, bestShots: 4 } },
+    };
+    const { client, upserts } = createMockSupabase();
+
+    await writeProgressSupabase(client as never, progress, storage);
+
+    expect(upserts[0]).toEqual({
+      table: 'challenge_progress',
+      payload: expect.objectContaining({
+        user_id: 'user-1',
+        levels: progress.levels,
+      }),
+      options: expect.objectContaining({ onConflict: 'user_id' }),
+    });
   });
 
   it('falls back to local progress when authenticated Supabase read has no row', async () => {
@@ -150,6 +169,7 @@ describe('progress', () => {
           user_id: 'user-1',
           levels: progress.levels,
         }),
+        options: expect.objectContaining({ onConflict: 'user_id' }),
       },
     ]);
   });
