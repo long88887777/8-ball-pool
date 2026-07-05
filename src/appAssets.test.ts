@@ -7,4 +7,8 @@ describe('app static assets', () => {
     expect(html).toContain('href="/favicon.svg"');
     expect(favicon).toContain('<svg');
   });
+
+  it('declares the menu title artwork asset', () => {
+    expect(html).toContain('src="/assets/eight-ball-title-art.webp"');
+  });
 });

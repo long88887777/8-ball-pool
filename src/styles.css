@@ -1606,8 +1606,17 @@ h2 {
   gap: clamp(16px, 2.5vh, 28px);
 }
 
+.menu-brand {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: clamp(14px, 3vw, 26px);
+  width: min(680px, 92vw);
+}
+
 .menu-title {
-  text-align: center;
+  flex: 0 1 auto;
+  text-align: left;
 }
 
 .menu-eyebrow {
@@ -1624,9 +1633,18 @@ h2 {
   font-size: clamp(44px, 7vh, 64px);
   font-weight: 700;
   color: #1d1d1f;
-  letter-spacing: -0.03em;
+  letter-spacing: 0;
   margin: 0;
   line-height: 1;
+}
+
+.menu-title-art {
+  flex: 0 0 auto;
+  width: clamp(96px, 17vw, 150px);
+  height: auto;
+  aspect-ratio: 1;
+  object-fit: contain;
+  filter: drop-shadow(0 14px 18px rgba(29, 29, 31, 0.12));
 }
 
 .menu-buttons {
@@ -1897,6 +1915,21 @@ h2 {
 
   .ai-difficulty-panel {
     grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 640px) {
+  .menu-brand {
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .menu-title {
+    text-align: center;
+  }
+
+  .menu-title-art {
+    width: clamp(92px, 30vw, 126px);
   }
 }
 
