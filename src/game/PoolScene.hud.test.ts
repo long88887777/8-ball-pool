@@ -100,6 +100,10 @@ type ChallengeRestartHarness = {
   retryChallengeLevel: ReturnType<typeof vi.fn>;
 };
 
+type VictoryOverlayHarness = {
+  bindVictoryOverlay: () => void;
+};
+
 function createFakeButton(): HTMLButtonElement & { click: () => void } {
   const listeners = new Map<string, EventListener[]>();
   return {
@@ -376,6 +380,78 @@ describe('PoolScene HUD', () => {
     try {
       scene.bindChallengeUI();
       (nodes['#challenge-back'] as HTMLButtonElement & { click: () => void }).click();
+
+      expect(dispatchEvent).toHaveBeenCalledWith(expect.objectContaining({ type: 'pool:return-to-menu' }));
+    } finally {
+      globalThis.document = previousDocument;
+      globalThis.window = previousWindow;
+    }
+  });
+
+  it('asks the app shell to return to the main menu from the challenge result actions', () => {
+    const scene = new PoolScene() as unknown as ChallengeUiHarness;
+    const previousDocument = globalThis.document;
+    const previousWindow = globalThis.window;
+    const dispatchEvent = vi.fn();
+
+    const menuButton = createFakeButton();
+    const nodes: Record<string, HTMLElement> = {
+      '#challenge-btn': createFakeButton(),
+      '#challenge-select': { hidden: true } as HTMLElement,
+      '#challenge-result': { hidden: false } as HTMLElement,
+      '#challenge-hud': { hidden: false } as HTMLElement,
+      '#challenge-back': createFakeButton(),
+      '#challenge-retry': createFakeButton(),
+      '#challenge-next': createFakeButton(),
+      '#challenge-to-select': createFakeButton(),
+      '#challenge-menu': menuButton,
+    };
+
+    globalThis.document = {
+      querySelector: vi.fn((selector: string) => nodes[selector] ?? null),
+    } as unknown as Document;
+    globalThis.window = { dispatchEvent } as unknown as Window & typeof globalThis;
+
+    try {
+      scene.bindChallengeUI();
+      menuButton.click();
+
+      expect(dispatchEvent).toHaveBeenCalledWith(expect.objectContaining({ type: 'pool:return-to-menu' }));
+    } finally {
+      globalThis.document = previousDocument;
+      globalThis.window = previousWindow;
+    }
+  });
+
+  it('asks the app shell to return to the main menu from the match complete actions', () => {
+    const scene = new PoolScene() as unknown as VictoryOverlayHarness;
+    const previousDocument = globalThis.document;
+    const previousWindow = globalThis.window;
+    const dispatchEvent = vi.fn();
+
+    const menuButton = createFakeButton();
+    const nodes: Record<string, HTMLElement> = {
+      '#victory-overlay': { hidden: false } as HTMLElement,
+      '#victory-title': { textContent: '' } as HTMLElement,
+      '#victory-detail': { textContent: '' } as HTMLElement,
+      '#coin-result': { textContent: '' } as HTMLElement,
+      '#victory-restart': createFakeButton(),
+      '#victory-menu': menuButton,
+      '#rematch-request': createFakeButton(),
+      '#rematch-leave': createFakeButton(),
+      '#rematch-cancel': createFakeButton(),
+      '#rematch-accept': createFakeButton(),
+      '#rematch-decline': createFakeButton(),
+    };
+
+    globalThis.document = {
+      querySelector: vi.fn((selector: string) => nodes[selector] ?? null),
+    } as unknown as Document;
+    globalThis.window = { dispatchEvent } as unknown as Window & typeof globalThis;
+
+    try {
+      scene.bindVictoryOverlay();
+      menuButton.click();
 
       expect(dispatchEvent).toHaveBeenCalledWith(expect.objectContaining({ type: 'pool:return-to-menu' }));
     } finally {

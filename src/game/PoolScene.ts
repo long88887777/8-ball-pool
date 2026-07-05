@@ -251,6 +251,7 @@ export class PoolScene extends Phaser.Scene {
   private rules: EightBallState = createEightBallState();
   private nineBallRules: NineBallState = createNineBallState();
   private aimState: AimState | null = null;
+  private capturedAimDomPointerId: number | null = null;
   private cuePlacementState: CuePlacementState | null = null;
   private wasMoving = false;
   private strikeLocked = false;
@@ -272,6 +273,7 @@ export class PoolScene extends Phaser.Scene {
   private victoryDetail?: HTMLElement;
   private coinResult?: HTMLElement;
   private victoryRestartButton?: HTMLButtonElement;
+  private victoryMenuButton?: HTMLButtonElement;
   private aimCancelButton?: HTMLButtonElement;
   private pushOutPanel?: HTMLElement;
   private pushOutDeclareButton?: HTMLButtonElement;
@@ -334,6 +336,12 @@ export class PoolScene extends Phaser.Scene {
       return;
     }
     this.restartRack();
+  };
+  private returnToMenuHandler = (): void => {
+    this.hideVictoryScreen();
+    this.hideChallengeResult();
+    this.hideChallengeSelect();
+    window.dispatchEvent(new Event('pool:return-to-menu'));
   };
   private aimCancelHandler = (): void => {
     this.cancelAim();
@@ -427,6 +435,7 @@ export class PoolScene extends Phaser.Scene {
   private aiDecision: AIDecision | null = null;
   private challengeState: ChallengeState | null = null;
   private currentLevel: ChallengeLevel | null = null;
+  private challengeMenuButton?: HTMLButtonElement;
   private cachedProgress: ChallengeProgress | null = null;
   private challengeProgressSaveQueue: Promise<void> = Promise.resolve();
   private challengeBtn?: HTMLButtonElement;
@@ -538,9 +547,11 @@ export class PoolScene extends Phaser.Scene {
 
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       this.reportOnlineLeave();
+      this.clearAimState();
       this.restartButton?.removeEventListener('click', this.restartHandler);
       this.languageButton?.removeEventListener('click', this.languageHandler);
       this.victoryRestartButton?.removeEventListener('click', this.victoryRestartHandler);
+      this.victoryMenuButton?.removeEventListener('click', this.returnToMenuHandler);
       this.aimCancelButton?.removeEventListener('click', this.aimCancelHandler);
       this.pushOutDeclareButton?.removeEventListener('click', this.pushOutDeclareHandler);
       this.pushOutTakeButton?.removeEventListener('click', this.pushOutTakeHandler);
@@ -548,6 +559,7 @@ export class PoolScene extends Phaser.Scene {
       this.unbindEconomyUI();
       this.challengeBtn?.removeEventListener('click', this.challengeBtnHandler);
       document.querySelector<HTMLButtonElement>('#challenge-back')?.removeEventListener('click', this.challengeBackHandler);
+      this.challengeMenuButton?.removeEventListener('click', this.returnToMenuHandler);
       document.querySelector<HTMLButtonElement>('#rematch-request')?.removeEventListener('click', this.rematchRequestHandler);
       document.querySelector<HTMLButtonElement>('#rematch-leave')?.removeEventListener('click', this.rematchLeaveHandler);
       document.querySelector<HTMLButtonElement>('#rematch-cancel')?.removeEventListener('click', this.rematchCancelHandler);
@@ -741,7 +753,7 @@ export class PoolScene extends Phaser.Scene {
       const point = { x: pointer.worldX, y: pointer.worldY };
       if (this.canPlaceBallInHandCueBall() && isOnTableSurface(point)) {
         this.cuePlacementState = { pointerId: pointer.id, kind: 'ball-in-hand' };
-        this.aimState = null;
+        this.clearAimState();
         this.markAimRenderDirty();
         this.aimLine.clear();
         this.cueGraphics.clear();
@@ -753,7 +765,7 @@ export class PoolScene extends Phaser.Scene {
 
       if (this.canPlaceBreakCueBall() && this.canStartBreakCuePlacement(point)) {
         this.cuePlacementState = { pointerId: pointer.id, kind: 'break' };
-        this.aimState = null;
+        this.clearAimState();
         this.markAimRenderDirty();
         this.aimLine.clear();
         this.cueGraphics.clear();
@@ -775,6 +787,7 @@ export class PoolScene extends Phaser.Scene {
         current: point,
         target: point,
       };
+      this.captureAimPointer(pointer);
       this.markAimRenderDirty();
       this.updateAimHud();
     });
@@ -822,6 +835,54 @@ export class PoolScene extends Phaser.Scene {
 
       this.shootFromAim();
     });
+  }
+
+  private captureAimPointer(pointer: Phaser.Input.Pointer): void {
+    this.releaseAimPointer();
+
+    const domPointerId = this.domPointerId(pointer);
+    const canvas = this.game.canvas as HTMLCanvasElement | undefined;
+    if (!canvas?.setPointerCapture) {
+      return;
+    }
+
+    try {
+      canvas.setPointerCapture(domPointerId);
+      this.capturedAimDomPointerId = domPointerId;
+    } catch {
+      // Browsers can reject capture if the pointer is no longer active.
+    }
+  }
+
+  private releaseAimPointer(domPointerId: number | null = this.capturedAimDomPointerId): void {
+    if (domPointerId === null || this.capturedAimDomPointerId !== domPointerId) {
+      return;
+    }
+
+    this.capturedAimDomPointerId = null;
+    const canvas = this.game.canvas as HTMLCanvasElement | undefined;
+    if (!canvas?.releasePointerCapture) {
+      return;
+    }
+
+    try {
+      if (!canvas.hasPointerCapture || canvas.hasPointerCapture(domPointerId)) {
+        canvas.releasePointerCapture(domPointerId);
+      }
+    } catch {
+      // The browser may have already released this pointer capture.
+    }
+  }
+
+  private clearAimState(): void {
+    this.aimState = null;
+    this.releaseAimPointer();
+  }
+
+  private domPointerId(pointer: Phaser.Input.Pointer): number {
+    return typeof pointer.pointerId === 'number' && Number.isFinite(pointer.pointerId)
+      ? pointer.pointerId
+      : pointer.id;
   }
 
   private bindKeyboardAim(): void {
@@ -902,8 +963,10 @@ export class PoolScene extends Phaser.Scene {
     this.challengeSelectOverlay = document.querySelector<HTMLElement>('#challenge-select') ?? undefined;
     this.challengeResultOverlay = document.querySelector<HTMLElement>('#challenge-result') ?? undefined;
     this.challengeHud = document.querySelector<HTMLElement>('#challenge-hud') ?? undefined;
+    this.challengeMenuButton = document.querySelector<HTMLButtonElement>('#challenge-menu') ?? undefined;
 
     document.querySelector('#challenge-back')?.addEventListener('click', this.challengeBackHandler);
+    this.challengeMenuButton?.addEventListener('click', this.returnToMenuHandler);
     document.querySelector('#challenge-retry')?.addEventListener('click', () => {
       this.retryChallengeLevel();
     });
@@ -988,7 +1051,7 @@ export class PoolScene extends Phaser.Scene {
     this.aiThinking = false;
     this.aiDecision = null;
     this.nineBallPushOutDeclared = false;
-    this.aimState = null;
+    this.clearAimState();
     this.cuePlacementState = null;
     this.aimLine?.clear();
     this.cueGraphics?.clear();
@@ -1089,6 +1152,7 @@ export class PoolScene extends Phaser.Scene {
     const nextBtn = document.querySelector<HTMLButtonElement>('#challenge-next');
     const retryBtn = document.querySelector<HTMLButtonElement>('#challenge-retry');
     const selectBtn = document.querySelector<HTMLButtonElement>('#challenge-to-select');
+    const menuBtn = document.querySelector<HTMLButtonElement>('#challenge-menu');
 
     if (titleEl) titleEl.textContent = result.passed ? copy.challenge.passed : copy.challenge.failed;
     if (starsEl) {
@@ -1104,6 +1168,7 @@ export class PoolScene extends Phaser.Scene {
     }
     if (retryBtn) retryBtn.textContent = copy.challenge.retry;
     if (selectBtn) selectBtn.textContent = copy.challenge.levelSelect;
+    if (menuBtn) menuBtn.textContent = copy.hud.mainMenu;
     if (nextBtn) {
       nextBtn.textContent = copy.challenge.nextLevel;
       const hasNext = this.challengeState.levelId < CHALLENGE_LEVELS.length;
@@ -1149,14 +1214,23 @@ export class PoolScene extends Phaser.Scene {
     this.victoryDetail = document.querySelector<HTMLElement>('#victory-detail') ?? undefined;
     this.coinResult = document.querySelector<HTMLElement>('#coin-result') ?? undefined;
     this.victoryRestartButton = document.querySelector<HTMLButtonElement>('#victory-restart') ?? undefined;
+    this.victoryMenuButton = document.querySelector<HTMLButtonElement>('#victory-menu') ?? undefined;
     this.hideVictoryScreen();
     this.victoryRestartButton?.addEventListener('click', this.victoryRestartHandler);
+    this.victoryMenuButton?.addEventListener('click', this.returnToMenuHandler);
+    this.updateEndActionLabels();
 
     document.querySelector<HTMLButtonElement>('#rematch-request')?.addEventListener('click', this.rematchRequestHandler);
     document.querySelector<HTMLButtonElement>('#rematch-leave')?.addEventListener('click', this.rematchLeaveHandler);
     document.querySelector<HTMLButtonElement>('#rematch-cancel')?.addEventListener('click', this.rematchCancelHandler);
     document.querySelector<HTMLButtonElement>('#rematch-accept')?.addEventListener('click', this.rematchAcceptHandler);
     document.querySelector<HTMLButtonElement>('#rematch-decline')?.addEventListener('click', this.rematchDeclineHandler);
+  }
+
+  private updateEndActionLabels(): void {
+    const copy = getCopy(this.language);
+    if (this.victoryMenuButton) this.victoryMenuButton.textContent = copy.hud.mainMenu;
+    if (this.challengeMenuButton) this.challengeMenuButton.textContent = copy.hud.mainMenu;
   }
 
   private bindEconomyUI(): void {
@@ -1271,6 +1345,8 @@ export class PoolScene extends Phaser.Scene {
     this.settleGrowthForMatch(localWon);
 
     this.victoryOverlay.hidden = false;
+    if (this.victoryMenuButton) this.victoryMenuButton.hidden = false;
+    this.updateEndActionLabels();
     this.victoryTitle.textContent = isZh ? `玩家 ${winner} 获胜！` : `Player ${winner} Wins!`;
     this.victoryDetail.textContent = isZh
       ? `恭喜玩家 ${winner}，你赢得了这场比赛。`
@@ -1971,7 +2047,7 @@ export class PoolScene extends Phaser.Scene {
     if (!this.aimState) {
       return;
     }
-    this.aimState = null;
+    this.clearAimState();
     this.markAimRenderDirty();
     this.aimLine.clear();
     this.cueGraphics.clear();
@@ -1985,7 +2061,7 @@ export class PoolScene extends Phaser.Scene {
 
     const cue = this.cuePosition();
     const aimIntent = computeAimIntent(cue, this.aimState.target);
-    this.aimState = null;
+    this.clearAimState();
     this.markAimRenderDirty();
     this.aimLine.clear();
     this.updateAimHud();
@@ -2603,7 +2679,7 @@ export class PoolScene extends Phaser.Scene {
 
     this.shotClockRemaining = Math.max(0, this.shotClockRemaining - deltaSeconds);
     if (this.shotClockRemaining === 0) {
-      this.aimState = null;
+      this.clearAimState();
       this.cuePlacementState = null;
       this.aimLine.clear();
       this.cueGraphics.clear();
@@ -2771,7 +2847,7 @@ export class PoolScene extends Phaser.Scene {
     this.aiThinking = false;
     this.aiDecision = null;
     this.nineBallPushOutDeclared = false;
-    this.aimState = null;
+    this.clearAimState();
     this.cuePlacementState = null;
     this.aimLine?.clear();
     this.cueGraphics?.clear();
@@ -2813,6 +2889,7 @@ export class PoolScene extends Phaser.Scene {
     const strokes = document.querySelector<HTMLElement>('#strokes');
     const remaining = document.querySelector<HTMLElement>('#remaining');
     const copy = getCopy(this.language);
+    this.updateEndActionLabels();
     if (this.gameMode === 'challenge') {
       document.documentElement.lang = this.language === 'zh' ? 'zh-CN' : 'en';
       document.title = copy.documentTitle;
@@ -4160,7 +4237,7 @@ export class PoolScene extends Phaser.Scene {
 
   private handleOnlineTimeout(): void {
     if (!this.onlineState || !this.onlineChannel) return;
-    this.aimState = null;
+    this.clearAimState();
     this.cuePlacementState = null;
     this.aimLine.clear();
     this.cueGraphics.clear();
@@ -4186,7 +4263,7 @@ export class PoolScene extends Phaser.Scene {
     if (!this.onlineState || this.onlineState.phase === 'game_over' || !this.roomInfo) return;
     const onlineState = this.onlineState;
     const roomInfo = this.roomInfo;
-    this.aimState = null;
+    this.clearAimState();
     this.cuePlacementState = null;
     this.aimLine?.clear();
     this.cueGraphics?.clear();
@@ -4304,6 +4381,9 @@ export class PoolScene extends Phaser.Scene {
     }
     if (this.victoryOverlay) {
       this.victoryOverlay.hidden = false;
+    }
+    if (this.victoryMenuButton) {
+      this.victoryMenuButton.hidden = true;
     }
     if (this.victoryRestartButton) {
       this.victoryRestartButton.textContent = reason === 'return_to_menu' ? '确定' : 'New Rack';

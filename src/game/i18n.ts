@@ -92,6 +92,7 @@ export type GameCopy = {
     activeTurn: string;
     waitingTurn: string;
     restart: string;
+    mainMenu: string;
   };
   foulReason: Record<EightBallFoulReason | 'illegalBreak', string>;
   message: {
@@ -206,6 +207,7 @@ const COPY: Record<Language, GameCopy> = {
       activeTurn: 'Shooting',
       waitingTurn: 'Waiting',
       restart: 'New Rack',
+      mainMenu: 'Main Menu',
     },
     foulReason: {
       cueBallPocketed: 'cue ball scratched',
@@ -339,6 +341,7 @@ const COPY: Record<Language, GameCopy> = {
       activeTurn: '击球中',
       waitingTurn: '等待',
       restart: '新开一局',
+      mainMenu: '返回主菜单',
     },
     foulReason: {
       cueBallPocketed: '白球落袋',

@@ -1370,6 +1370,16 @@ h2 {
   background: #5a4bd6;
 }
 
+.challenge-result-buttons button.secondary {
+  border: 1px solid rgba(29, 29, 31, 0.08);
+  background: rgba(0, 0, 0, 0.04);
+  color: #6a6a6a;
+}
+
+.challenge-result-buttons button.secondary:hover {
+  background: rgba(0, 0, 0, 0.08);
+}
+
 .challenge-hud {
   display: flex;
   gap: 1.5rem;
