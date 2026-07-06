@@ -1,7 +1,9 @@
 import { supabase } from '../lib/supabase';
+import { AUTH_IRIDESCENCE_MOUNT_ID, createIridescenceBackground } from './iridescenceBackground';
+
+let disposeAuthBackground: (() => void) | null = null;
 
 export function initAuthPage(onSuccess: () => void, onGuest?: () => void): void {
-  const authPage = document.getElementById('auth-page')!;
   const loginCard = document.getElementById('auth-login-card')!;
   const registerCard = document.getElementById('auth-register-card')!;
   const loginForm = document.getElementById('login-form') as HTMLFormElement;
@@ -28,7 +30,7 @@ export function initAuthPage(onSuccess: () => void, onGuest?: () => void): void 
   });
 
   document.getElementById('guest-play')?.addEventListener('click', () => {
-    authPage.hidden = true;
+    hideAuthPage();
     onGuest?.();
   });
 
@@ -49,7 +51,7 @@ export function initAuthPage(onSuccess: () => void, onGuest?: () => void): void 
       loginError.hidden = false;
       return;
     }
-    authPage.hidden = true;
+    hideAuthPage();
     onSuccess();
   });
 
@@ -76,17 +78,47 @@ export function initAuthPage(onSuccess: () => void, onGuest?: () => void): void 
       return;
     }
 
-    authPage.hidden = true;
+    hideAuthPage();
     onSuccess();
   });
 }
 
 export function showAuthPage(): void {
   const authPage = document.getElementById('auth-page');
-  if (authPage) authPage.hidden = false;
+  if (!authPage) return;
+  authPage.hidden = false;
+  startAuthBackground();
 }
 
 export function hideAuthPage(): void {
   const authPage = document.getElementById('auth-page');
   if (authPage) authPage.hidden = true;
+  stopAuthBackground();
+}
+
+function startAuthBackground(): void {
+  if (disposeAuthBackground || prefersReducedMotion()) return;
+  const mount = document.getElementById(AUTH_IRIDESCENCE_MOUNT_ID);
+  if (!mount) return;
+
+  try {
+    disposeAuthBackground = createIridescenceBackground(mount, {
+      color: [0.5333333333333333, 0.8352941176470589, 0.8],
+      mouseReact: false,
+      amplitude: 0.1,
+      speed: 0.9,
+    });
+  } catch (error) {
+    console.warn('Auth iridescence background disabled because WebGL initialization failed.', error);
+  }
+}
+
+function stopAuthBackground(): void {
+  disposeAuthBackground?.();
+  disposeAuthBackground = null;
+}
+
+function prefersReducedMotion(): boolean {
+  return typeof window.matchMedia === 'function'
+    && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 }

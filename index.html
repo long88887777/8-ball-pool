@@ -8,6 +8,7 @@
   </head>
   <body>
     <section id="auth-page" class="auth-page">
+      <div id="auth-iridescence" class="auth-iridescence" aria-hidden="true"></div>
       <div class="auth-bg-orbs" aria-hidden="true">
         <div class="auth-orb auth-orb-1"></div>
         <div class="auth-orb auth-orb-2"></div>
@@ -21,7 +22,15 @@
 
       <div class="auth-card" id="auth-login-card">
         <div class="auth-logo">
-          <div class="auth-logo-ball" aria-hidden="true">8</div>
+          <img
+            class="auth-logo-art"
+            src="/assets/auth-eight-ball-art.png"
+            alt=""
+            width="122"
+            height="121"
+            aria-hidden="true"
+            decoding="async"
+          />
         </div>
         <h1 class="auth-title">欢迎回来</h1>
         <p class="auth-subtitle">登录以继续</p>
@@ -43,7 +52,15 @@
 
       <div class="auth-card" id="auth-register-card" hidden>
         <div class="auth-logo">
-          <div class="auth-logo-ball" aria-hidden="true">8</div>
+          <img
+            class="auth-logo-art"
+            src="/assets/auth-eight-ball-art.png"
+            alt=""
+            width="122"
+            height="121"
+            aria-hidden="true"
+            decoding="async"
+          />
         </div>
         <h1 class="auth-title">创建账号</h1>
         <p class="auth-subtitle">加入 Pool Hall 开始对战</p>
@@ -98,32 +115,32 @@
           </button>
           <button id="btn-logout" class="menu-logout-btn" type="button">退出登录</button>
         </div>
-        <section class="menu-growth-overview" aria-label="Growth overview">
-          <div class="menu-growth-rank">
-            <span id="menu-growth-rank">Bronze · 1000 分</span>
-            <strong id="menu-growth-rank-gap">下一段还差 200 分</strong>
-          </div>
-          <div class="menu-growth-progress" aria-hidden="true">
-            <span id="menu-growth-rank-fill"></span>
-          </div>
-          <div class="menu-growth-grid">
-            <span id="menu-growth-record">0 局 · 0胜0负 · 胜率 0%</span>
-            <span id="menu-growth-streak">连胜 0 · 最佳 0</span>
-            <span id="menu-growth-tasks">每日任务 0/4</span>
-            <span id="menu-growth-stars">挑战 0/30 星</span>
-          </div>
-        </section>
-        <section class="menu-secondary-actions" aria-labelledby="menu-secondary-title">
-          <span id="menu-secondary-title" class="menu-secondary-title">更多</span>
-          <div class="menu-action-group" aria-label="Player actions">
-            <button id="growth-panel-toggle" class="menu-growth-btn" type="button">个人成长</button>
-            <button id="history-open" class="menu-growth-btn" type="button">对局历史</button>
-            <button id="settings-open" class="menu-growth-btn" type="button">设置</button>
-            <button id="recharge-open" class="menu-growth-btn menu-economy-btn" type="button">充值系统</button>
-            <button id="cue-shop-open" class="menu-growth-btn menu-economy-btn" type="button">球杆收藏</button>
-          </div>
-        </section>
-        <div class="menu-buttons">
+        <div class="menu-control-stack">
+          <section class="menu-growth-overview" aria-label="Growth overview">
+            <div class="menu-growth-rank">
+              <span id="menu-growth-rank">Bronze · 1000 分</span>
+              <strong id="menu-growth-rank-gap">下一段还差 200 分</strong>
+            </div>
+            <div class="menu-growth-progress" aria-hidden="true">
+              <span id="menu-growth-rank-fill"></span>
+            </div>
+            <div class="menu-growth-grid">
+              <span id="menu-growth-record">0 局 · 0胜0负 · 胜率 0%</span>
+              <span id="menu-growth-streak">连胜 0 · 最佳 0</span>
+              <span id="menu-growth-tasks">每日任务 0/4</span>
+              <span id="menu-growth-stars">挑战 0/30 星</span>
+            </div>
+          </section>
+          <section class="menu-secondary-actions" aria-labelledby="menu-secondary-title">
+            <span id="menu-secondary-title" class="menu-secondary-title">更多</span>
+            <div class="menu-action-group" aria-label="Player actions">
+              <button id="growth-panel-toggle" class="menu-growth-btn" type="button">个人成长</button>
+              <button id="history-open" class="menu-growth-btn" type="button">对局历史</button>
+              <button id="settings-open" class="menu-growth-btn" type="button">设置</button>
+              <button id="recharge-open" class="menu-growth-btn menu-economy-btn" type="button">充值系统</button>
+              <button id="cue-shop-open" class="menu-growth-btn menu-economy-btn" type="button">球杆收藏</button>
+            </div>
+          </section>
           <div class="ai-difficulty-panel" aria-label="AI difficulty">
             <span class="ai-difficulty-title">AI 难度</span>
             <div class="ai-difficulty-options" role="radiogroup" aria-label="AI difficulty">
@@ -141,6 +158,8 @@
               </label>
             </div>
           </div>
+        </div>
+        <div class="menu-buttons">
           <button class="menu-btn" data-mode="ai" aria-label="Player versus AI mode">
             <span class="menu-btn-icon">🎯</span>
             <span class="menu-btn-text">

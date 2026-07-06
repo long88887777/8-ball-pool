@@ -1782,6 +1782,30 @@ h2 {
   filter: drop-shadow(0 14px 18px rgba(29, 29, 31, 0.12));
 }
 
+.menu-control-stack {
+  overflow: hidden;
+  width: min(760px, 92vw);
+  display: grid;
+  border: 2px solid var(--poster-ink);
+  border-radius: 16px;
+  background: var(--poster-cream);
+  box-shadow: 7px 8px 0 rgba(16, 16, 14, 0.17);
+  animation: menuButtonsIn 0.5s ease 0.16s both;
+}
+
+.menu-control-stack > .menu-growth-overview,
+.menu-control-stack > .menu-secondary-actions,
+.menu-control-stack > .ai-difficulty-panel {
+  width: 100%;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.menu-control-stack > :not(:last-child) {
+  border-bottom: 2px solid rgba(16, 16, 14, 0.58);
+}
+
 .menu-buttons {
   display: flex;
   flex-direction: column;
@@ -1797,7 +1821,7 @@ h2 {
   gap: 12px;
   padding: 18px 20px;
   border: 2px solid var(--poster-ink);
-  border-radius: 8px;
+  border-radius: 14px;
   background:
     linear-gradient(104deg, rgba(255, 248, 213, 0.94) 0 48%, rgba(131, 215, 240, 0.72) 48% 64%, rgba(255, 241, 61, 0.82) 64%),
     var(--poster-cream);
@@ -1808,7 +1832,7 @@ h2 {
   width: fit-content;
   padding: 4px 8px 3px;
   border: 2px solid var(--poster-ink);
-  border-radius: 4px;
+  border-radius: 9px;
   background: var(--poster-green);
   color: var(--poster-ink);
   font-size: 12px;
@@ -1843,7 +1867,7 @@ h2 {
   justify-content: center;
   padding: 0 10px;
   border: 2px solid rgba(16, 16, 14, 0.44);
-  border-radius: 5px;
+  border-radius: 10px;
   background:
     linear-gradient(180deg, rgba(255, 253, 244, 0.96), rgba(255, 248, 213, 0.9));
   color: var(--poster-ink);
@@ -1887,7 +1911,7 @@ h2 {
   padding: clamp(16px, 2.4vh, 24px) 28px;
   border: 2px solid var(--poster-ink);
   border-left: 7px solid var(--menu-accent);
-  border-radius: 8px;
+  border-radius: 14px;
   background:
     linear-gradient(110deg, rgba(255, 253, 244, 0.96) 0 43%, rgba(255, 248, 213, 0.9) 43% 68%, color-mix(in srgb, var(--menu-accent) 18%, transparent) 68%),
     var(--poster-cream);
@@ -2086,11 +2110,7 @@ h2 {
   .menu-buttons {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    width: min(1140px, 94vw);
-  }
-
-  .ai-difficulty-panel {
-    grid-column: 1 / -1;
+    width: min(760px, 92vw);
   }
 }
 
@@ -2125,9 +2145,10 @@ h2 {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(135deg, #0f2027 0%, #203a43 30%, #2c5364 60%, #1a3a4a 100%);
-  background-size: 200% 200%;
-  animation: auth-bg-shift 20s ease infinite;
+  padding: 20px;
+  background:
+    radial-gradient(circle at 18% 16%, rgba(76, 188, 196, 0.22), transparent 32%),
+    linear-gradient(135deg, #061118 0%, #0b1b24 44%, #0e2c34 100%);
   z-index: 9999;
   font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
   overflow: hidden;
@@ -2135,6 +2156,28 @@ h2 {
 
 .auth-page[hidden] {
   display: none;
+}
+
+.auth-iridescence {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+}
+
+.auth-iridescence::after {
+  position: absolute;
+  inset: 0;
+  content: '';
+  background:
+    radial-gradient(circle at 50% 48%, transparent 0 34%, rgba(2, 9, 12, 0.12) 55%, rgba(2, 9, 12, 0.42) 100%),
+    linear-gradient(180deg, rgba(3, 11, 16, 0.08), rgba(3, 11, 16, 0.36));
+}
+
+.auth-iridescence-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
 }
 
 @keyframes auth-bg-shift {
@@ -2146,6 +2189,7 @@ h2 {
 .auth-bg-orbs {
   position: absolute;
   inset: 0;
+  display: none;
   pointer-events: none;
   overflow: hidden;
 }
@@ -2283,6 +2327,7 @@ h2 {
 
 .auth-card {
   position: relative;
+  z-index: 1;
   width: 100%;
   max-width: 400px;
   padding: 2.75rem 2.25rem;
@@ -2312,33 +2357,28 @@ h2 {
 .auth-logo {
   display: flex;
   justify-content: center;
-  margin-bottom: 1.5rem;
+  margin-bottom: 1.15rem;
 }
 
-.auth-logo-ball {
-  width: 56px;
-  height: 56px;
-  border-radius: 50%;
-  background: linear-gradient(145deg, #1e293b 0%, #0f172a 100%);
-  border: 2px solid rgba(56, 189, 248, 0.4);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 1.3rem;
-  font-weight: 700;
-  color: #fff;
-  box-shadow:
-    0 8px 24px rgba(0, 0, 0, 0.3),
-    0 0 0 5px rgba(56, 189, 248, 0.1);
+.auth-logo-art {
+  display: block;
+  width: 122px;
+  height: 121px;
+  object-fit: contain;
 }
 
 .auth-title {
+  font-family: 'PingFang SC', 'Microsoft YaHei UI', 'Microsoft YaHei', 'Noto Sans CJK SC', sans-serif;
   text-align: center;
-  font-size: 1.7rem;
-  font-weight: 700;
-  color: #1e293b;
+  font-size: 1.66rem;
+  line-height: 1.2;
+  font-weight: 400;
+  color: #18202f;
   margin: 0 0 0.375rem;
-  letter-spacing: -0.03em;
+  letter-spacing: 0;
+  text-shadow: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
 }
 
 .auth-subtitle {
@@ -2603,7 +2643,7 @@ h2 {
   min-height: 34px;
   padding: 0.4rem 0.8rem;
   border: 2px solid rgba(16, 16, 14, 0.48);
-  border-radius: 5px;
+  border-radius: 10px;
   background:
     linear-gradient(180deg, rgba(255, 253, 244, 0.95), rgba(255, 248, 213, 0.9));
   color: var(--poster-ink);
@@ -2640,12 +2680,12 @@ h2 {
 .menu-growth-overview {
   position: relative;
   overflow: hidden;
-  width: min(1140px, 94vw);
+  width: min(760px, 92vw);
   display: grid;
   gap: 12px;
   padding: 18px 22px;
   border: 2px solid var(--poster-ink);
-  border-radius: 8px;
+  border-radius: 14px;
   background:
     linear-gradient(110deg, rgba(255, 248, 213, 0.94) 0 54%, rgba(131, 215, 240, 0.72) 54% 72%, rgba(54, 207, 160, 0.74) 72%),
     var(--poster-cream);
@@ -2713,7 +2753,7 @@ h2 {
   min-width: 0;
   padding: 8px 9px;
   border: 2px solid rgba(16, 16, 14, 0.22);
-  border-radius: 5px;
+  border-radius: 10px;
   background:
     linear-gradient(180deg, rgba(255, 253, 244, 0.86), rgba(255, 248, 213, 0.74));
   color: var(--poster-ink);
@@ -2726,14 +2766,14 @@ h2 {
 
 .menu-secondary-actions {
   position: relative;
-  width: min(1140px, 94vw);
+  width: min(760px, 92vw);
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
   padding: 12px 14px;
   border: 2px solid var(--poster-ink);
-  border-radius: 8px;
+  border-radius: 14px;
   background:
     linear-gradient(105deg, rgba(131, 215, 240, 0.82) 0 46%, rgba(255, 248, 213, 0.9) 46%),
     var(--poster-cream);
@@ -2743,7 +2783,7 @@ h2 {
 .menu-secondary-title {
   padding: 4px 8px 3px;
   border: 2px solid var(--poster-ink);
-  border-radius: 4px;
+  border-radius: 9px;
   background: var(--poster-yellow);
   color: var(--poster-ink);
   font-size: 12px;
