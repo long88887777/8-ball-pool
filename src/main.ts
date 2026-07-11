@@ -125,10 +125,12 @@ const shellLanguage: Language = 'zh';
 const rechargeClient = supabase as unknown as SupabaseRechargeClient;
 const disposeSplashCursor = installSplashCursor({
   DENSITY_DISSIPATION: 5,
-  VELOCITY_DISSIPATION: 3,
+  VELOCITY_DISSIPATION: 1,
   PRESSURE: 0.15,
   CURL: 9,
-  COLOR_UPDATE_SPEED: 30,
+  SPLAT_RADIUS: 0.09,
+  SPLAT_FORCE: 3000,
+  COLOR_UPDATE_SPEED: 2,
   RAINBOW_MODE: true,
   COLOR: '#24484d',
 });
