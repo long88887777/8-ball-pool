@@ -111,9 +111,14 @@ describe('pool economy', () => {
       'assets/cues/cue-red-black.png',
       'assets/cues/cue-pearl-ebony.png',
       'assets/cues/cue-royal-gold.png',
+      'assets/cues/cue-amber-tiger.png',
+      'assets/cues/cue-amethyst-silver.png',
+      'assets/cues/cue-ivory-sapphire.png',
+      'assets/cues/cue-obsidian-emerald.png',
+      'assets/cues/cue-turquoise-walnut.png',
     ]);
     expect(new Set(CUE_CATALOG.map((cue) => cue.textureKey)).size).toBe(CUE_CATALOG.length);
-    expect(CUE_CATALOG.map((cue) => cue.tipOffsetX)).toEqual([65, 42, 40, 42, 44]);
+    expect(CUE_CATALOG.map((cue) => cue.tipOffsetX)).toEqual([65, 42, 40, 42, 44, 62, 56, 72, 54, 78]);
   });
 
   it('buys and equips unlocked cue sticks', () => {
