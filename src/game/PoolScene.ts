@@ -93,6 +93,7 @@ import {
   type PlayerStats,
 } from './growth/stats';
 import { appendShotHistoryEntry, type ShotHistoryEntry } from './matchHistory';
+import { computeCueSpritePose } from './cueVisual';
 import {
   completeDailyTask,
   createDailyTaskState,
@@ -116,7 +117,6 @@ import {
 import type { PhysicsBallSnapshot, PhysicsEvent } from './proPhysics/types';
 import {
   createBallTexture,
-  drawCueStick,
   drawPocketNetDeformation,
   drawPoolHall,
   drawRefinedTable,
@@ -240,7 +240,8 @@ export class PoolScene extends Phaser.Scene {
   private cueBall!: PoolBall;
   private targetBalls: PoolBall[] = [];
   private aimLine!: Phaser.GameObjects.Graphics;
-  private cueGraphics!: Phaser.GameObjects.Graphics;
+  private cueSprite!: Phaser.GameObjects.Image;
+  private cueShadow!: Phaser.GameObjects.Image;
   private feedbackGraphics!: Phaser.GameObjects.Graphics;
   private forbiddenIcon!: Phaser.GameObjects.Graphics;
   private handSprite!: Phaser.GameObjects.Image;
@@ -491,6 +492,9 @@ export class PoolScene extends Phaser.Scene {
 
   preload(): void {
     this.load.image('hand-raw', 'assets/hand-raw.png');
+    for (const cue of CUE_CATALOG) {
+      this.load.image(cue.textureKey, cue.assetPath);
+    }
   }
 
   create(): void {
@@ -513,7 +517,15 @@ export class PoolScene extends Phaser.Scene {
     this.handSprite = this.add.image(0, 0, 'hand').setDepth(DEPTH.ball + 1).setVisible(false);
     this.createBalls();
     this.aimLine = this.add.graphics().setDepth(DEPTH.aim);
-    this.cueGraphics = this.add.graphics().setDepth(DEPTH.aim + 1);
+    const equippedCue = this.currentCueStyle();
+    this.cueShadow = this.add.image(0, 0, equippedCue.textureKey)
+      .setDepth(DEPTH.aim + 0.9)
+      .setTint(0x000000)
+      .setAlpha(0.22)
+      .setVisible(false);
+    this.cueSprite = this.add.image(0, 0, equippedCue.textureKey)
+      .setDepth(DEPTH.aim + 1)
+      .setVisible(false);
     this.feedbackGraphics = this.add.graphics().setDepth(DEPTH.aim + 2);
     this.netDeformGraphics = this.add.graphics().setDepth(DEPTH.ball - 1);
     this.forbiddenIcon = this.createForbiddenIcon();
@@ -757,7 +769,7 @@ export class PoolScene extends Phaser.Scene {
         this.clearAimState();
         this.markAimRenderDirty();
         this.aimLine.clear();
-        this.cueGraphics.clear();
+        this.hideCueStick();
 
         this.placeBallInHandCueBall(point);
         this.updateHud();
@@ -769,7 +781,7 @@ export class PoolScene extends Phaser.Scene {
         this.clearAimState();
         this.markAimRenderDirty();
         this.aimLine.clear();
-        this.cueGraphics.clear();
+        this.hideCueStick();
 
         this.placeCueBall(point);
         return;
@@ -1136,7 +1148,7 @@ export class PoolScene extends Phaser.Scene {
     this.clearAimState();
     this.cuePlacementState = null;
     this.aimLine?.clear();
-    this.cueGraphics?.clear();
+    this.hideCueStick();
     this.feedbackGraphics?.clear();
     this.lastFoulFeedback = null;
     this.foulFeedbackUntil = 0;
@@ -1570,6 +1582,29 @@ export class PoolScene extends Phaser.Scene {
     return getCueStyle(this.wallet.equippedCueId);
   }
 
+  private renderCueStick(cue: Vector, angle: number, pullback: number, style = this.currentCueStyle()): void {
+    const pose = computeCueSpritePose(cue, angle, pullback, style);
+    const sprites: Array<[Phaser.GameObjects.Image, number]> = [
+      [this.cueShadow, 4],
+      [this.cueSprite, 0],
+    ];
+
+    for (const [sprite, shadowOffsetY] of sprites) {
+      sprite
+        .setTexture(pose.textureKey)
+        .setOrigin(pose.originX, pose.originY)
+        .setDisplaySize(pose.displayWidth, pose.displayHeight)
+        .setPosition(pose.x, pose.y + shadowOffsetY)
+        .setRotation(pose.rotation)
+        .setVisible(true);
+    }
+  }
+
+  private hideCueStick(): void {
+    this.cueSprite?.setVisible(false);
+    this.cueShadow?.setVisible(false);
+  }
+
   private settleMatchCoins(won: boolean): void {
     if (this.matchCoinSettled) {
       return;
@@ -1800,13 +1835,12 @@ export class PoolScene extends Phaser.Scene {
     const preview = document.createElement('div');
     preview.className = 'cue-preview';
     preview.setAttribute('aria-hidden', 'true');
-    preview.append(
-      this.createCueSegment('cue-preview-butt'),
-      this.createCueSegment('cue-preview-wrap'),
-      this.createCueSegment('cue-preview-forearm'),
-      this.createCueSegment('cue-preview-shaft'),
-      this.createCueSegment('cue-preview-tip'),
-    );
+    const previewImage = document.createElement('img');
+    previewImage.src = cue.assetPath;
+    previewImage.alt = '';
+    previewImage.loading = 'lazy';
+    previewImage.decoding = 'async';
+    preview.append(previewImage);
 
     const name = document.createElement('h3');
     name.textContent = cue.name;
@@ -1832,12 +1866,6 @@ export class PoolScene extends Phaser.Scene {
 
     card.append(preview, name, meta, button);
     return card;
-  }
-
-  private createCueSegment(className: string): HTMLSpanElement {
-    const segment = document.createElement('span');
-    segment.className = className;
-    return segment;
   }
 
   private cssColor(color: number): string {
@@ -2132,7 +2160,7 @@ export class PoolScene extends Phaser.Scene {
     this.clearAimState();
     this.markAimRenderDirty();
     this.aimLine.clear();
-    this.cueGraphics.clear();
+    this.hideCueStick();
     this.updateAimHud();
   }
 
@@ -2166,10 +2194,10 @@ export class PoolScene extends Phaser.Scene {
       duration: CUE.strikeDurationMs,
       ease: 'Cubic.easeIn',
       onUpdate: (tween) => {
-        drawCueStick(this.cueGraphics, cue.x, cue.y, cueAngle, tween.getValue() ?? 12, this.currentCueStyle());
+        this.renderCueStick(cue, cueAngle, tween.getValue() ?? 12);
       },
       onComplete: () => {
-        this.cueGraphics.clear();
+        this.hideCueStick();
         this.applyCueImpulse(aimIntent);
         this.strikeLocked = false;
         if (this.gameMode === 'online') {
@@ -2250,7 +2278,7 @@ export class PoolScene extends Phaser.Scene {
 
     this.drawAimPowerRail(power);
     this.drawSpinAimFeedback(cue);
-    drawCueStick(this.cueGraphics, cue.x, cue.y, cueAngle, cueBack, this.currentCueStyle());
+    this.renderCueStick(cue, cueAngle, cueBack);
   }
 
   private currentAimRenderKey(): string {
@@ -2764,7 +2792,7 @@ export class PoolScene extends Phaser.Scene {
       this.clearAimState();
       this.cuePlacementState = null;
       this.aimLine.clear();
-      this.cueGraphics.clear();
+      this.hideCueStick();
       this.recordActiveTimeoutFoul();
       this.shotClockRemaining = SHOT_CLOCK_SECONDS;
       this.updateHud();
@@ -2860,10 +2888,10 @@ export class PoolScene extends Phaser.Scene {
       duration: CUE.strikeDurationMs,
       ease: 'Cubic.easeIn',
       onUpdate: (tween) => {
-        drawCueStick(this.cueGraphics, cue.x, cue.y, cueAngle, tween.getValue() ?? 12, this.currentCueStyle());
+        this.renderCueStick(cue, cueAngle, tween.getValue() ?? 12);
       },
       onComplete: () => {
-        this.cueGraphics.clear();
+        this.hideCueStick();
         const power = this.openingBreakPower(shot.power);
         this.physicsEngine.strikeCueBall({
           direction: shot.direction,
@@ -2907,7 +2935,7 @@ export class PoolScene extends Phaser.Scene {
     }
 
     const cueAngle = Math.atan2(shot.direction.y, shot.direction.x);
-    drawCueStick(this.cueGraphics, cue.x, cue.y, cueAngle, getCuePullback(shot.power), this.currentCueStyle());
+    this.renderCueStick(cue, cueAngle, getCuePullback(shot.power));
   }
 
   private getTableBallPositions(): Map<number, Vector> {
@@ -2932,7 +2960,7 @@ export class PoolScene extends Phaser.Scene {
     this.clearAimState();
     this.cuePlacementState = null;
     this.aimLine?.clear();
-    this.cueGraphics?.clear();
+    this.hideCueStick();
     this.strikeLocked = false;
     this.setSelectedSpin(SPIN_PRESETS.center);
     this.forbiddenIcon?.setVisible(false);
@@ -4322,7 +4350,7 @@ export class PoolScene extends Phaser.Scene {
     this.clearAimState();
     this.cuePlacementState = null;
     this.aimLine.clear();
-    this.cueGraphics.clear();
+    this.hideCueStick();
     this.alignRulesCurrentPlayerWithOnlineShooter('me');
     this.recordActiveTimeoutFoul();
     const myIndex: 0 | 1 = this.roomInfo!.isHost ? 0 : 1;
@@ -4348,7 +4376,7 @@ export class PoolScene extends Phaser.Scene {
     this.clearAimState();
     this.cuePlacementState = null;
     this.aimLine?.clear();
-    this.cueGraphics?.clear();
+    this.hideCueStick();
     const myIndex: 0 | 1 = roomInfo.isHost ? 0 : 1;
     const winner: 0 | 1 = myIndex === 0 ? 1 : 0;
     this.onlineChannel?.send({ type: 'game_over', reason, winner });

@@ -104,6 +104,18 @@ describe('pool economy', () => {
     expect(MATCH_LOSS_PENALTY).toBeGreaterThan(15);
   });
 
+  it('maps every cue shop entry to one of the supplied cue images', () => {
+    expect(CUE_CATALOG.map((cue) => cue.assetPath)).toEqual([
+      'assets/cues/cue-classic-maple.png',
+      'assets/cues/cue-carbon-blue.png',
+      'assets/cues/cue-red-black.png',
+      'assets/cues/cue-pearl-ebony.png',
+      'assets/cues/cue-royal-gold.png',
+    ]);
+    expect(new Set(CUE_CATALOG.map((cue) => cue.textureKey)).size).toBe(CUE_CATALOG.length);
+    expect(CUE_CATALOG.map((cue) => cue.tipOffsetX)).toEqual([65, 42, 40, 42, 44]);
+  });
+
   it('buys and equips unlocked cue sticks', () => {
     const cue = CUE_CATALOG.find((item) => item.price > 0)!;
     const wallet: PlayerWallet = { ...DEFAULT_PLAYER_WALLET, coins: cue.price + 25 };

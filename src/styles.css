@@ -953,7 +953,7 @@ h2 {
 
 .cue-shop-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
 }
 
@@ -978,57 +978,24 @@ h2 {
 }
 
 .cue-preview {
-  position: relative;
-  height: 42px;
+  display: grid;
+  height: 66px;
   margin-bottom: 12px;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 8px;
+  padding: 8px;
+  background: linear-gradient(180deg, #f7f7f5, #ededeb);
 }
 
-.cue-preview > span {
-  position: absolute;
-  top: 17px;
-  height: 9px;
-  box-shadow: inset 0 2px 3px rgba(255, 255, 255, 0.38), inset 0 -2px 3px rgba(0, 0, 0, 0.22);
-}
-
-.cue-preview-butt {
-  left: 0;
-  width: 16%;
-  border-radius: 999px 4px 4px 999px;
-  background: linear-gradient(90deg, var(--cue-wrap), var(--cue-accent), var(--cue-wrap));
-}
-
-.cue-preview-wrap {
-  left: 14%;
-  width: 27%;
-  background:
-    repeating-linear-gradient(35deg, rgba(255, 255, 255, 0.16) 0 3px, transparent 3px 8px),
-    var(--cue-wrap);
-}
-
-.cue-preview-forearm {
-  left: 39%;
-  width: 26%;
-  background:
-    radial-gradient(circle at 28% 50%, var(--cue-gem) 0 7%, transparent 8%),
-    radial-gradient(circle at 70% 50%, var(--cue-gem) 0 7%, transparent 8%),
-    linear-gradient(90deg, var(--cue-forearm), var(--cue-accent), var(--cue-forearm));
-}
-
-.cue-preview-shaft {
-  left: 64%;
-  width: 31%;
-  height: 6px;
-  top: 18.5px;
-  background: linear-gradient(90deg, var(--cue-shaft), color-mix(in srgb, var(--cue-shaft) 70%, #ffffff));
-}
-
-.cue-preview-tip {
-  left: 94%;
-  width: 6%;
-  height: 5px;
-  top: 19px;
-  border-radius: 0 999px 999px 0;
-  background: var(--cue-gem);
+.cue-preview img {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 48px;
+  object-fit: contain;
+  filter: drop-shadow(0 3px 3px rgba(0, 0, 0, 0.22));
 }
 
 .cue-card h3 {

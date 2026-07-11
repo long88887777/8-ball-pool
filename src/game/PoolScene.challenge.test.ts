@@ -220,7 +220,12 @@ describe('PoolScene challenge rules', () => {
   it('starts the selected challenge level immediately when the scene boots from level select', () => {
     const scene = new PoolScene() as unknown as ChallengeCreateHarness;
     const graphics = { setDepth: vi.fn(() => graphics) };
-    const image = { setDepth: vi.fn(() => image), setVisible: vi.fn(() => image) };
+    const image = {
+      setDepth: vi.fn(() => image),
+      setTint: vi.fn(() => image),
+      setAlpha: vi.fn(() => image),
+      setVisible: vi.fn(() => image),
+    };
     const forbiddenIcon = { setVisible: vi.fn(() => forbiddenIcon) };
 
     scene.game.registry.get = vi.fn((key: string) => {

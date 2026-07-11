@@ -1081,13 +1081,12 @@ function createCueCard(cue: CueStyle): HTMLElement {
   const preview = document.createElement('div');
   preview.className = 'cue-preview';
   preview.setAttribute('aria-hidden', 'true');
-  preview.append(
-    createCueSegment('cue-preview-butt'),
-    createCueSegment('cue-preview-wrap'),
-    createCueSegment('cue-preview-forearm'),
-    createCueSegment('cue-preview-shaft'),
-    createCueSegment('cue-preview-tip'),
-  );
+  const previewImage = document.createElement('img');
+  previewImage.src = cue.assetPath;
+  previewImage.alt = '';
+  previewImage.loading = 'lazy';
+  previewImage.decoding = 'async';
+  preview.append(previewImage);
 
   const name = document.createElement('h3');
   name.textContent = cue.name;
@@ -1113,12 +1112,6 @@ function createCueCard(cue: CueStyle): HTMLElement {
 
   card.append(preview, name, meta, button);
   return card;
-}
-
-function createCueSegment(className: string): HTMLSpanElement {
-  const segment = document.createElement('span');
-  segment.className = className;
-  return segment;
 }
 
 function buyCueStyle(cueId: string): void {
