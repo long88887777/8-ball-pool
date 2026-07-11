@@ -48,6 +48,7 @@ import {
 } from './menuFlow';
 import { showGameShellForNewGame } from './gameShellVisibility';
 import { installSplashCursor } from './splashCursor';
+import { closeCuePreview, isCuePreviewEscape, openCuePreview, type CuePreviewState } from './cuePreview';
 import {
   formatRecentMatchSummary,
   formatShotHistoryEntry,
@@ -115,6 +116,9 @@ let cropImageElement: HTMLImageElement | null = null;
 let cropSourceImage: HTMLImageElement | null = null;
 let cropObjectUrl: string | null = null;
 let cropDragStart: { x: number; y: number; state: CropState } | null = null;
+let cuePreviewState: CuePreviewState = closeCuePreview();
+let cuePreviewPreviousOverflow = '';
+let cuePreviewReturnFocus: HTMLElement | null = null;
 
 const shellLanguage: Language = 'zh';
 
@@ -919,8 +923,50 @@ function showCueShop(): void {
 }
 
 function hideCueShop(): void {
+  hideCueDetailPreview();
   const overlay = document.getElementById('cue-shop');
   if (overlay) overlay.hidden = true;
+}
+
+function showCueDetailPreview(cueId: string, returnFocus?: HTMLElement | null): void {
+  const cue = CUE_CATALOG.find((item) => item.id === cueId);
+  const overlay = document.getElementById('cue-detail-preview');
+  const image = document.getElementById('cue-detail-preview-image') as HTMLImageElement | null;
+  const title = document.getElementById('cue-detail-preview-title');
+  const meta = document.getElementById('cue-detail-preview-meta');
+  if (!cue || !overlay || !image || !title || !meta) return;
+
+  cuePreviewState = openCuePreview(cue);
+  cuePreviewReturnFocus = returnFocus ?? (document.activeElement as HTMLElement | null);
+  cuePreviewPreviousOverflow = document.body.style.overflow;
+  image.src = cue.assetPath;
+  image.alt = `${cue.name} 球杆大图`;
+  title.textContent = cue.name;
+  meta.textContent = `${rarityLabel(cue.rarity)} · 点击遮罩或按 Esc 关闭`;
+  overlay.hidden = false;
+  overlay.setAttribute('aria-hidden', 'false');
+  document.body.style.overflow = 'hidden';
+  document.getElementById('cue-detail-preview-close')?.focus();
+}
+
+function hideCueDetailPreview(): void {
+  if (!cuePreviewState.open) return;
+  cuePreviewState = closeCuePreview();
+  const overlay = document.getElementById('cue-detail-preview');
+  if (overlay) {
+    overlay.hidden = true;
+    overlay.setAttribute('aria-hidden', 'true');
+  }
+  document.body.style.overflow = cuePreviewPreviousOverflow;
+  cuePreviewReturnFocus?.focus();
+  cuePreviewReturnFocus = null;
+}
+
+function handleCuePreviewKeydown(event: KeyboardEvent): void {
+  if (cuePreviewState.open && isCuePreviewEscape(event.key)) {
+    event.preventDefault();
+    hideCueDetailPreview();
+  }
 }
 
 function showRechargePanel(): void {
@@ -1080,7 +1126,10 @@ function createCueCard(cue: CueStyle): HTMLElement {
 
   const preview = document.createElement('div');
   preview.className = 'cue-preview';
-  preview.setAttribute('aria-hidden', 'true');
+  preview.dataset.cuePreviewId = cue.id;
+  preview.setAttribute('role', 'button');
+  preview.tabIndex = 0;
+  preview.setAttribute('aria-label', `查看 ${cue.name} 大图`);
   const previewImage = document.createElement('img');
   previewImage.src = cue.assetPath;
   previewImage.alt = '';
@@ -1279,6 +1328,11 @@ async function init(): Promise<void> {
 
   document.getElementById('cue-shop-open')?.addEventListener('click', showCueShop);
   document.getElementById('cue-shop-close')?.addEventListener('click', hideCueShop);
+  document.getElementById('cue-detail-preview-close')?.addEventListener('click', hideCueDetailPreview);
+  document.getElementById('cue-detail-preview')?.addEventListener('click', (event) => {
+    if (event.target === event.currentTarget) hideCueDetailPreview();
+  });
+  document.addEventListener('keydown', handleCuePreviewKeydown);
   document.getElementById('recharge-open')?.addEventListener('click', showRechargePanel);
   document.getElementById('recharge-close')?.addEventListener('click', hideRechargePanel);
   document.getElementById('recharge-packages')?.addEventListener('click', (event) => {
@@ -1297,6 +1351,11 @@ async function init(): Promise<void> {
   });
   document.getElementById('cue-shop-grid')?.addEventListener('click', (event) => {
     const target = event.target as HTMLElement | null;
+    const previewTrigger = target?.closest<HTMLElement>('[data-cue-preview-id]');
+    if (previewTrigger) {
+      showCueDetailPreview(previewTrigger.dataset.cuePreviewId ?? '', previewTrigger);
+      return;
+    }
     const button = target?.closest<HTMLButtonElement>('[data-cue-action]');
     if (!button) return;
     const cueId = button.dataset.cueId;
@@ -1307,6 +1366,14 @@ async function init(): Promise<void> {
     } else if (action === 'equip') {
       equipCueStyle(cueId);
     }
+  });
+  document.getElementById('cue-shop-grid')?.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    const target = event.target as HTMLElement | null;
+    const previewTrigger = target?.closest<HTMLElement>('[data-cue-preview-id]');
+    if (!previewTrigger) return;
+    event.preventDefault();
+    showCueDetailPreview(previewTrigger.dataset.cuePreviewId ?? '', previewTrigger);
   });
 }
 
