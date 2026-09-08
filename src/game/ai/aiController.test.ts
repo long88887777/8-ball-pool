@@ -212,8 +212,8 @@ describe('aiController', () => {
     it('AI takes a confirmed real-physics pot instead of playing safety', () => {
       const controller = new AIController({ difficulty: 'normal' });
       const ballPositions = new Map<number, Vector>([
-        [0, { x: 308.60682620050466, y: 91.69740732133147 }],
-        [9, { x: 164, y: 144 }],
+        [0, { x: 308.60682620050466, y: PLAY_AREA.top + 17.69740732133147 }],
+        [9, { x: 164, y: PLAY_AREA.top + 70 }],
       ]);
       const rules = createEightBallState();
       rules.currentPlayer = 1;

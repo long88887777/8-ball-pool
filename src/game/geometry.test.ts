@@ -1,7 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import { BALL_RADIUS, CUE_START, PLAY_AREA, POCKETS, TABLE } from './constants';
+import {
+  BALL_CENTER_BOUNDS,
+  BALL_RADIUS,
+  CUE_START,
+  MIDDLE_POCKET_CENTER_OFFSET,
+  PLAY_AREA,
+  POCKETS,
+  TABLE,
+} from './constants';
 import {
   clampShotPower,
+  clampBallInHandCuePosition,
   clampBreakCuePosition,
   createNineBallRack,
   createTriangleRack,
@@ -9,6 +18,7 @@ import {
   getCuePullback,
   headStringX,
   isInPocket,
+  isCueBallCenterClearOfPockets,
   isLegalBreakCuePosition,
   isOnTableSurface,
   isTableReady,
@@ -24,6 +34,28 @@ describe('geometry helpers', () => {
 
     expect(isInPocket({ x: pocket.x, y: pocket.y }, POCKETS)).toBe(true);
     expect(isInPocket({ x: pocket.x + BALL_RADIUS * 4, y: pocket.y }, POCKETS)).toBe(false);
+  });
+
+  it('allows ball-in-hand beside every pocket while rejecting centers inside the opening', () => {
+    for (const pocket of POCKETS) {
+      const adjacentPlacement = clampBallInHandCuePosition(pocket);
+
+      expect(isCueBallCenterClearOfPockets(adjacentPlacement)).toBe(true);
+      expect(isCueBallCenterClearOfPockets(pocket)).toBe(false);
+    }
+  });
+
+  it('places middle pocket centers just outside the cushion nose', () => {
+    expect(POCKETS[0]).toEqual({
+      x: PLAY_AREA.left - BALL_RADIUS,
+      y: PLAY_AREA.top - BALL_RADIUS,
+    });
+    expect(POCKETS[1].y).toBe(PLAY_AREA.top - MIDDLE_POCKET_CENTER_OFFSET);
+    expect(POCKETS[4].y).toBe(PLAY_AREA.bottom + MIDDLE_POCKET_CENTER_OFFSET);
+    expect(POCKETS[1].y).toBeLessThan(PLAY_AREA.top);
+    expect(POCKETS[4].y).toBeGreaterThan(PLAY_AREA.bottom);
+    expect(POCKETS[1].y).toBeLessThan(POCKETS[0].y);
+    expect(POCKETS[4].y).toBeGreaterThan(POCKETS[3].y);
   });
 
   it('clamps shot power from drag distance', () => {
@@ -49,25 +81,25 @@ describe('geometry helpers', () => {
 
   it('allows cue ball placement only on the break side of the head string', () => {
     expect(isLegalBreakCuePosition(CUE_START)).toBe(true);
-    expect(isLegalBreakCuePosition({ x: PLAY_AREA.left + BALL_RADIUS, y: PLAY_AREA.top + BALL_RADIUS })).toBe(false);
+    expect(isLegalBreakCuePosition({ x: PLAY_AREA.left + BALL_RADIUS, y: PLAY_AREA.top + BALL_RADIUS })).toBe(true);
     expect(isLegalBreakCuePosition({ x: breakLineX() + BALL_RADIUS, y: TABLE.height / 2 })).toBe(false);
-    expect(isLegalBreakCuePosition({ x: PLAY_AREA.left + BALL_RADIUS - 1, y: TABLE.height / 2 })).toBe(false);
+    expect(isLegalBreakCuePosition({ x: BALL_CENTER_BOUNDS.left - 1, y: TABLE.height / 2 })).toBe(false);
   });
 
   it('uses the break line as the visible head-string boundary', () => {
     expect(breakLineX()).toBe(headStringX());
   });
 
-  it('keeps opening cue ball placement out of corner pocket jaws', () => {
+  it('allows opening cue ball placement beside both break-side corner pockets', () => {
     const upperLeft = clampBreakCuePosition({ x: PLAY_AREA.left, y: PLAY_AREA.top });
     const lowerLeft = clampBreakCuePosition({ x: PLAY_AREA.left, y: PLAY_AREA.bottom });
 
+    expect(upperLeft).toEqual({ x: BALL_CENTER_BOUNDS.left, y: BALL_CENTER_BOUNDS.top });
+    expect(lowerLeft).toEqual({ x: BALL_CENTER_BOUNDS.left, y: BALL_CENTER_BOUNDS.bottom });
     expect(isLegalBreakCuePosition(upperLeft)).toBe(true);
     expect(isLegalBreakCuePosition(lowerLeft)).toBe(true);
     expect(isInPocket(upperLeft, POCKETS)).toBe(false);
     expect(isInPocket(lowerLeft, POCKETS)).toBe(false);
-    expect(upperLeft.y).toBeGreaterThan(PLAY_AREA.top + BALL_RADIUS);
-    expect(lowerLeft.y).toBeLessThan(PLAY_AREA.bottom - BALL_RADIUS);
   });
 
   it('clamps cue ball placement to the break side of the head string', () => {
@@ -81,20 +113,31 @@ describe('geometry helpers', () => {
   });
 
   it('allows straight-rail cue ball placement to sit flush with the cushion nose', () => {
-    const centerRail = clampBreakCuePosition({ x: PLAY_AREA.left + BALL_RADIUS, y: TABLE.height / 2 });
+    const centerRail = clampBreakCuePosition({ x: BALL_CENTER_BOUNDS.left, y: TABLE.height / 2 });
 
-    expect(centerRail.x).toBeCloseTo(PLAY_AREA.left + BALL_RADIUS, 5);
+    expect(centerRail.x).toBeCloseTo(BALL_CENTER_BOUNDS.left, 5);
     expect(centerRail.y).toBeCloseTo(TABLE.height / 2, 5);
     expect(isLegalBreakCuePosition(centerRail)).toBe(true);
   });
 
-  it('creates a non-overlapping 15-ball triangle rack', () => {
+  it('clamps a free cue ball to the same axis-specific cushion contacts as live physics', () => {
+    expect(clampBallInHandCuePosition({ x: -100, y: TABLE.height / 2 })).toEqual({
+      x: BALL_CENTER_BOUNDS.left,
+      y: TABLE.height / 2,
+    });
+    expect(clampBallInHandCuePosition({ x: TABLE.width + 100, y: PLAY_AREA.top - 100 })).toEqual({
+      x: BALL_CENTER_BOUNDS.right,
+      y: BALL_CENTER_BOUNDS.top,
+    });
+  });
+
+  it('creates a tightly touching 15-ball triangle rack', () => {
     const rack = createTriangleRack({ x: 740, y: 320 }, 15);
 
     expect(rack).toHaveLength(15);
     for (let i = 0; i < rack.length; i += 1) {
       for (let j = i + 1; j < rack.length; j += 1) {
-        expect(Math.hypot(rack[i].x - rack[j].x, rack[i].y - rack[j].y)).toBeGreaterThan(BALL_RADIUS * 2);
+        expect(Math.hypot(rack[i].x - rack[j].x, rack[i].y - rack[j].y)).toBeGreaterThanOrEqual(BALL_RADIUS * 2 - 0.00001);
       }
     }
   });
@@ -107,13 +150,13 @@ describe('geometry helpers', () => {
     expect(rack.map((ball) => ball.id).sort((a, b) => a - b)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
     expect(rack.find((ball) => ball.id === 1)?.position).toEqual(apex);
     expect(rack.find((ball) => ball.id === 9)?.position).toEqual({
-      x: apex.x + BALL_RADIUS * 2.08 * 2,
+      x: apex.x + Math.sqrt(3) * BALL_RADIUS * 2,
       y: apex.y,
     });
 
     const rowCounts = new Map<number, number>();
     for (const ball of rack) {
-      const row = Math.round((ball.position.x - apex.x) / (BALL_RADIUS * 2.08));
+      const row = Math.round((ball.position.x - apex.x) / (Math.sqrt(3) * BALL_RADIUS));
       rowCounts.set(row, (rowCounts.get(row) ?? 0) + 1);
     }
     expect(Array.from(rowCounts.entries()).sort(([a], [b]) => a - b)).toEqual([
@@ -129,7 +172,7 @@ describe('geometry helpers', () => {
         expect(Math.hypot(
           rack[i].position.x - rack[j].position.x,
           rack[i].position.y - rack[j].position.y,
-        )).toBeGreaterThan(BALL_RADIUS * 2);
+        )).toBeGreaterThanOrEqual(BALL_RADIUS * 2 - 0.00001);
       }
     }
   });
@@ -238,7 +281,7 @@ describe('projectRayToPlayArea', () => {
   it('projects a ray to the right playable edge', () => {
     const result = projectRayToPlayArea({ x: 100, y: 200 }, { x: 1, y: 0 });
 
-    expect(result.x).toBeCloseTo(PLAY_AREA.right - BALL_RADIUS, 5);
+    expect(result.x).toBeCloseTo(BALL_CENTER_BOUNDS.right, 5);
     expect(result.y).toBeCloseTo(200, 5);
   });
 
@@ -248,8 +291,8 @@ describe('projectRayToPlayArea', () => {
 
     const result = projectRayToPlayArea(origin, direction);
 
-    expect(result.y).toBeCloseTo(PLAY_AREA.bottom - BALL_RADIUS, 5);
-    expect(result.x).toBeLessThan(PLAY_AREA.right - BALL_RADIUS);
+    expect(result.y).toBeCloseTo(BALL_CENTER_BOUNDS.bottom, 5);
+    expect(result.x).toBeLessThan(BALL_CENTER_BOUNDS.right);
   });
 
   it('falls back to the origin when the direction is zero length', () => {

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  BALL_CENTER_BOUNDS,
   BALL_RADIUS,
   CUE_START,
   CUSHION_NOSE_INSET,
@@ -255,7 +256,7 @@ describe('ProfessionalPoolEngine', () => {
       furthestRight = Math.max(furthestRight, target?.position.x ?? 0);
     }
 
-    expect(furthestRight).toBeLessThanOrEqual(PLAY_AREA.right - BALL_RADIUS + 1);
+    expect(furthestRight).toBeLessThanOrEqual(PLAY_AREA.right - BALL_RADIUS + CUSHION_NOSE_INSET + 1);
 
     const topEngine = new ProfessionalPoolEngine();
     topEngine.rack([
@@ -301,8 +302,8 @@ describe('ProfessionalPoolEngine', () => {
       furthestRight = Math.max(furthestRight, target?.position.x ?? 0);
     }
 
-    expect(furthestRight).toBeGreaterThanOrEqual(PLAY_AREA.right - BALL_RADIUS - 1);
-    expect(furthestRight).toBeLessThanOrEqual(PLAY_AREA.right - BALL_RADIUS + 1);
+    expect(furthestRight).toBeGreaterThanOrEqual(BALL_CENTER_BOUNDS.right - 1);
+    expect(furthestRight).toBeLessThanOrEqual(BALL_CENTER_BOUNDS.right + 1);
 
     const topEngine = new ProfessionalPoolEngine();
     topEngine.rack([
@@ -324,8 +325,72 @@ describe('ProfessionalPoolEngine', () => {
       closestTop = Math.min(closestTop, target?.position.y ?? TABLE.height);
     }
 
-    expect(closestTop).toBeGreaterThanOrEqual(PLAY_AREA.top + BALL_RADIUS - 1);
-    expect(closestTop).toBeLessThanOrEqual(PLAY_AREA.top + BALL_RADIUS + 1);
+    expect(closestTop).toBeGreaterThanOrEqual(BALL_CENTER_BOUNDS.top - 1);
+    expect(closestTop).toBeLessThanOrEqual(BALL_CENTER_BOUNDS.top + 1);
+  });
+
+  it('aligns all four straight cushion contacts with the production 3D cushion nose', () => {
+    const modelNose = {
+      left: 89.806,
+      right: 1009.981,
+      top: 97.714,
+      bottom: 542.291,
+    };
+    const cases = [
+      {
+        name: 'left',
+        start: { x: modelNose.left + BALL_RADIUS + 2, y: TABLE.height / 2 },
+        velocity: { x: -2.4, y: 0 },
+        sample: (position: Vector) => position.x,
+        expected: modelNose.left + BALL_RADIUS,
+        extreme: Math.min,
+        initial: Number.POSITIVE_INFINITY,
+      },
+      {
+        name: 'right',
+        start: { x: modelNose.right - BALL_RADIUS - 2, y: TABLE.height / 2 },
+        velocity: { x: 2.4, y: 0 },
+        sample: (position: Vector) => position.x,
+        expected: modelNose.right - BALL_RADIUS,
+        extreme: Math.max,
+        initial: Number.NEGATIVE_INFINITY,
+      },
+      {
+        name: 'top',
+        start: { x: TABLE.width / 2 + 140, y: modelNose.top + BALL_RADIUS + 2 },
+        velocity: { x: 0, y: 2.4 },
+        sample: (position: Vector) => position.y,
+        expected: modelNose.top + BALL_RADIUS,
+        extreme: Math.min,
+        initial: Number.POSITIVE_INFINITY,
+      },
+      {
+        name: 'bottom',
+        start: { x: TABLE.width / 2 + 140, y: modelNose.bottom - BALL_RADIUS - 2 },
+        velocity: { x: 0, y: -2.4 },
+        sample: (position: Vector) => position.y,
+        expected: modelNose.bottom - BALL_RADIUS,
+        extreme: Math.max,
+        initial: Number.NEGATIVE_INFINITY,
+      },
+    ];
+
+    for (const side of cases) {
+      const engine = new ProfessionalPoolEngine();
+      engine.rack([
+        { id: 0, kind: 'cue', position: CUE_START },
+        { id: 1, kind: 'target', position: side.start, label: 1 },
+      ]);
+      engine.setBallVelocity(1, side.velocity);
+
+      let contact = side.initial;
+      for (let frame = 0; frame < 90; frame += 1) {
+        const target = engine.step(1 / 60).balls.find((ball) => ball.id === 1)!;
+        contact = side.extreme(contact, side.sample(target.position));
+      }
+
+      expect.soft(contact, side.name).toBeCloseTo(side.expected, 0);
+    }
   });
 
   it('waits until more than half a ball crosses a middle pocket before falling', () => {
@@ -389,11 +454,11 @@ describe('ProfessionalPoolEngine', () => {
     expect(result.events.filter((event) => event.type === 'pocket' && event.ballId === 1)).toHaveLength(0);
     expect(result.balls.find((ball) => ball.id === 1)?.pocketed).toBe(false);
     expect(result.balls.find((ball) => ball.id === 1)?.position.y).toBeGreaterThanOrEqual(
-      PLAY_AREA.top + BALL_RADIUS + CUSHION_NOSE_INSET - 1,
+      PLAY_AREA.top + BALL_RADIUS - CUSHION_NOSE_INSET - 1,
     );
   });
 
-  it('lets balls cross the visible edge of the middle pocket instead of bouncing off an invisible wall', () => {
+  it('bounces a ball that overlaps the middle-pocket knuckle instead of accepting an edge graze', () => {
     const engine = new ProfessionalPoolEngine();
     engine.rack([
       { id: 0, kind: 'cue', position: CUE_START },
@@ -418,9 +483,10 @@ describe('ProfessionalPoolEngine', () => {
       events.push(...result.events);
     }
 
-    expect(events.filter((event) => event.type === 'cushion' && event.ballId === 1)).toHaveLength(0);
-    expect(events.filter((event) => event.type === 'pocket' && event.ballId === 1)).toHaveLength(1);
-    expect(result.balls.find((ball) => ball.id === 1)?.pocketed).toBe(true);
+    expect(events.some((event) => event.type === 'cushion' && event.ballId === 1)).toBe(true);
+    expect(
+      events.filter((event) => event.type === 'pocket' && event.ballId === 1 && event.pocketIndex === 4),
+    ).toHaveLength(0);
   });
 
   it('lets a centered ball enter the middle pocket throat without bouncing off the cushion', () => {
@@ -541,6 +607,49 @@ describe('ProfessionalPoolEngine', () => {
     }
   });
 
+  it('lets balls fall through both middle-pocket throats', () => {
+    const cases = [
+      {
+        name: 'upper-middle',
+        position: {
+          x: TABLE.width / 2,
+          y: PLAY_AREA.top + BALL_RADIUS + CUSHION_NOSE_INSET + 5,
+        },
+        velocity: { x: 0, y: 2.2 },
+      },
+      {
+        name: 'lower-middle',
+        position: {
+          x: TABLE.width / 2,
+          y: PLAY_AREA.bottom - BALL_RADIUS - CUSHION_NOSE_INSET - 5,
+        },
+        velocity: { x: 0, y: -2.2 },
+      },
+    ];
+
+    for (const middle of cases) {
+      const engine = new ProfessionalPoolEngine();
+      engine.rack([
+        { id: 0, kind: 'cue', position: CUE_START },
+        { id: 1, kind: 'target', position: middle.position, label: 1 },
+      ]);
+
+      engine.setBallVelocity(1, middle.velocity);
+
+      const events = [];
+      let result = engine.step(1 / 60);
+      events.push(...result.events);
+      for (let i = 0; i < 50 && !events.some((event) => event.type === 'pocket' && event.ballId === 1); i += 1) {
+        result = engine.step(1 / 60);
+        events.push(...result.events);
+      }
+
+      expect(events.filter((event) => event.type === 'cushion' && event.ballId === 1), middle.name).toHaveLength(0);
+      expect(events.filter((event) => event.type === 'pocket' && event.ballId === 1), middle.name).toHaveLength(1);
+      expect(result.balls.find((ball) => ball.id === 1)?.pocketed, middle.name).toBe(true);
+    }
+  });
+
   it('lets angled shots from the cloth fall into corner pockets', () => {
     const cases = [
       {
@@ -654,6 +763,31 @@ describe('ProfessionalPoolEngine', () => {
     ).toBe(true);
   });
 
+  it('never renders a non-pocketed break ball beyond the pocket lips before pulling it back', () => {
+    const engine = new ProfessionalPoolEngine();
+    engine.rack(starts());
+    engine.strikeCueBall({ direction: { x: 1, y: 0 }, power: 1 });
+
+    const excursions: Array<{ id: number; x: number; y: number }> = [];
+    let result = engine.step(1 / 60);
+    for (let frame = 0; frame < 300 && !result.settled; frame += 1) {
+      for (const ball of result.balls) {
+        if (ball.pocketed) continue;
+        if (
+          ball.position.x < PLAY_AREA.left - BALL_RADIUS / 2 ||
+          ball.position.x > PLAY_AREA.right + BALL_RADIUS / 2 ||
+          ball.position.y < PLAY_AREA.top - BALL_RADIUS / 2 ||
+          ball.position.y > PLAY_AREA.bottom + BALL_RADIUS / 2
+        ) {
+          excursions.push({ id: ball.id, x: ball.position.x, y: ball.position.y });
+        }
+      }
+      result = engine.step(1 / 60);
+    }
+
+    expect(excursions).toEqual([]);
+  });
+
   it('drains events so they can be rescued after an engine failure', () => {
     const engine = new ProfessionalPoolEngine();
     engine.rack([
@@ -705,7 +839,63 @@ describe('ProfessionalPoolEngine', () => {
     expect(events.filter((event) => event.type === 'pocket' && event.ballId === 1)).toHaveLength(0);
     expect(events.some((event) => event.type === 'cushion' && event.ballId === 1)).toBe(true);
     expect(target?.pocketed).toBe(false);
-    expect(target?.position.y).toBeGreaterThanOrEqual(PLAY_AREA.top + BALL_RADIUS - 1);
+    expect(target?.position.y).toBeGreaterThanOrEqual(PLAY_AREA.top + BALL_RADIUS - CUSHION_NOSE_INSET - 1);
+  });
+
+  it('bounces off a middle-pocket jaw instead of falling through or being pulled back', () => {
+    const engine = new ProfessionalPoolEngine();
+    engine.rack([
+      { id: 0, kind: 'cue', position: CUE_START },
+      {
+        id: 1,
+        kind: 'target',
+        position: {
+          x: TABLE.width / 2 + POCKET_MOUTHS.middleCaptureHalf + 4,
+          y: PLAY_AREA.top + BALL_RADIUS * 2,
+        },
+        label: 1,
+      },
+    ]);
+    engine.setBallVelocity(1, { x: 0, y: 2.4 });
+
+    const events = [];
+    let minimumY = Number.POSITIVE_INFINITY;
+    let result = engine.step(1 / 60);
+    for (let frame = 0; frame < 120; frame += 1) {
+      events.push(...result.events);
+      const target = result.balls.find((ball) => ball.id === 1)!;
+      if (!target.pocketed) minimumY = Math.min(minimumY, target.position.y);
+      result = engine.step(1 / 60);
+    }
+
+    expect(events.filter((event) => event.type === 'pocket' && event.ballId === 1)).toHaveLength(0);
+    expect(events.some((event) => event.type === 'cushion' && event.ballId === 1)).toBe(true);
+    expect(minimumY).toBeGreaterThanOrEqual(PLAY_AREA.top + BALL_RADIUS - CUSHION_NOSE_INSET - 1);
+  });
+
+  it('keeps an angled corner-jaw hit inside the cushion boundary until it rebounds', () => {
+    const engine = new ProfessionalPoolEngine();
+    engine.rack([
+      { id: 0, kind: 'cue', position: CUE_START },
+      { id: 1, kind: 'target', position: { x: PLAY_AREA.left + 52, y: PLAY_AREA.top + 32 }, label: 1 },
+    ]);
+    engine.setBallVelocity(1, { x: -1.7, y: 2.3 });
+
+    const events = [];
+    let result = engine.step(1 / 60);
+    let crossedOutside = false;
+    for (let frame = 0; frame < 120; frame += 1) {
+      events.push(...result.events);
+      const target = result.balls.find((ball) => ball.id === 1)!;
+      if (!target.pocketed && (target.position.x < PLAY_AREA.left - BALL_RADIUS / 2 || target.position.y < PLAY_AREA.top - BALL_RADIUS / 2)) {
+        crossedOutside = true;
+      }
+      result = engine.step(1 / 60);
+    }
+
+    expect(events.filter((event) => event.type === 'pocket' && event.ballId === 1)).toHaveLength(0);
+    expect(events.some((event) => event.type === 'cushion' && event.ballId === 1)).toBe(true);
+    expect(crossedOutside).toBe(false);
   });
 
   it('lets a ball rolling down the right rail fall into the lower-right corner pocket', () => {
@@ -815,13 +1005,13 @@ describe('ProfessionalPoolEngine', () => {
     const cases = [
       {
         name: 'lower-left',
-        start: { x: 164, y: 540 },
+        start: { x: 230, y: 410 },
         pocket: POCKETS[3],
         speed: 1.8,
       },
       {
         name: 'upper-right',
-        start: { x: 936, y: 100 },
+        start: { x: 870, y: 230 },
         pocket: POCKETS[2],
         speed: 1.8,
       },

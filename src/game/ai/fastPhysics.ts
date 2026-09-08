@@ -8,8 +8,8 @@ const MAX_STEPS = 800;
 const DT = 0.016;
 const SPEED_THRESHOLD = 0.5;
 const SHOT_SPEED = 1500;
-const CORNER_POCKET_RADIUS = TABLE.pocketRadius + BALL_RADIUS * 0.6;
-const MIDDLE_POCKET_RADIUS = TABLE.pocketRadius * 0.85;
+const CORNER_POCKET_RADIUS = TABLE.pocketRadius + BALL_RADIUS * 1.2;
+const MIDDLE_POCKET_RADIUS = TABLE.pocketRadius + BALL_RADIUS * 0.9;
 
 type SimBall = {
   id: number;
@@ -210,7 +210,9 @@ function isInPocket(pos: Vector): boolean {
     const pocket = POCKETS[i];
     const dist = Math.hypot(pos.x - pocket.x, pos.y - pocket.y);
     const radius = (i === 1 || i === 4) ? MIDDLE_POCKET_RADIUS : CORNER_POCKET_RADIUS;
-    if (dist < radius) return true;
+    // Include tangency so the fast AI simulation agrees with the authoritative
+    // engine at the capture boundary.
+    if (dist <= radius) return true;
   }
   return false;
 }

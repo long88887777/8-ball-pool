@@ -142,7 +142,7 @@ export function resolveFoulFeedbackTarget(
     }
   }
 
-  if (reason === 'cueBallPocketed') {
+  if (reason === 'cueBallPocketed' || reason === 'noFirstContact') {
     return { kind: 'cue', position: cuePosition };
   }
 

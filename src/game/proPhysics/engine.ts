@@ -1,5 +1,15 @@
 import { Vector3 } from 'three';
-import { BALL_RADIUS, CUE_START, CUSHION_NOSE_INSET, PLAY_AREA, POCKET_MOUTHS, TABLE, type Vector } from '../constants';
+import {
+  BALL_CENTER_BOUNDS,
+  BALL_RADIUS,
+  CUE_START,
+  CUSHION_NOSE_INSET,
+  PLAY_AREA,
+  POCKET_MOUTHS,
+  POCKETS,
+  TABLE,
+  type Vector,
+} from '../constants';
 import { createCoordinateMapper } from './coordinate';
 import type {
   PhysicsBallSnapshot,
@@ -25,6 +35,12 @@ const MAX_STEP_SECONDS = 1 / 120;
 const SHOT_SPEED_METERS_PER_SECOND = 8.0;
 const PLAYABLE_REST_SPEED = 0.003;
 const PLAYABLE_REST_SPIN = 0.08;
+const TABLE_GEOMETRY_CENTER_INSET = BALL_RADIUS - CUSHION_NOSE_INSET;
+const VISUAL_CONTACT_EPSILON = 0.01;
+// The opening is larger than the hole's center radius because a ball drops
+// when its edge clears the leather lip, not only when its center reaches the
+// bottom of the pocket.
+const POCKET_CAPTURE_RADIUS = TABLE.pocketRadius + BALL_RADIUS * 1.2;
 
 type VisualDropPocket = {
   pocket: Pocket;
@@ -44,6 +60,9 @@ export type NetworkBallSnapshot = {
   y: number;
   vx: number;
   vy: number;
+  wx?: number;
+  wy?: number;
+  wz?: number;
   pocketed: boolean;
 };
 
@@ -55,11 +74,13 @@ export class ProfessionalPoolEngine {
   private visualDropPockets: VisualDropPocket[] = [];
   private postUpdateCushionContacts = new Map<number, Vector>();
   private visibleCushionContacts = new Map<number, Vector>();
+  private resolvedKnuckleContacts = new Set<number>();
 
   constructor() {
     setR(this.mapper.ballRadiusMeters);
     this.configureVisualTableGeometry();
     PocketGeometry.scaleToRadius(R);
+    this.configureStraightCushionContacts();
     this.visualDropPockets = this.createVisualDropPockets();
   }
 
@@ -131,6 +152,15 @@ export class ProfessionalPoolEngine {
         position: visibleContact ?? this.mapper.toPixels({ x: ball.pos.x, y: ball.pos.y }),
         state: this.toSnapshotState(ball.state),
         pocketed: !ball.onTable(),
+        velocity: {
+          x: ball.vel.x * this.mapper.pixelsPerMeter,
+          y: -ball.vel.y * this.mapper.pixelsPerMeter,
+        },
+        angularVelocity: {
+          x: ball.rvel.x,
+          y: ball.rvel.y,
+          z: ball.rvel.z,
+        },
       };
     });
   }
@@ -150,6 +180,7 @@ export class ProfessionalPoolEngine {
     cueBall.setStationary();
     cueBall.state = State.Stationary;
     cueBall.emittedPocket = false;
+    cueBall.capturedPocketIndex = undefined;
     this.visibleCushionContacts.delete(cueBall.localId);
     this.postUpdateCushionContacts.delete(cueBall.localId);
   }
@@ -165,6 +196,7 @@ export class ProfessionalPoolEngine {
     ball.setStationary();
     ball.state = State.Stationary;
     ball.emittedPocket = false;
+    ball.capturedPocketIndex = undefined;
     this.visibleCushionContacts.delete(ball.localId);
     this.postUpdateCushionContacts.delete(ball.localId);
   }
@@ -190,6 +222,7 @@ export class ProfessionalPoolEngine {
   private advance(deltaSeconds: number): void {
     let depth = 0;
     this.postUpdateCushionContacts.clear();
+    this.resolvedKnuckleContacts.clear();
     while (!this.prepareAdvanceAll(deltaSeconds)) {
       depth += 1;
       if (depth > MAX_COLLISION_DEPTH) {
@@ -263,19 +296,34 @@ export class ProfessionalPoolEngine {
     if (!ball.onTable()) {
       return true;
     }
+    if (this.resolvedKnuckleContacts.has(ball.localId)) {
+      return true;
+    }
 
-    const visualPocket = this.findVisualDropPocket(ball, deltaSeconds);
+    const futurePosition = ball.futurePosition(deltaSeconds);
+    const futurePixels = this.mapper.toPixels(futurePosition);
+    const visualPocket = this.findVisualDropPocket(futurePixels);
+    const pocketThroat = this.isInMiddlePocketThroat(futurePixels) || this.isInCornerPocketThroat(futurePixels);
+    const approachingPocketJaw = (visualPocket || this.isNearPocketJaw(futurePixels))
+      ? this.findApproachingKnuckle(ball, deltaSeconds)
+      : undefined;
+    if (approachingPocketJaw) {
+      this.resolvedKnuckleContacts.add(ball.localId);
+      const speed = approachingPocketJaw.bounce(ball);
+      this.events.push({ type: 'cushion', ballId: ball.localId, speed });
+      return false;
+    }
+
     if (visualPocket) {
       ball.capturedPocketIndex = visualPocket.index;
       visualPocket.pocket.fall(ball, deltaSeconds);
       return false;
     }
 
-    if (this.isInPocketThroat(ball, deltaSeconds)) {
+    if (pocketThroat) {
       return true;
     }
 
-    const futurePosition = ball.futurePosition(deltaSeconds);
     if (Math.abs(futurePosition.y) < TableGeometry.tableY && Math.abs(futurePosition.x) < TableGeometry.tableX) {
       return true;
     }
@@ -291,8 +339,9 @@ export class ProfessionalPoolEngine {
       return false;
     }
 
-    const knuckle = Knuckle.findBouncing(ball, deltaSeconds);
+    const knuckle = this.findApproachingKnuckle(ball, deltaSeconds);
     if (knuckle) {
+      this.resolvedKnuckleContacts.add(ball.localId);
       const straightKnuckleContact = this.straightCushionContactFor(ball, futurePosition);
       const speed = knuckle.bounce(ball);
       if (straightKnuckleContact) {
@@ -303,7 +352,36 @@ export class ProfessionalPoolEngine {
       return false;
     }
 
+    if (straightCushionContact) {
+      const speed = ball.vel.length();
+      if (Math.abs(straightCushionContact.x - futurePixels.x) > VISUAL_CONTACT_EPSILON) {
+        ball.vel.x *= -0.72;
+      }
+      if (Math.abs(straightCushionContact.y - futurePixels.y) > VISUAL_CONTACT_EPSILON) {
+        ball.vel.y *= -0.72;
+      }
+      ball.rvel.multiplyScalar(0.72);
+      this.postUpdateCushionContacts.set(ball.localId, straightCushionContact);
+      this.visibleCushionContacts.set(ball.localId, straightCushionContact);
+      this.events.push({ type: 'cushion', ballId: ball.localId, speed });
+      return false;
+    }
+
     return true;
+  }
+
+  private findApproachingKnuckle(ball: EngineBall, deltaSeconds: number): Knuckle | undefined {
+    const futurePosition = ball.futurePosition(deltaSeconds);
+    if (
+      Math.abs(futurePosition.x) < TableGeometry.tableX - R * 2 &&
+      Math.abs(futurePosition.y) < TableGeometry.tableY - R * 2
+    ) {
+      return undefined;
+    }
+    const knuckle = Knuckle.findBouncing(ball, deltaSeconds);
+    if (!knuckle) return undefined;
+    const awayFromKnuckle = ball.pos.clone().sub(knuckle.pos);
+    return awayFromKnuckle.dot(ball.vel) < 0 ? knuckle : undefined;
   }
 
   private configureVisualTableGeometry(): void {
@@ -312,12 +390,16 @@ export class ProfessionalPoolEngine {
       y: (PLAY_AREA.top + PLAY_AREA.bottom) / 2,
     };
     const rightLimit = this.mapper.toPhysics({
-      x: PLAY_AREA.right - BALL_RADIUS,
+      // PocketGeometry is generated from the accepted model's original jaw
+      // placement. Straight cushion contacts are tightened afterwards.
+      x: PLAY_AREA.right - TABLE_GEOMETRY_CENTER_INSET,
       y: center.y,
     }).x;
     const topLimit = this.mapper.toPhysics({
       x: center.x,
-      y: PLAY_AREA.top + BALL_RADIUS,
+      // Keep the imported model's pocket jaws and throats in their accepted
+      // positions. visualBoundsFor supplies the stricter straight-rail limit.
+      y: PLAY_AREA.top + TABLE_GEOMETRY_CENTER_INSET,
     }).y;
 
     TableGeometry.tableX = Math.abs(rightLimit);
@@ -326,11 +408,25 @@ export class ProfessionalPoolEngine {
     TableGeometry.Y = TableGeometry.tableY + R;
   }
 
+  private configureStraightCushionContacts(): void {
+    const rightLimit = this.mapper.toPhysics({
+      x: BALL_CENTER_BOUNDS.right,
+      y: TABLE.height / 2,
+    }).x;
+    const topLimit = this.mapper.toPhysics({
+      x: TABLE.width / 2,
+      y: BALL_CENTER_BOUNDS.top,
+    }).y;
+
+    // PocketGeometry has already captured the accepted model's jaw and throat
+    // positions. Only uninterrupted straight-cushion contacts move to the
+    // full-radius ball-center limits, so pocket openings stay unchanged.
+    TableGeometry.tableX = Math.abs(rightLimit);
+    TableGeometry.tableY = Math.abs(topLimit);
+  }
+
   private createVisualDropPockets(): VisualDropPocket[] {
     const pocketRadius = TABLE.pocketRadius / this.mapper.pixelsPerMeter;
-    const halfBall = BALL_RADIUS / 2;
-    const sideOpening = POCKET_MOUTHS.middleCaptureHalf;
-    const cornerOpening = POCKET_MOUTHS.cornerCapture;
     const middleX = TABLE.width / 2;
 
     const makePocket = (point: Vector, captures: (point: Vector) => boolean): VisualDropPocket => {
@@ -342,49 +438,48 @@ export class ProfessionalPoolEngine {
     };
 
     return [
-      makePocket({ x: PLAY_AREA.left - BALL_RADIUS, y: PLAY_AREA.top - BALL_RADIUS }, (point) => {
-        return (
-          this.isCornerPocketCapture(point, PLAY_AREA.left, PLAY_AREA.top, -1, -1, cornerOpening, halfBall)
-        );
+      makePocket(POCKETS[0], (point) => {
+        return this.isCornerPocketCapture(point, PLAY_AREA.left, PLAY_AREA.top, -1, -1);
       }),
-      makePocket({ x: PLAY_AREA.right + BALL_RADIUS, y: PLAY_AREA.top - BALL_RADIUS }, (point) => {
-        return (
-          this.isCornerPocketCapture(point, PLAY_AREA.right, PLAY_AREA.top, 1, -1, cornerOpening, halfBall)
-        );
+      makePocket(POCKETS[2], (point) => {
+        return this.isCornerPocketCapture(point, PLAY_AREA.right, PLAY_AREA.top, 1, -1);
       }),
-      makePocket({ x: PLAY_AREA.left - BALL_RADIUS, y: PLAY_AREA.bottom + BALL_RADIUS }, (point) => {
-        return (
-          this.isCornerPocketCapture(point, PLAY_AREA.left, PLAY_AREA.bottom, -1, 1, cornerOpening, halfBall)
-        );
+      makePocket(POCKETS[3], (point) => {
+        return this.isCornerPocketCapture(point, PLAY_AREA.left, PLAY_AREA.bottom, -1, 1);
       }),
-      makePocket({ x: PLAY_AREA.right + BALL_RADIUS, y: PLAY_AREA.bottom + BALL_RADIUS }, (point) => {
-        return (
-          this.isCornerPocketCapture(point, PLAY_AREA.right, PLAY_AREA.bottom, 1, 1, cornerOpening, halfBall)
-        );
+      makePocket(POCKETS[5], (point) => {
+        return this.isCornerPocketCapture(point, PLAY_AREA.right, PLAY_AREA.bottom, 1, 1);
       }),
-      makePocket({ x: middleX, y: PLAY_AREA.top - BALL_RADIUS }, (point) => {
-        return Math.abs(point.x - middleX) <= sideOpening && point.y < PLAY_AREA.top - halfBall;
+      makePocket(POCKETS[1], (point) => {
+        return this.isInMiddlePocketCapture(point, true);
       }),
-      makePocket({ x: middleX, y: PLAY_AREA.bottom + BALL_RADIUS }, (point) => {
-        return Math.abs(point.x - middleX) <= sideOpening && point.y > PLAY_AREA.bottom + halfBall;
+      makePocket(POCKETS[4], (point) => {
+        return this.isInMiddlePocketCapture(point, false);
       }),
     ];
   }
 
-  private findVisualDropPocket(ball: EngineBall, deltaSeconds: number): { pocket: Pocket; index: number } | undefined {
-    const futurePosition = ball.futurePosition(deltaSeconds);
-    const futurePixels = this.mapper.toPixels({ x: futurePosition.x, y: futurePosition.y });
+  private findVisualDropPocket(futurePixels: Vector): { pocket: Pocket; index: number } | undefined {
     const idx = this.visualDropPockets.findIndex((dropPocket) => dropPocket.captures(futurePixels));
     if (idx === -1) return undefined;
     return { pocket: this.visualDropPockets[idx].pocket, index: idx };
   }
 
-  private isInPocketThroat(ball: EngineBall, deltaSeconds: number): boolean {
-    const currentPixels = this.mapper.toPixels({ x: ball.pos.x, y: ball.pos.y });
-    const futurePosition = ball.futurePosition(deltaSeconds);
-    const futurePixels = this.mapper.toPixels({ x: futurePosition.x, y: futurePosition.y });
-    const movement = { x: futurePixels.x - currentPixels.x, y: futurePixels.y - currentPixels.y };
-    return this.isInMiddlePocketThroat(futurePixels) || this.isInCornerPocketThroat(futurePixels, movement);
+  private isNearPocketJaw(point: Vector): boolean {
+    const nearHorizontalNose =
+      point.y <= PLAY_AREA.top + BALL_RADIUS * 1.5 ||
+      point.y >= PLAY_AREA.bottom - BALL_RADIUS * 1.5;
+    const middleOffset = Math.abs(point.x - TABLE.width / 2);
+    const nearMiddleJaw =
+      nearHorizontalNose &&
+      middleOffset >= POCKET_MOUTHS.middleCaptureHalf &&
+      middleOffset <= POCKET_MOUTHS.middleCaptureHalf + BALL_RADIUS * 2;
+
+    const nearCorner =
+      (point.x <= PLAY_AREA.left + POCKET_MOUTHS.cornerVisual ||
+        point.x >= PLAY_AREA.right - POCKET_MOUTHS.cornerVisual) &&
+      nearHorizontalNose;
+    return nearMiddleJaw || nearCorner;
   }
 
   private isInMiddlePocketThroat(point: Vector): boolean {
@@ -396,33 +491,43 @@ export class ProfessionalPoolEngine {
     );
   }
 
-  private isInCornerPocketThroat(point: Vector, movement: Vector = { x: 0, y: 0 }): boolean {
+  private isInMiddlePocketCapture(point: Vector, top: boolean): boolean {
+    const center = {
+      x: TABLE.width / 2,
+      y: top ? POCKETS[1].y : POCKETS[4].y,
+    };
+    const withinOpening = Math.hypot(point.x - center.x, point.y - center.y) <= POCKET_CAPTURE_RADIUS;
+    const beyondCushion = top
+      ? point.y <= PLAY_AREA.top - BALL_RADIUS / 2
+      : point.y >= PLAY_AREA.bottom + BALL_RADIUS / 2;
+    return withinOpening && beyondCushion;
+  }
+
+  private isInCornerPocketThroat(point: Vector): boolean {
     return (
-      this.isInSingleCornerPocketThroat(point, movement, PLAY_AREA.left, PLAY_AREA.top, -1, -1) ||
-      this.isInSingleCornerPocketThroat(point, movement, PLAY_AREA.right, PLAY_AREA.top, 1, -1) ||
-      this.isInSingleCornerPocketThroat(point, movement, PLAY_AREA.left, PLAY_AREA.bottom, -1, 1) ||
-      this.isInSingleCornerPocketThroat(point, movement, PLAY_AREA.right, PLAY_AREA.bottom, 1, 1)
+      this.isInSingleCornerPocketThroat(point, PLAY_AREA.left, PLAY_AREA.top, -1, -1) ||
+      this.isInSingleCornerPocketThroat(point, PLAY_AREA.right, PLAY_AREA.top, 1, -1) ||
+      this.isInSingleCornerPocketThroat(point, PLAY_AREA.left, PLAY_AREA.bottom, -1, 1) ||
+      this.isInSingleCornerPocketThroat(point, PLAY_AREA.right, PLAY_AREA.bottom, 1, 1)
     );
   }
 
   private isInSingleCornerPocketThroat(
     point: Vector,
-    movement: Vector,
     cornerX: number,
     cornerY: number,
     xDirection: -1 | 1,
     yDirection: -1 | 1,
   ): boolean {
-    const movingIntoPocket =
-      movement.x * xDirection >= -0.001 &&
-      movement.y * yDirection >= -0.001 &&
-      Math.abs(movement.x) > 0.001 &&
-      Math.abs(movement.y) > 0.001;
-    const throatOpening = movingIntoPocket
-      ? POCKET_MOUTHS.cornerCapture + BALL_RADIUS * 2
-      : POCKET_MOUTHS.cornerCapture;
-
-    return this.isInCornerMouthGate(point, cornerX, cornerY, xDirection, yDirection, BALL_RADIUS / 2, throatOpening);
+    return this.isInCornerMouthGate(
+      point,
+      cornerX,
+      cornerY,
+      xDirection,
+      yDirection,
+      BALL_RADIUS / 2,
+      POCKET_MOUTHS.cornerCapture,
+    );
   }
 
   private isCornerPocketCapture(
@@ -431,10 +536,22 @@ export class ProfessionalPoolEngine {
     cornerY: number,
     xDirection: -1 | 1,
     yDirection: -1 | 1,
-    cornerOpening: number,
-    halfBall: number,
   ): boolean {
-    return this.isInCornerMouthGate(point, cornerX, cornerY, xDirection, yDirection, halfBall, cornerOpening);
+    const center = {
+      x: cornerX + xDirection * BALL_RADIUS,
+      y: cornerY + yDirection * BALL_RADIUS,
+    };
+    const withinOpening = Math.hypot(point.x - center.x, point.y - center.y) <= POCKET_CAPTURE_RADIUS;
+    const inMouth = this.isInCornerMouthGate(
+      point,
+      cornerX,
+      cornerY,
+      xDirection,
+      yDirection,
+      BALL_RADIUS / 2,
+      POCKET_MOUTHS.cornerCapture,
+    );
+    return withinOpening && inMouth;
   }
 
   private isInCornerMouthGate(
@@ -467,8 +584,7 @@ export class ProfessionalPoolEngine {
     }
 
     const pixels = this.mapper.toPixels({ x: ball.pos.x, y: ball.pos.y });
-    const movement = { x: ball.vel.x, y: -ball.vel.y };
-    if (this.isInMiddlePocketThroat(pixels) || this.isInCornerPocketThroat(pixels, movement)) {
+    if (this.isInMiddlePocketThroat(pixels) || this.isInCornerPocketThroat(pixels)) {
       return;
     }
 
@@ -497,8 +613,7 @@ export class ProfessionalPoolEngine {
   private straightCushionContactFor(ball: EngineBall, futurePosition: Vector3): Vector | undefined {
     const pixels = this.mapper.toPixels({ x: ball.pos.x, y: ball.pos.y });
     const futurePixels = this.mapper.toPixels({ x: futurePosition.x, y: futurePosition.y });
-    const movement = { x: futurePixels.x - pixels.x, y: futurePixels.y - pixels.y };
-    if (this.isInMiddlePocketThroat(futurePixels) || this.isInCornerPocketThroat(futurePixels, movement)) {
+    if (this.isInMiddlePocketThroat(futurePixels) || this.isInCornerPocketThroat(futurePixels)) {
       return undefined;
     }
 
@@ -508,7 +623,10 @@ export class ProfessionalPoolEngine {
       y: Math.min(Math.max(futurePixels.y, bounds.top), bounds.bottom),
     };
 
-    if (clamped.x === futurePixels.x && clamped.y === futurePixels.y) {
+    if (
+      Math.abs(clamped.x - futurePixels.x) <= VISUAL_CONTACT_EPSILON &&
+      Math.abs(clamped.y - futurePixels.y) <= VISUAL_CONTACT_EPSILON
+    ) {
       return undefined;
     }
 
@@ -531,10 +649,10 @@ export class ProfessionalPoolEngine {
     const cornerOpening = POCKET_MOUTHS.cornerCapture;
     const middleX = TABLE.width / 2;
     const bounds = {
-      left: PLAY_AREA.left + BALL_RADIUS,
-      right: PLAY_AREA.right - BALL_RADIUS,
-      top: PLAY_AREA.top + BALL_RADIUS,
-      bottom: PLAY_AREA.bottom - BALL_RADIUS,
+      left: BALL_CENTER_BOUNDS.left,
+      right: BALL_CENTER_BOUNDS.right,
+      top: BALL_CENTER_BOUNDS.top,
+      bottom: BALL_CENTER_BOUNDS.bottom,
     };
 
     if (Math.abs(point.x - middleX) <= sideOpening) {
@@ -621,6 +739,9 @@ export class ProfessionalPoolEngine {
         y: pixels.y,
         vx: ball.vel.x * this.mapper.pixelsPerMeter,
         vy: -ball.vel.y * this.mapper.pixelsPerMeter,
+        wx: ball.rvel.x,
+        wy: ball.rvel.y,
+        wz: ball.rvel.z,
         pocketed: !ball.onTable(),
       };
     });
@@ -645,7 +766,9 @@ export class ProfessionalPoolEngine {
       ball.vel.set(vx, vy, 0);
       const moving = Math.hypot(vx, vy) > PLAYABLE_REST_SPEED;
       ball.state = moving ? State.Sliding : State.Stationary;
-      if (!moving) {
+      if (moving && [snap.wx, snap.wy, snap.wz].every(Number.isFinite)) {
+        ball.rvel.set(snap.wx ?? 0, snap.wy ?? 0, snap.wz ?? 0);
+      } else if (!moving) {
         ball.rvel.set(0, 0, 0);
       }
       this.visibleCushionContacts.delete(ball.localId);

@@ -1,3 +1,4 @@
+import './monitoring';
 import Phaser from 'phaser';
 import { PoolScene } from './game/PoolScene';
 import { type GameRuleset } from './game/gameRules';
@@ -158,6 +159,7 @@ function startGame(
     parent: 'game',
     width: 1100,
     height: 640,
+    transparent: true,
     backgroundColor: '#10100e',
     scene: [PoolScene],
     physics: {
@@ -194,6 +196,11 @@ function backToMenu(): void {
   if (currentGame) {
     currentGameLifecycleDispose?.();
     currentGameLifecycleDispose = null;
+    // Phaser completes destruction on its next frame. The game loop may be
+    // sleeping after a browser blur or visibility change, so wake it before
+    // hiding the shell to guarantee Scene shutdown and Three.js disposal.
+    currentGame.loop.wake();
+    currentGame.scene.stop('PoolScene');
     currentGame.destroy(true);
     currentGame = null;
   }

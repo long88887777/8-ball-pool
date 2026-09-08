@@ -17,6 +17,10 @@ export type PhysicsBallSnapshot = {
   position: Vector;
   state: PhysicsBallState;
   pocketed: boolean;
+  /** Pixel-space velocity used by the 3D renderer for interpolation/diagnostics. */
+  velocity?: PhysicsVelocity;
+  /** World-space angular velocity from the authoritative physics ball, in radians/second. */
+  angularVelocity?: PhysicsAngularVelocity;
 };
 
 export type PhysicsShot = {
@@ -32,6 +36,12 @@ export type PhysicsShot = {
 export type PhysicsVelocity = {
   x: number;
   y: number;
+};
+
+export type PhysicsAngularVelocity = {
+  x: number;
+  y: number;
+  z: number;
 };
 
 export type PhysicsPocketEvent = {

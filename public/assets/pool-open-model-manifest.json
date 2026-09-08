@@ -1,0 +1,68 @@
+{
+  "generated_at": "2026-09-07T11:19:05.948580+00:00",
+  "blender": "5.2.0 LTS",
+  "generator": "D:\\Aideaprojects\\8-ball-pool\\scripts\\rebuild_from_open_pool_model.py",
+  "source": {
+    "opening_ray_tests": [
+      {
+        "pocket": 1,
+        "hit": true,
+        "first_hit": "pockets",
+        "z": 30.932
+      },
+      {
+        "pocket": 2,
+        "hit": true,
+        "first_hit": "pockets",
+        "z": 25.992
+      },
+      {
+        "pocket": 3,
+        "hit": true,
+        "first_hit": "pockets",
+        "z": 21.412
+      },
+      {
+        "pocket": 4,
+        "hit": true,
+        "first_hit": "pockets",
+        "z": 30.932
+      },
+      {
+        "pocket": 5,
+        "hit": true,
+        "first_hit": "pockets",
+        "z": 26.031
+      },
+      {
+        "pocket": 6,
+        "hit": true,
+        "first_hit": "pockets",
+        "z": 21.412
+      }
+    ],
+    "source_sha256": "65D44D492FBCC8F528492E5DAC8A34AA191D605B8AC7476C29584B9D04CA88CE",
+    "source_page": "https://opengameart.org/content/billiard-tables",
+    "license": "GPL 3.0; Billiard tables by dpapavas; modified for this game"
+  },
+  "textures": {
+    "cloth": {
+      "path": "D:\\Aideaprojects\\8-ball-pool\\qa\\2026-09-07-open-model-rebuild\\textures\\reference-blue-cloth-fullsurface.png",
+      "sha256": "0F3AE94032D2F6DD60B7BAF5F14D4B635D80B659FD5966FDF7089F04AA3753D1"
+    },
+    "wood": {
+      "path": "D:\\Aideaprojects\\8-ball-pool\\qa\\2026-09-07-open-model-rebuild\\textures\\reference-mahogany-tile.png",
+      "sha256": "E829379BE683EE98F6F20AFDE1D25F33F6605E678A7F547884E6484C84FDB930"
+    }
+  },
+  "table_glb": {
+    "path": "D:\\Aideaprojects\\8-ball-pool\\qa\\2026-09-07-open-model-rebuild\\candidate-26\\pool-table.glb",
+    "bytes": 7531236,
+    "sha256": "840D247F2BF0E8CC9C8BD6AA4645B33F08CCDFEF6E61CB3C2E89E26E09B0DE60"
+  },
+  "ball_glb": {
+    "path": "D:\\Aideaprojects\\8-ball-pool\\qa\\2026-09-07-open-model-rebuild\\candidate-26\\pool-ball.glb",
+    "bytes": 547752,
+    "sha256": "E279409FF01FEFAF7048DEC4E433ECFAE1FA140F87FFB57C920BA2F29A12DDA7"
+  }
+}

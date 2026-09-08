@@ -167,70 +167,60 @@ function shiftHexColor(hex: string, amount: number): string {
   return `#${channels.join('')}`;
 }
 
-export function drawPoolHall(scene: Phaser.Scene): void {
+export function drawPoolHall(scene: Phaser.Scene): Phaser.GameObjects.Graphics {
   const room = scene.add.graphics().setDepth(0);
-  room.fillGradientStyle(0x1a1210, 0x1a1210, 0x060404, 0x060404, 1);
+  room.fillGradientStyle(0x172436, 0x0b121e, 0x05070c, 0x0b0e16, 1);
   room.fillRect(0, 0, TABLE.width, TABLE.height);
 
-  room.fillStyle(0xffffff, 0.015);
-  room.fillRect(TABLE.width * 0.2, 0, TABLE.width * 0.6, TABLE.height * 0.15);
+  room.fillGradientStyle(0x8fc7dc, 0x8fc7dc, 0x8fc7dc, 0x8fc7dc, 0.08);
+  room.fillRect(TABLE.width * 0.18, 0, TABLE.width * 0.64, TABLE.height * 0.14);
+  room.fillStyle(0x000000, 0.24);
+  room.fillRect(0, TABLE.height * 0.84, TABLE.width, TABLE.height * 0.16);
+  return room;
 }
 
-export function drawRefinedTable(scene: Phaser.Scene): void {
+export function drawRefinedTable(scene: Phaser.Scene): Phaser.GameObjects.Graphics {
   const table = scene.add.graphics().setDepth(1);
   const playW = PLAY_AREA.right - PLAY_AREA.left;
   const playH = PLAY_AREA.bottom - PLAY_AREA.top;
 
-  table.fillStyle(0x050302, 1);
-  table.fillRoundedRect(26, 28, TABLE.width - 52, TABLE.height - 56, 22);
+  // A real table reads as three stacked materials: a dark undercarriage,
+  // warm hardwood rails, then the blue rubber cushion and cloth. Keeping the
+  // layers separate also gives the pockets a believable lip to sit in.
+  table.fillStyle(0x020406, 0.75);
+  table.fillRoundedRect(18, 24, TABLE.width - 36, TABLE.height - 42, 26);
 
-  table.fillGradientStyle(0x1a0c08, 0x140a06, 0x100804, 0x180b07, 1);
-  table.fillRoundedRect(29, 31, TABLE.width - 58, TABLE.height - 62, 20);
+  table.fillGradientStyle(0x2c0b09, 0x160608, 0x090305, 0x210907, 1);
+  table.fillRoundedRect(22, 18, TABLE.width - 44, TABLE.height - 36, 24);
 
-  table.fillGradientStyle(0x6b2e1a, 0x5a2414, 0x4a1c10, 0x602818, 1);
-  table.fillRoundedRect(32, 34, TABLE.width - 64, TABLE.height - 68, 18);
+  table.fillGradientStyle(0x7d2718, 0x4a120d, 0x2f0b09, 0x641b12, 1);
+  table.fillRoundedRect(28, 24, TABLE.width - 56, TABLE.height - 48, 20);
 
-  table.fillGradientStyle(0x8c4228, 0x7a3620, 0x682c18, 0x843e24, 1);
-  table.fillRoundedRect(36, 38, TABLE.width - 72, TABLE.height - 76, 16);
+  table.fillGradientStyle(0xb04727, 0x7f2418, 0x54130f, 0x982f1c, 1);
+  table.fillRoundedRect(34, 30, TABLE.width - 68, TABLE.height - 60, 17);
 
-  table.fillGradientStyle(0x9e5030, 0x8a4226, 0x76381e, 0x944a2c, 1);
-  table.fillRoundedRect(40, 42, TABLE.width - 80, TABLE.height - 84, 14);
-
-  table.fillStyle(0xb86840, 0.12);
-  table.fillRoundedRect(40, 42, TABLE.width - 80, (TABLE.height - 84) * 0.35, 14);
-
-  table.fillStyle(0x1a0a04, 0.15);
-  table.fillRoundedRect(40, TABLE.height - 42 - (TABLE.height - 84) * 0.25, TABLE.width - 80, (TABLE.height - 84) * 0.25, 14);
+  table.fillStyle(0xf08b55, 0.1);
+  table.fillRoundedRect(38, 34, TABLE.width - 76, (TABLE.height - 68) * 0.3, 14);
+  table.fillStyle(0x160405, 0.22);
+  table.fillRoundedRect(38, TABLE.height - 34 - (TABLE.height - 68) * 0.22, TABLE.width - 76, (TABLE.height - 68) * 0.22, 14);
 
   drawWoodGrain(table);
 
-  table.lineStyle(2, 0xc87850, 0.3);
-  table.strokeRoundedRect(40, 42, TABLE.width - 80, TABLE.height - 84, 14);
+  table.lineStyle(2, 0xe77f4a, 0.36);
+  table.strokeRoundedRect(34, 30, TABLE.width - 68, TABLE.height - 60, 17);
+  table.lineStyle(2, 0x180504, 0.74);
+  table.strokeRoundedRect(28, 24, TABLE.width - 56, TABLE.height - 48, 20);
 
-  table.lineStyle(1.5, 0xd4885c, 0.15);
-  table.strokeRoundedRect(42, 44, TABLE.width - 84, TABLE.height - 88, 13);
+  table.fillStyle(0x061321, 0.96);
+  table.fillRoundedRect(PLAY_AREA.left - 24, PLAY_AREA.top - 24, playW + 48, playH + 48, 12);
 
-  table.lineStyle(1.5, 0x2a0e06, 0.6);
-  table.strokeRoundedRect(32, 34, TABLE.width - 64, TABLE.height - 68, 18);
-
-  table.lineStyle(1, 0x3a1a0e, 0.4);
-  table.strokeRoundedRect(29, 31, TABLE.width - 58, TABLE.height - 62, 20);
-
-  table.fillGradientStyle(0x0e5c68, 0x0c5460, 0x0a4e5a, 0x106066, 1);
-  table.fillRect(PLAY_AREA.left - 16, PLAY_AREA.top - 16, playW + 32, playH + 32);
-
-  table.fillGradientStyle(0x1a7a88, 0x187282, 0x156c7a, 0x1c7e8c, 1);
+  table.fillGradientStyle(0x369fc2, 0x257fa8, 0x155d86, 0x2a8fb4, 1);
   table.fillRect(PLAY_AREA.left, PLAY_AREA.top, playW, playH);
 
-  table.fillGradientStyle(0x1e8290, 0x1a7a88, 0x167080, 0x1c7e8c, 0.15, 0.15, 0, 0);
-  table.fillRect(PLAY_AREA.left, PLAY_AREA.top, playW, playH * 0.4);
-
-  table.fillStyle(0x000000, 0.06);
-  table.fillRect(PLAY_AREA.left, PLAY_AREA.bottom - playH * 0.2, playW, playH * 0.2);
-
-  table.fillStyle(0x000000, 0.03);
-  table.fillRect(PLAY_AREA.left, PLAY_AREA.top, 30, playH);
-  table.fillRect(PLAY_AREA.right - 30, PLAY_AREA.top, 30, playH);
+  table.fillGradientStyle(0x66c1df, 0x66c1df, 0x66c1df, 0x66c1df, 0.11, 0.03, 0, 0);
+  table.fillRect(PLAY_AREA.left + 2, PLAY_AREA.top + 2, playW - 4, playH * 0.34);
+  table.fillStyle(0x031f38, 0.12);
+  table.fillRect(PLAY_AREA.left, PLAY_AREA.bottom - playH * 0.24, playW, playH * 0.24);
 
   drawFeltTexture(table, playW, playH);
 
@@ -247,6 +237,7 @@ export function drawRefinedTable(scene: Phaser.Scene): void {
   table.strokePath();
   table.fillStyle(0x8ecad8, 0.5);
   table.fillCircle(breakX, TABLE.height / 2, 2.5);
+  return table;
 }
 
 function drawWoodGrain(table: Phaser.GameObjects.Graphics): void {
@@ -407,7 +398,7 @@ function drawWoodGrain(table: Phaser.GameObjects.Graphics): void {
 }
 
 function drawFeltTexture(table: Phaser.GameObjects.Graphics, playW: number, playH: number): void {
-  table.lineStyle(0.4, 0x0d5560, 0.07);
+  table.lineStyle(0.42, 0x083d61, 0.12);
   for (let y = PLAY_AREA.top + 2; y < PLAY_AREA.bottom; y += 3) {
     table.beginPath();
     table.moveTo(PLAY_AREA.left + 2, y);
@@ -415,7 +406,7 @@ function drawFeltTexture(table: Phaser.GameObjects.Graphics, playW: number, play
     table.strokePath();
   }
 
-  table.lineStyle(0.3, 0x0a4a54, 0.04);
+  table.lineStyle(0.3, 0x8ed4e6, 0.035);
   for (let y = PLAY_AREA.top + 3.5; y < PLAY_AREA.bottom; y += 3) {
     table.beginPath();
     table.moveTo(PLAY_AREA.left + 2, y);
@@ -423,7 +414,7 @@ function drawFeltTexture(table: Phaser.GameObjects.Graphics, playW: number, play
     table.strokePath();
   }
 
-  table.lineStyle(0.25, 0x1a8a98, 0.025);
+  table.lineStyle(0.24, 0x083d61, 0.045);
   for (let x = PLAY_AREA.left + 4; x < PLAY_AREA.right; x += 6) {
     table.beginPath();
     table.moveTo(x, PLAY_AREA.top + 2);
@@ -431,19 +422,28 @@ function drawFeltTexture(table: Phaser.GameObjects.Graphics, playW: number, play
     table.strokePath();
   }
 
-  table.fillStyle(0x228898, 0.04);
-  table.fillRect(PLAY_AREA.left + playW * 0.15, PLAY_AREA.top + playH * 0.1, playW * 0.7, playH * 0.3);
+  table.fillStyle(0x8fd8eb, 0.045);
+  table.fillRect(PLAY_AREA.left + playW * 0.12, PLAY_AREA.top + playH * 0.08, playW * 0.76, playH * 0.3);
 
-  table.fillStyle(0x0a4048, 0.03);
+  table.fillStyle(0x062e51, 0.07);
   table.fillRect(PLAY_AREA.left + playW * 0.1, PLAY_AREA.bottom - playH * 0.35, playW * 0.8, playH * 0.25);
+
+  // Sparse fibers break up the digital flatness without competing with balls.
+  for (let i = 0; i < 220; i += 1) {
+    const seed = (i * 97) % 997;
+    const x = PLAY_AREA.left + 8 + ((seed * 37) % Math.max(1, Math.floor(playW - 16)));
+    const y = PLAY_AREA.top + 8 + ((seed * 53) % Math.max(1, Math.floor(playH - 16)));
+    table.fillStyle(i % 3 === 0 ? 0xb7e7f2 : 0x062c4c, i % 3 === 0 ? 0.045 : 0.035);
+    table.fillCircle(x, y, i % 4 === 0 ? 0.65 : 0.4);
+  }
 }
 
 function drawPocketNets(table: Phaser.GameObjects.Graphics): void {
   const cornerR = TABLE.pocketRadius + 8;
   const middleR = TABLE.pocketRadius + 6;
   const holeR = BALL_RADIUS * 0.7;
-  const netColor = 0xffffff;
-  const netAlpha = 0.6;
+  const netColor = 0x1a0d18;
+  const netAlpha = 0.34;
   const netWidth = 0.8;
   const segments = 12;
 
@@ -570,7 +570,7 @@ export function drawPocketNetDeformation(
   const r = isMiddle ? middleR - 2 : cornerR - 2;
   const holeR = BALL_RADIUS * 0.7;
   const segments = 12;
-  const netColor = 0xffffff;
+  const netColor = 0x1a0d18;
 
   const stretch = Math.sin(progress * Math.PI);
   const maxSag = BALL_RADIUS * 1.2;
@@ -716,9 +716,9 @@ function drawSightingDots(table: Phaser.GameObjects.Graphics): void {
 }
 
 function drawCushionRails(table: Phaser.GameObjects.Graphics): void {
-  const cw = 16;
-  const pocketClearance = 38;
-  const jawAngle = 12;
+  const cw = 20;
+  const pocketClearance = TABLE.pocketRadius + 16;
+  const jawAngle = 18;
   const midX = TABLE.width / 2;
 
   const topY = PLAY_AREA.top - cw;
@@ -726,7 +726,7 @@ function drawCushionRails(table: Phaser.GameObjects.Graphics): void {
   const leftX = PLAY_AREA.left - cw;
   const rightX = PLAY_AREA.right;
 
-  table.fillStyle(0x3d9aae, 1);
+  table.fillStyle(0x155d7f, 1);
 
   table.beginPath();
   table.moveTo(PLAY_AREA.left + pocketClearance + jawAngle, topY);
@@ -776,7 +776,7 @@ function drawCushionRails(table: Phaser.GameObjects.Graphics): void {
   table.closePath();
   table.fillPath();
 
-  table.fillStyle(0x4fb0c4, 0.4);
+  table.fillStyle(0x3ea9d0, 0.52);
   table.beginPath();
   table.moveTo(PLAY_AREA.left + pocketClearance + jawAngle, topY);
   table.lineTo(midX - pocketClearance - jawAngle, topY);
@@ -792,7 +792,7 @@ function drawCushionRails(table: Phaser.GameObjects.Graphics): void {
   table.closePath();
   table.fillPath();
 
-  table.fillStyle(0x3a8898, 0.5);
+  table.fillStyle(0x1c739a, 0.78);
   table.beginPath();
   table.moveTo(PLAY_AREA.left + pocketClearance, PLAY_AREA.top);
   table.lineTo(midX - pocketClearance, PLAY_AREA.top);
@@ -808,7 +808,7 @@ function drawCushionRails(table: Phaser.GameObjects.Graphics): void {
   table.closePath();
   table.fillPath();
 
-  table.lineStyle(1.5, 0x2a6878, 0.6);
+  table.lineStyle(2.2, 0x082c46, 0.78);
   table.beginPath();
   table.moveTo(PLAY_AREA.left + pocketClearance, PLAY_AREA.top);
   table.lineTo(midX - pocketClearance, PLAY_AREA.top);
@@ -833,11 +833,30 @@ function drawCushionRails(table: Phaser.GameObjects.Graphics): void {
   table.moveTo(PLAY_AREA.right, PLAY_AREA.top + pocketClearance);
   table.lineTo(PLAY_AREA.right, PLAY_AREA.bottom - pocketClearance);
   table.strokePath();
+
+  table.lineStyle(2.4, 0x72d4f2, 0.72);
+  table.beginPath();
+  table.moveTo(PLAY_AREA.left + pocketClearance + jawAngle, PLAY_AREA.top - 1);
+  table.lineTo(midX - pocketClearance - jawAngle, PLAY_AREA.top - 1);
+  table.moveTo(midX + pocketClearance + jawAngle, PLAY_AREA.top - 1);
+  table.lineTo(PLAY_AREA.right - pocketClearance - jawAngle, PLAY_AREA.top - 1);
+  table.moveTo(PLAY_AREA.left + pocketClearance + jawAngle, PLAY_AREA.bottom + 1);
+  table.lineTo(midX - pocketClearance - jawAngle, PLAY_AREA.bottom + 1);
+  table.moveTo(midX + pocketClearance + jawAngle, PLAY_AREA.bottom + 1);
+  table.lineTo(PLAY_AREA.right - pocketClearance - jawAngle, PLAY_AREA.bottom + 1);
+  table.strokePath();
+  table.lineStyle(1.6, 0x08283f, 0.8);
+  table.beginPath();
+  table.moveTo(PLAY_AREA.left - 1, PLAY_AREA.top + pocketClearance + jawAngle);
+  table.lineTo(PLAY_AREA.left - 1, PLAY_AREA.bottom - pocketClearance - jawAngle);
+  table.moveTo(PLAY_AREA.right + 1, PLAY_AREA.top + pocketClearance + jawAngle);
+  table.lineTo(PLAY_AREA.right + 1, PLAY_AREA.bottom - pocketClearance - jawAngle);
+  table.strokePath();
 }
 
 function drawPockets(table: Phaser.GameObjects.Graphics): void {
-  const cornerR = TABLE.pocketRadius + 8;
-  const middleR = TABLE.pocketRadius + 6;
+  const cornerR = TABLE.pocketRadius + 9;
+  const middleR = TABLE.pocketRadius + 7;
 
   for (let i = 0; i < POCKETS.length; i++) {
     const pocket = POCKETS[i];
@@ -849,13 +868,15 @@ function drawPockets(table: Phaser.GameObjects.Graphics): void {
       const startAngle = isTop ? Math.PI : 0;
       const endAngle = isTop ? 2 * Math.PI : Math.PI;
 
-      table.fillStyle(0x0a0404, 1);
+      // Side pockets are half-cut into the cushion: a blue bevel, a dark
+      // throat, and a red-brown reflected liner give the opening depth.
+      table.fillStyle(0x0b263b, 1);
       table.beginPath();
       table.arc(pocket.x, pocket.y, r + 3, startAngle, endAngle, false);
       table.closePath();
       table.fillPath();
 
-      table.fillStyle(0x000000, 1);
+      table.fillStyle(0x010306, 1);
       table.beginPath();
       table.arc(pocket.x, pocket.y, r, startAngle, endAngle, false);
       table.closePath();
@@ -867,42 +888,74 @@ function drawPockets(table: Phaser.GameObjects.Graphics): void {
       table.closePath();
       table.fillPath();
 
-      table.lineStyle(2.5, 0xb8a898, 0.85);
+      table.fillStyle(0x8e1415, 0.38);
+      table.fillEllipse(pocket.x - r * 0.22, pocket.y - r * 0.32, r * 0.46, r * 0.2);
+      table.fillStyle(0x7b0d17, 0.72);
+      table.fillEllipse(pocket.x + r * 0.16, pocket.y + (isTop ? r * 0.16 : -r * 0.16), r * 0.58, r * 0.2);
+      table.lineStyle(2.5, 0x092036, 0.92);
       table.beginPath();
       table.arc(pocket.x, pocket.y, r + 1, startAngle, endAngle, false);
       table.strokePath();
 
-      table.lineStyle(1.5, 0x2a1008, 0.7);
+      table.lineStyle(1.2, 0x43b2d7, 0.42);
       table.beginPath();
       table.arc(pocket.x, pocket.y, r + 3, startAngle, endAngle, false);
       table.strokePath();
 
-      table.lineStyle(2, 0xb8a898, 0.7);
+      table.lineStyle(1.8, 0x07182b, 0.92);
       table.beginPath();
       table.moveTo(pocket.x - r - 1, pocket.y);
       table.lineTo(pocket.x + r + 1, pocket.y);
       table.strokePath();
     } else {
-      table.fillStyle(0x0a0404, 1);
+      // Corner pockets are recessed beyond the rail, so the red liner is
+      // painted inside the black throat instead of on top of the cloth.
+      table.fillStyle(0x101f32, 1);
       table.fillCircle(pocket.x, pocket.y, r + 3);
 
-      table.fillStyle(0x000000, 1);
+      table.fillStyle(0x090b0e, 1);
       table.fillCircle(pocket.x, pocket.y, r);
-
-      table.fillStyle(0x0c0202, 0.9);
-      table.fillCircle(pocket.x, pocket.y + 1, r - 3);
 
       table.fillStyle(0x000000, 1);
       table.fillCircle(pocket.x, pocket.y, r - 4);
 
-      table.lineStyle(2.5, 0xb8a898, 0.85);
+      table.fillStyle(0x8e1415, 0.48);
+      table.fillEllipse(pocket.x - r * 0.24, pocket.y - r * 0.3, r * 0.5, r * 0.22);
+      table.fillStyle(0x5e0b13, 0.72);
+      table.fillEllipse(pocket.x + r * 0.2, pocket.y + r * 0.28, r * 0.58, r * 0.18);
+
+      table.lineStyle(2.5, 0x092036, 0.92);
       table.strokeCircle(pocket.x, pocket.y, r + 1);
 
-      table.lineStyle(1, 0xd4c8b8, 0.35);
+      table.lineStyle(1.2, 0x43b2d7, 0.42);
       table.strokeCircle(pocket.x, pocket.y, r - 1);
 
-      table.lineStyle(1.5, 0x2a1008, 0.7);
+      table.lineStyle(1.4, 0x07182b, 0.84);
       table.strokeCircle(pocket.x, pocket.y, r + 3);
+
+      // Angled cushion jaws, matching the real table's cut-away corner.
+      const sideX = pocket.x < TABLE.width / 2 ? 1 : -1;
+      const sideY = pocket.y < TABLE.height / 2 ? 1 : -1;
+      table.fillStyle(0x1b6e93, 0.9);
+      table.beginPath();
+      table.moveTo(pocket.x + sideX * (r + 2), pocket.y + sideY * 2);
+      table.lineTo(pocket.x + sideX * (r + 22), pocket.y + sideY * 2);
+      table.lineTo(pocket.x + sideX * (r + 10), pocket.y + sideY * (r + 14));
+      table.closePath();
+      table.fillPath();
+      table.beginPath();
+      table.moveTo(pocket.x + sideX * 2, pocket.y + sideY * (r + 2));
+      table.lineTo(pocket.x + sideX * 2, pocket.y + sideY * (r + 22));
+      table.lineTo(pocket.x + sideX * (r + 14), pocket.y + sideY * (r + 10));
+      table.closePath();
+      table.fillPath();
+      table.lineStyle(1.4, 0x65c9e8, 0.7);
+      table.beginPath();
+      table.moveTo(pocket.x + sideX * (r + 4), pocket.y + sideY * 4);
+      table.lineTo(pocket.x + sideX * (r + 18), pocket.y + sideY * 4);
+      table.moveTo(pocket.x + sideX * 4, pocket.y + sideY * (r + 4));
+      table.lineTo(pocket.x + sideX * 4, pocket.y + sideY * (r + 18));
+      table.strokePath();
     }
   }
 }

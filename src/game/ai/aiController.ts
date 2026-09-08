@@ -185,11 +185,15 @@ export class AIController {
   }
 
   private confirmedPotLimit(): number {
-    return Math.max(5, Math.floor(this.difficultyProfile.candidateLimit / 6));
+    return Math.max(3, Math.floor(this.difficultyProfile.candidateLimit / 12));
   }
 
   private proConfirmationLimit(): number {
     return Math.max(12, this.difficultyProfile.candidateLimit);
+  }
+
+  private positionEvaluationLimit(): number {
+    return Math.max(16, Math.floor(this.difficultyProfile.candidateLimit * 0.55));
   }
 
   private findBestConfirmedPot(
@@ -255,7 +259,7 @@ export class AIController {
       const idealZone = nextTarget ? nextTarget.idealZone : null;
       const zoneRadius = nextTarget ? nextTarget.zoneRadius : 50;
 
-      for (const candidate of positionCandidates.slice(0, this.difficultyProfile.candidateLimit)) {
+      for (const candidate of positionCandidates.slice(0, this.positionEvaluationLimit())) {
         const simResult = simulateShot(
           state.ballPositions,
           candidate.direction,

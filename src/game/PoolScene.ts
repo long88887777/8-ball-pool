@@ -38,11 +38,13 @@ import {
 } from './constants';
 import { normalizeGameRuleset, type GameRuleset } from './gameRules';
 import {
+  clampBallInHandCuePosition,
   clampBreakCuePosition,
   clampShotPower,
   createNineBallRack,
   createTriangleRack,
   getCuePullback,
+  isCueBallCenterClearOfPockets,
   isOnTableSurface,
   predictCollisionDirections,
   projectRayToPlayArea,
@@ -115,9 +117,9 @@ import {
   type CueSpinPreset,
 } from './proPhysics/spin';
 import type { PhysicsBallSnapshot, PhysicsEvent } from './proPhysics/types';
+import { createBall3DRenderer, createDefaultBall3DDefinitions, type Ball3DRenderer } from './ball3d';
 import {
   createBallTexture,
-  drawPocketNetDeformation,
   drawPoolHall,
   drawRefinedTable,
 } from './rendering';
@@ -268,6 +270,10 @@ export class PoolScene extends Phaser.Scene {
   private idleMaintenanceRefreshPending = true;
   private readonly audio = new PoolAudio();
   private readonly physicsEngine = new ProfessionalPoolEngine();
+  private ball3dRenderer: Ball3DRenderer | null = null;
+  private roomGraphics: Phaser.GameObjects.Graphics | null = null;
+  private tableGraphics: Phaser.GameObjects.Graphics | null = null;
+  private threeLayerActive = false;
   private restartButton?: HTMLButtonElement;
   private languageButton?: HTMLButtonElement;
   private victoryOverlay?: HTMLElement;
@@ -513,6 +519,13 @@ export class PoolScene extends Phaser.Scene {
     this.nineBallRules = createNineBallState();
     this.drawRoom();
     this.drawTable();
+    const ballLayerContainer = typeof document === 'undefined'
+      ? null
+      : document.querySelector<HTMLElement>('#game') ?? this.game.canvas?.parentElement;
+    this.ball3dRenderer = createBall3DRenderer(
+      ballLayerContainer,
+      (active) => this.setThreeLayerActive(active),
+    );
     this.createHandTexture();
     this.handSprite = this.add.image(0, 0, 'hand').setDepth(DEPTH.ball + 1).setVisible(false);
     this.createBalls();
@@ -558,7 +571,10 @@ export class PoolScene extends Phaser.Scene {
 
     this.scheduleOpeningAITurnIfNeeded();
 
-    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+    let sceneDisposed = false;
+    const disposeScene = (): void => {
+      if (sceneDisposed) return;
+      sceneDisposed = true;
       this.reportOnlineLeave();
       this.clearAimState();
       this.restartButton?.removeEventListener('click', this.restartHandler);
@@ -586,7 +602,11 @@ export class PoolScene extends Phaser.Scene {
       this.unbindKeyboardAim();
       this.unbindChatUI();
       this.cleanupOnlineMode();
-    });
+      this.ball3dRenderer?.destroy();
+      this.ball3dRenderer = null;
+    };
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, disposeScene);
+    this.events.once(Phaser.Scenes.Events.DESTROY, disposeScene);
   }
 
   update(): void {
@@ -623,6 +643,7 @@ export class PoolScene extends Phaser.Scene {
     if (this.lastFoulFeedback) {
       this.renderFoulFeedback();
     }
+    this.ball3dRenderer?.render(deltaSeconds);
   }
 
   private shouldStepPhysics(): boolean {
@@ -682,11 +703,26 @@ export class PoolScene extends Phaser.Scene {
   }
 
   private drawRoom(): void {
-    drawPoolHall(this);
+    this.roomGraphics = drawPoolHall(this);
   }
 
   private drawTable(): void {
-    drawRefinedTable(this);
+    this.tableGraphics = drawRefinedTable(this);
+  }
+
+  private setThreeLayerActive(active: boolean): void {
+    this.threeLayerActive = active;
+    this.roomGraphics?.setVisible(!active);
+    this.tableGraphics?.setVisible(!active);
+    if (this.cueBall) {
+      this.cueBall.setVisible(!active && !this.cueBall.pocketed);
+    }
+    for (const ball of this.targetBalls) {
+      ball.setVisible(!active && !ball.pocketed);
+    }
+    if (active && this.ball3dRenderer && this.cueBall) {
+      this.reset3DBalls();
+    }
   }
 
 
@@ -729,6 +765,17 @@ export class PoolScene extends Phaser.Scene {
         label: id,
       })),
     ]);
+    this.reset3DBalls();
+  }
+
+  private reset3DBalls(): void {
+    if (!this.ball3dRenderer) return;
+    const snapshots = this.physicsEngine.getBalls();
+    this.ball3dRenderer.reset(createDefaultBall3DDefinitions(snapshots.map((snapshot) => snapshot.id)));
+    for (const snapshot of snapshots) {
+      this.ball3dRenderer.updateBall(snapshot, undefined);
+    }
+    this.ball3dRenderer.render(0);
   }
 
   private createRackBallStarts(count: number): Array<{ id: number; position: Vector }> {
@@ -753,6 +800,7 @@ export class PoolScene extends Phaser.Scene {
     ball.ballKind = kind;
     ball.ballId = ballId;
     ball.pocketed = false;
+    ball.setVisible(!this.threeLayerActive);
     return ball;
   }
 
@@ -1188,6 +1236,7 @@ export class PoolScene extends Phaser.Scene {
         label: def.id,
       })),
     ]);
+    this.reset3DBalls();
 
     this.updateChallengeHud();
     this.hideVictoryScreen();
@@ -2018,14 +2067,8 @@ export class PoolScene extends Phaser.Scene {
     this.resetCueBallToTable(next);
   }
 
-  private static readonly BALL_CUSHION_MARGIN = BALL_RADIUS;
-  private static readonly POCKET_SAFE_DIST = TABLE.pocketRadius + BALL_RADIUS * 2 + 6;
-
   private placeBallInHandCueBall(point: Vector): void {
-    const next = {
-      x: Math.min(Math.max(point.x, PLAY_AREA.left + PoolScene.BALL_CUSHION_MARGIN), PLAY_AREA.right - PoolScene.BALL_CUSHION_MARGIN),
-      y: Math.min(Math.max(point.y, PLAY_AREA.top + PoolScene.BALL_CUSHION_MARGIN), PLAY_AREA.bottom - PoolScene.BALL_CUSHION_MARGIN),
-    };
+    const next = clampBallInHandCuePosition(point);
     this.resetCueBallToTable(next);
     this.cuePlacementValid = this.isPlacementClear(next);
     this.updateForbiddenIcon();
@@ -2042,7 +2085,15 @@ export class PoolScene extends Phaser.Scene {
     this.physicsEngine.resetCueBall(position);
     this.cueBall.pocketed = false;
     this.cueBall.setPosition(position.x, position.y);
-    this.cueBall.setVisible(true);
+    this.cueBall.setVisible(!this.threeLayerActive);
+    this.ball3dRenderer?.cancelPocketAnimation(0);
+    this.ball3dRenderer?.updateBall({
+      id: 0,
+      kind: 'cue',
+      position,
+      state: 'stationary',
+      pocketed: false,
+    }, undefined);
     this.cueBall.setScale?.(1);
     this.cueBall.setAlpha?.(1);
     this.cueBall.setDepth?.(DEPTH.ball);
@@ -2057,10 +2108,7 @@ export class PoolScene extends Phaser.Scene {
       return Phaser.Math.Distance.Between(point.x, point.y, ball.x, ball.y) >= ballMinDist;
     });
     if (!clearOfBalls) return false;
-    const clearOfPockets = POCKETS.every((pocket) => {
-      return Phaser.Math.Distance.Between(point.x, point.y, pocket.x, pocket.y) >= PoolScene.POCKET_SAFE_DIST;
-    });
-    return clearOfPockets;
+    return isCueBallCenterClearOfPockets(point);
   }
 
   private updateForbiddenIcon(): void {
@@ -2491,11 +2539,7 @@ export class PoolScene extends Phaser.Scene {
     return ball?.pocketed ?? false;
   }
 
-  private syncBallsFromPhysics(
-    snapshots: PhysicsBallSnapshot[],
-    options: { animatePocketed?: boolean } = {},
-  ): void {
-    const animatePocketed = options.animatePocketed ?? true;
+  private syncBallsFromPhysics(snapshots: PhysicsBallSnapshot[]): void {
     for (const snapshot of snapshots) {
       const ball = this.allBalls().find((candidate) => candidate.ballId === snapshot.id);
       if (!ball) {
@@ -2510,6 +2554,7 @@ export class PoolScene extends Phaser.Scene {
         this.physicsEngine.pocketBall(snapshot.id);
         ball.pocketed = true;
         ball.setVisible(false);
+        this.ball3dRenderer?.hideBall(snapshot.id);
         this.ballPrevPositions.delete(snapshot.id);
         continue;
       }
@@ -2520,22 +2565,25 @@ export class PoolScene extends Phaser.Scene {
         const dy = snapshot.position.y - prev.y;
         const dist = Math.hypot(dx, dy);
         if (dist > 0.05) {
-          ball.rotation += dist / BALL_RADIUS;
+          // A top-down ball still needs a signed roll direction. Using the
+          // dominant screen axis keeps the stripe/spot moving with the travel
+          // direction instead of spinning the same way on every shot.
+          const rollDirection = Math.sign(dx - dy) || 1;
+          const spinFactor = snapshot.state === 'sliding' ? 0.52 : 1;
+          ball.rotation += rollDirection * (dist / BALL_RADIUS) * spinFactor;
         }
       }
 
       ball.setPosition(snapshot.position.x, snapshot.position.y);
+      this.ball3dRenderer?.updateBall(snapshot, prev);
 
       if (snapshot.pocketed && !ball.pocketed) {
         ball.pocketed = true;
-        if (animatePocketed && (this.gameMode !== 'online' || this.onlineState?.phase !== 'watching_opponent_shot')) {
-          this.startPocketAnimation(ball);
-        } else {
-          ball.setVisible(false);
-        }
+        ball.setVisible(false);
+        this.ball3dRenderer?.hideBall(snapshot.id);
       } else if (!snapshot.pocketed) {
         ball.pocketed = false;
-        ball.setVisible(true);
+        ball.setVisible(!this.threeLayerActive);
       }
 
       if (!snapshot.pocketed) {
@@ -2547,44 +2595,6 @@ export class PoolScene extends Phaser.Scene {
         this.ballPrevPositions.delete(snapshot.id);
       }
     }
-  }
-
-  private static readonly PHYSICS_TO_RENDER_POCKET = [0, 2, 3, 5, 1, 4];
-
-  private startPocketAnimation(ball: PoolBall): void {
-    const physicsIndex = this.ballPocketMap.get(ball.ballId) ?? 0;
-    const pocketIndex = PoolScene.PHYSICS_TO_RENDER_POCKET[physicsIndex] ?? physicsIndex;
-    const pocket = POCKETS[pocketIndex];
-    this.pocketAnimatingBalls.add(ball.ballId);
-
-    ball.setDepth(DEPTH.ball + 2);
-
-    this.tweens.add({
-      targets: ball,
-      x: pocket.x,
-      y: pocket.y,
-      scaleX: 0.3,
-      scaleY: 0.3,
-      alpha: 0,
-      duration: 400,
-      ease: 'Cubic.easeIn',
-      onUpdate: (tween: Phaser.Tweens.Tween) => {
-        this.drawNetDeform(pocketIndex, tween.progress);
-      },
-      onComplete: () => {
-        ball.setVisible(false);
-        ball.setScale(1);
-        ball.setAlpha(1);
-        ball.setDepth(DEPTH.ball);
-        this.pocketAnimatingBalls.delete(ball.ballId);
-        this.ballPocketMap.delete(ball.ballId);
-        this.netDeformGraphics.clear();
-      },
-    });
-  }
-
-  private drawNetDeform(pocketIndex: number, progress: number): void {
-    drawPocketNetDeformation(this.netDeformGraphics, pocketIndex, progress);
   }
 
   private handleSettledTable(settled: boolean): void {
@@ -2722,14 +2732,14 @@ export class PoolScene extends Phaser.Scene {
     if (nineBall) {
       nineBall.pocketed = false;
       nineBall.setPosition(spot.x, spot.y);
-      nineBall.setVisible(true);
+      nineBall.setVisible(!this.threeLayerActive);
       nineBall.setScale(1);
       nineBall.setAlpha(1);
       nineBall.setDepth(DEPTH.ball);
     }
     this.pocketAnimatingBalls.delete(9);
     this.ballPocketMap.delete(9);
-    this.syncBallsFromPhysics(this.physicsEngine.getBalls(), { animatePocketed: false });
+    this.syncBallsFromPhysics(this.physicsEngine.getBalls());
   }
 
   private nineBallSpot(): Vector {
@@ -4035,6 +4045,7 @@ export class PoolScene extends Phaser.Scene {
         if (ball && this.tweens) {
           this.tweens.killTweensOf(ball);
           ball.setVisible(false);
+          this.ball3dRenderer?.hideBall(ball.ballId);
           ball.setScale(1);
           ball.setAlpha(1);
           ball.setDepth(DEPTH.ball);
@@ -4052,7 +4063,7 @@ export class PoolScene extends Phaser.Scene {
           this.physicsEngine.resetBall(ball.id, { x: ball.x, y: ball.y });
         }
       }
-      this.syncBallsFromPhysics(this.physicsEngine.getBalls(), { animatePocketed: false });
+      this.syncBallsFromPhysics(this.physicsEngine.getBalls());
       this.pendingResult = null;
       this.opponentResultApplied = true;
     }
@@ -4313,7 +4324,7 @@ export class PoolScene extends Phaser.Scene {
       if (!this.shouldProtectObjectBallFromSnapshot(ball.id) || ball.pocketed) {
         return ball;
       }
-      return { ...ball, vx: 0, vy: 0, pocketed: true };
+      return { ...ball, vx: 0, vy: 0, wx: 0, wy: 0, wz: 0, pocketed: true };
     });
   }
 

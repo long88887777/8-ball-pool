@@ -99,6 +99,10 @@ describe('shot control helpers', () => {
       kind: 'cue',
       position: cue,
     });
+    expect(resolveFoulFeedbackTarget('noFirstContact', cue, null, new Map())).toEqual({
+      kind: 'cue',
+      position: cue,
+    });
     expect(resolveFoulFeedbackTarget('noCushionAfterContact', cue, null, new Map())).toEqual({
       kind: 'table',
     });

@@ -49,6 +49,10 @@ type CueResetHarness = {
   netDeformGraphics: { clear: ReturnType<typeof vi.fn> };
   tweens: { killTweensOf: ReturnType<typeof vi.fn> };
   physicsEngine: { resetCueBall: ReturnType<typeof vi.fn> };
+  ball3dRenderer?: {
+    cancelPocketAnimation: ReturnType<typeof vi.fn>;
+    updateBall: ReturnType<typeof vi.fn>;
+  };
   resetCueBallToTable: (position: Vector) => void;
 };
 
@@ -92,7 +96,7 @@ describe('PoolScene nine-ball rack', () => {
     const nineBall = targetCalls.find((call) => call[3] === 9);
     expect(oneBall?.[0]).toEqual(RACK_CENTER);
     expect(nineBall?.[0]).toEqual({
-      x: RACK_CENTER.x + BALL_RADIUS * 2.08 * 2,
+      x: RACK_CENTER.x + Math.sqrt(3) * BALL_RADIUS * 2,
       y: RACK_CENTER.y,
     });
     expect(nineBall?.[1]).toBe('target-ball-8');
@@ -118,6 +122,10 @@ describe('PoolScene nine-ball rack', () => {
     scene.netDeformGraphics = { clear: vi.fn() };
     scene.tweens = { killTweensOf: vi.fn() };
     scene.physicsEngine = { resetCueBall: vi.fn() };
+    scene.ball3dRenderer = {
+      cancelPocketAnimation: vi.fn(),
+      updateBall: vi.fn(),
+    };
 
     scene.resetCueBallToTable(CUE_START);
 
@@ -128,6 +136,11 @@ describe('PoolScene nine-ball rack', () => {
     expect(cueBall.setVisible).toHaveBeenCalledWith(true);
     expect(cueBall.setScale).toHaveBeenCalledWith(1);
     expect(cueBall.setAlpha).toHaveBeenCalledWith(1);
+    expect(scene.ball3dRenderer.cancelPocketAnimation).toHaveBeenCalledWith(0);
+    expect(scene.ball3dRenderer.updateBall).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 0, pocketed: false, position: CUE_START }),
+      undefined,
+    );
     expect(scene.pocketAnimatingBalls.has(0)).toBe(false);
     expect(scene.ballPocketMap.has(0)).toBe(false);
   });

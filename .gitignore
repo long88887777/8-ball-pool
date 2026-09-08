@@ -14,3 +14,22 @@ artifacts/
 docs/superpowers/
 image/
 CLAUDE.md
+
+# Local portable Blender runtime (generated GLB/.blend assets stay tracked).
+tools/blender-*/
+tools/blender-*.zip
+
+# Intermediate browser QA captures; keep only the final screenshot/comparison.
+qa-final-browser-full.png
+qa-final-browser-scrolled.png
+qa-final-camera-fixed.png
+qa-final-fallback-diagnostic.png
+qa-final-fixed.png
+qa-final-initial.png
+qa-final-restart.png
+qa-final-shot.png
+qa-final-shot-verified.png
+qa-final-table.png
+qa-final-visual-now.png
+qa-three-debug-cube.png
+qa-comparison-3d-final.png

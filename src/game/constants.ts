@@ -6,7 +6,7 @@ export type Vector = {
 export const TABLE = {
   width: 1100,
   height: 640,
-  rail: 74,
+  rail: 98,
   cushion: 38,
   pocketRadius: 26,
   readySpeed: 0.055,
@@ -18,6 +18,7 @@ export const TABLE = {
 
 export const BALL_RADIUS = 15;
 export const CUSHION_NOSE_INSET = 12;
+export const MIDDLE_POCKET_CENTER_OFFSET = 22;
 
 export const POCKET_MOUTHS = {
   cornerVisual: 116,
@@ -33,13 +34,36 @@ export const PLAY_AREA = {
   bottom: TABLE.height - TABLE.rail,
 };
 
+// The accepted 3D table is not axis-symmetric after normalization: its
+// straight short-rail noses are at x ~= 90/1010, while the long-rail noses
+// remain at y ~= 98/542. Keep this separate from PLAY_AREA, which also owns
+// the head string and pocket layout.
+export const STRAIGHT_CUSHION_NOSE_BOUNDS = {
+  left: 90,
+  right: TABLE.width - 90,
+  top: TABLE.rail,
+  bottom: TABLE.height - TABLE.rail,
+};
+
+// A non-pocketed ball center stays one radius inside each straight cushion
+// nose. Pocket throats override these limits inside their openings.
+export const BALL_CENTER_BOUNDS = {
+  left: STRAIGHT_CUSHION_NOSE_BOUNDS.left + BALL_RADIUS,
+  right: STRAIGHT_CUSHION_NOSE_BOUNDS.right - BALL_RADIUS,
+  top: STRAIGHT_CUSHION_NOSE_BOUNDS.top + BALL_RADIUS,
+  bottom: STRAIGHT_CUSHION_NOSE_BOUNDS.bottom - BALL_RADIUS,
+};
+
 export const POCKETS: Vector[] = [
-  { x: PLAY_AREA.left + 2, y: PLAY_AREA.top + 2 },
-  { x: TABLE.width / 2, y: PLAY_AREA.top - 2 },
-  { x: PLAY_AREA.right - 2, y: PLAY_AREA.top + 2 },
-  { x: PLAY_AREA.left + 2, y: PLAY_AREA.bottom - 2 },
-  { x: TABLE.width / 2, y: PLAY_AREA.bottom + 2 },
-  { x: PLAY_AREA.right - 2, y: PLAY_AREA.bottom - 2 },
+  // Corner centers sit one ball radius beyond both cushion noses. Middle
+  // centers sit 22 units outside the horizontal nose line, leaving the inner
+  // edge of each opening slightly overlapping the cloth like the reference.
+  { x: PLAY_AREA.left - BALL_RADIUS, y: PLAY_AREA.top - BALL_RADIUS },
+  { x: TABLE.width / 2, y: PLAY_AREA.top - MIDDLE_POCKET_CENTER_OFFSET },
+  { x: PLAY_AREA.right + BALL_RADIUS, y: PLAY_AREA.top - BALL_RADIUS },
+  { x: PLAY_AREA.left - BALL_RADIUS, y: PLAY_AREA.bottom + BALL_RADIUS },
+  { x: TABLE.width / 2, y: PLAY_AREA.bottom + MIDDLE_POCKET_CENTER_OFFSET },
+  { x: PLAY_AREA.right + BALL_RADIUS, y: PLAY_AREA.bottom + BALL_RADIUS },
 ];
 
 export const CUE_START: Vector = {
@@ -68,21 +92,21 @@ export const TARGET_STARTS: Vector[] = [
 ];
 
 export const BALL_COLORS = [
-  '#d8b33f',
-  '#2469b3',
-  '#b52d27',
-  '#5b2a83',
-  '#d46b2c',
-  '#1d7f5f',
-  '#7d2323',
+  '#e0ad22',
+  '#1556a3',
+  '#b51f25',
+  '#5a207e',
+  '#d66020',
+  '#16734d',
+  '#7a1c22',
   '#141414',
-  '#d8b33f',
-  '#2469b3',
-  '#b52d27',
-  '#5b2a83',
-  '#d46b2c',
-  '#1d7f5f',
-  '#7d2323',
+  '#e0ad22',
+  '#1556a3',
+  '#b51f25',
+  '#5a207e',
+  '#d66020',
+  '#16734d',
+  '#7a1c22',
 ];
 
 export const BALLS = Array.from({ length: 15 }, (_, index) => ({

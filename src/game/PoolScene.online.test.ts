@@ -476,7 +476,7 @@ describe('PoolScene online turn state', () => {
     });
 
     expect(scene.physicsEngine.applyNetworkSnapshot).toHaveBeenCalledWith([
-      { id: 5, x: 500, y: 300, vx: 0, vy: 0, pocketed: true },
+      { id: 5, x: 500, y: 300, vx: 0, vy: 0, wx: 0, wy: 0, wz: 0, pocketed: true },
     ]);
   });
 
@@ -581,7 +581,7 @@ describe('PoolScene online turn state', () => {
     });
 
     expect(scene.physicsEngine.applyNetworkSnapshot).toHaveBeenCalledWith([
-      { id: 5, x: 500, y: 300, vx: 0, vy: 0, pocketed: true },
+      { id: 5, x: 500, y: 300, vx: 0, vy: 0, wx: 0, wy: 0, wz: 0, pocketed: true },
     ]);
   });
 
@@ -626,7 +626,7 @@ describe('PoolScene online turn state', () => {
     });
 
     expect(scene.physicsEngine.applyNetworkSnapshot).toHaveBeenCalledWith([
-      { id: 5, x: 500, y: 300, vx: 0, vy: 0, pocketed: true },
+      { id: 5, x: 500, y: 300, vx: 0, vy: 0, wx: 0, wy: 0, wz: 0, pocketed: true },
     ]);
   });
 
@@ -1343,6 +1343,19 @@ describe('PoolScene online turn state', () => {
     } finally {
       globalThis.document = previousDocument;
     }
+  });
+
+  it('hides a newly pocketed ball immediately without starting a pocket animation', () => {
+    const scene = createOnlineSceneHarness({ useRealSync: true });
+    const ball = scene.targetBalls[4];
+
+    scene.syncBallsFromPhysics([
+      { id: 5, kind: 'target', position: { x: 920, y: 520 }, state: 'in-pocket', pocketed: true },
+    ]);
+
+    expect(scene.startPocketAnimation).not.toHaveBeenCalled();
+    expect(ball.pocketed).toBe(true);
+    expect(ball.setVisible).toHaveBeenCalledWith(false);
   });
 
   it('counts down the visible clock while waiting for the online opponent to shoot', () => {

@@ -1,8 +1,16 @@
-import { BALL_RADIUS, CUE, PLAY_AREA, POCKET_MOUTHS, TABLE, type Vector } from './constants';
+import {
+  BALL_CENTER_BOUNDS,
+  BALL_RADIUS,
+  CUE,
+  PLAY_AREA,
+  POCKETS,
+  STRAIGHT_CUSHION_NOSE_BOUNDS,
+  TABLE,
+  type Vector,
+} from './constants';
 
-const BREAK_CUE_SAFE_INSET = BALL_RADIUS;
-const BREAK_CORNER_CLEARANCE = POCKET_MOUTHS.cornerCapture + BALL_RADIUS * 2;
-const LEGAL_EPSILON = 0.001;
+const RACK_ROW_SPACING = Math.sqrt(3) * BALL_RADIUS;
+const RACK_BALL_SPACING = BALL_RADIUS * 2;
 
 export function distance(a: Vector, b: Vector): number {
   return Math.hypot(a.x - b.x, a.y - b.y);
@@ -10,6 +18,10 @@ export function distance(a: Vector, b: Vector): number {
 
 export function isInPocket(point: Vector, pockets: Vector[]): boolean {
   return pockets.some((pocket) => distance(point, pocket) <= TABLE.pocketRadius);
+}
+
+export function isCueBallCenterClearOfPockets(point: Vector): boolean {
+  return !isInPocket(point, POCKETS);
 }
 
 export function isOnTableSurface(point: Vector): boolean {
@@ -31,49 +43,19 @@ export function breakLineX(): number {
 
 export function isLegalBreakCuePosition(point: Vector): boolean {
   return (
-    point.x >= PLAY_AREA.left + BREAK_CUE_SAFE_INSET &&
+    point.x >= BALL_CENTER_BOUNDS.left &&
     point.x <= breakLineX() &&
-    point.y >= PLAY_AREA.top + BREAK_CUE_SAFE_INSET &&
-    point.y <= PLAY_AREA.bottom - BREAK_CUE_SAFE_INSET &&
-    isOutsideBreakCornerClearance(point)
+    point.y >= BALL_CENTER_BOUNDS.top &&
+    point.y <= BALL_CENTER_BOUNDS.bottom &&
+    isCueBallCenterClearOfPockets(point)
   );
 }
 
 export function clampBreakCuePosition(point: Vector): Vector {
-  return pushOutsideBreakCorners({
-    x: Math.min(Math.max(point.x, PLAY_AREA.left + BREAK_CUE_SAFE_INSET), breakLineX()),
-    y: Math.min(Math.max(point.y, PLAY_AREA.top + BREAK_CUE_SAFE_INSET), PLAY_AREA.bottom - BREAK_CUE_SAFE_INSET),
-  });
-}
-
-function isOutsideBreakCornerClearance(point: Vector): boolean {
-  return leftBreakCorners().every((corner) => distance(point, corner) >= BREAK_CORNER_CLEARANCE - LEGAL_EPSILON);
-}
-
-function pushOutsideBreakCorners(point: Vector): Vector {
-  return leftBreakCorners().reduce((next, corner) => pushOutsideCorner(next, corner, BREAK_CORNER_CLEARANCE), point);
-}
-
-function pushOutsideCorner(point: Vector, corner: Vector, clearance: number): Vector {
-  const dx = point.x - corner.x;
-  const dy = point.y - corner.y;
-  const currentDistance = Math.hypot(dx, dy);
-
-  if (currentDistance >= clearance || currentDistance === 0) {
-    return point;
-  }
-
   return {
-    x: corner.x + (dx / currentDistance) * clearance,
-    y: corner.y + (dy / currentDistance) * clearance,
+    x: Math.min(Math.max(point.x, BALL_CENTER_BOUNDS.left), breakLineX()),
+    y: Math.min(Math.max(point.y, BALL_CENTER_BOUNDS.top), BALL_CENTER_BOUNDS.bottom),
   };
-}
-
-function leftBreakCorners(): Vector[] {
-  return [
-    { x: PLAY_AREA.left, y: PLAY_AREA.top },
-    { x: PLAY_AREA.left, y: PLAY_AREA.bottom },
-  ];
 }
 
 export function clampShotPower(dragDistance: number): number {
@@ -90,19 +72,24 @@ export function shouldSnapBallToRest(linearSpeed: number, angularSpeed: number):
 
 export function createTriangleRack(apex: Vector, count: number): Vector[] {
   const positions: Vector[] = [];
-  const horizontalGap = BALL_RADIUS * 2.08;
-  const verticalGap = BALL_RADIUS * 2.12;
 
   for (let row = 0; positions.length < count; row += 1) {
     for (let column = 0; column <= row && positions.length < count; column += 1) {
       positions.push({
-        x: apex.x + row * horizontalGap,
-        y: apex.y + (column - row / 2) * verticalGap,
+        x: apex.x + row * RACK_ROW_SPACING,
+        y: apex.y + (column - row / 2) * RACK_BALL_SPACING,
       });
     }
   }
 
   return positions;
+}
+
+export function clampBallInHandCuePosition(point: Vector): Vector {
+  return {
+    x: Math.min(Math.max(point.x, BALL_CENTER_BOUNDS.left), BALL_CENTER_BOUNDS.right),
+    y: Math.min(Math.max(point.y, BALL_CENTER_BOUNDS.top), BALL_CENTER_BOUNDS.bottom),
+  };
 }
 
 export type RackBallStart = {
@@ -111,8 +98,6 @@ export type RackBallStart = {
 };
 
 export function createNineBallRack(apex: Vector): RackBallStart[] {
-  const horizontalGap = BALL_RADIUS * 2.08;
-  const verticalGap = BALL_RADIUS * 2.12;
   const rowCounts = [1, 2, 3, 2, 1];
   const ballIdsByRow = [
     [1],
@@ -126,8 +111,8 @@ export function createNineBallRack(apex: Vector): RackBallStart[] {
     Array.from({ length: count }, (_, column) => ({
       id: ballIdsByRow[row][column],
       position: {
-        x: apex.x + row * horizontalGap,
-        y: apex.y + (column - (count - 1) / 2) * verticalGap,
+        x: apex.x + row * RACK_ROW_SPACING,
+        y: apex.y + (column - (count - 1) / 2) * RACK_BALL_SPACING,
       },
     })),
   );
@@ -224,10 +209,10 @@ export function projectRayToPlayArea(origin: Vector, direction: Vector, inset = 
     y: direction.y / directionLength,
   };
   const bounds = {
-    left: PLAY_AREA.left + inset,
-    right: PLAY_AREA.right - inset,
-    top: PLAY_AREA.top + inset,
-    bottom: PLAY_AREA.bottom - inset,
+    left: STRAIGHT_CUSHION_NOSE_BOUNDS.left + inset,
+    right: STRAIGHT_CUSHION_NOSE_BOUNDS.right - inset,
+    top: STRAIGHT_CUSHION_NOSE_BOUNDS.top + inset,
+    bottom: STRAIGHT_CUSHION_NOSE_BOUNDS.bottom - inset,
   };
   const candidates: number[] = [];
 

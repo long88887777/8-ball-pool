@@ -4,7 +4,9 @@ import type { PhysicsBallStart } from '../proPhysics/types';
 import type { FastSimResult } from './types';
 
 const STEP_SECONDS = 1 / 20;
-const MAX_STEPS = 500;
+// Candidate evaluation only needs the shot's meaningful contact phase; the
+// live match engine remains unrestricted and continues until every ball rests.
+const MAX_STEPS = 120;
 const MAX_CACHE_ENTRIES = 4096;
 
 const simCache = new Map<string, FastSimResult>();
