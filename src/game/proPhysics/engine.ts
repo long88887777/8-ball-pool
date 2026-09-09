@@ -21,7 +21,7 @@ import type {
 } from './types';
 import { Ball, State } from '../../vendor/tailuge-billiards/model/ball';
 import { Collision } from '../../vendor/tailuge-billiards/model/physics/collision';
-import { setR, R } from '../../vendor/tailuge-billiards/model/physics/constants';
+import { e, setR, R } from '../../vendor/tailuge-billiards/model/physics/constants';
 import { Cushion } from '../../vendor/tailuge-billiards/model/physics/cushion';
 import { Knuckle } from '../../vendor/tailuge-billiards/model/physics/knuckle';
 import { Pocket } from '../../vendor/tailuge-billiards/model/physics/pocket';
@@ -29,14 +29,15 @@ import { bounceHanBlend, cueToSpin } from '../../vendor/tailuge-billiards/model/
 import { PocketGeometry } from '../../vendor/tailuge-billiards/view/pocketgeometry';
 import { TableGeometry } from '../../vendor/tailuge-billiards/view/tablegeometry';
 import { scaleContactOffsetForCueModel } from './spin';
+import { findEarliestPocketJawCollision } from './pocketJawCollision';
 
 const MAX_COLLISION_DEPTH = 100;
 const MAX_STEP_SECONDS = 1 / 120;
 const SHOT_SPEED_METERS_PER_SECOND = 8.0;
 const PLAYABLE_REST_SPEED = 0.003;
 const PLAYABLE_REST_SPIN = 0.08;
-const TABLE_GEOMETRY_CENTER_INSET = BALL_RADIUS - CUSHION_NOSE_INSET;
 const VISUAL_CONTACT_EPSILON = 0.01;
+const CORNER_POCKET_CAPTURE_DEPTH = BALL_RADIUS * Math.SQRT2;
 // The opening is larger than the hole's center radius because a ball drops
 // when its edge clears the leather lip, not only when its center reaches the
 // bottom of the pocket.
@@ -78,9 +79,8 @@ export class ProfessionalPoolEngine {
 
   constructor() {
     setR(this.mapper.ballRadiusMeters);
-    this.configureVisualTableGeometry();
-    PocketGeometry.scaleToRadius(R);
     this.configureStraightCushionContacts();
+    PocketGeometry.scaleToRadius(R);
     this.visualDropPockets = this.createVisualDropPockets();
   }
 
@@ -302,9 +302,43 @@ export class ProfessionalPoolEngine {
 
     const futurePosition = ball.futurePosition(deltaSeconds);
     const futurePixels = this.mapper.toPixels(futurePosition);
+    const jawCollision = findEarliestPocketJawCollision(
+      this.mapper.toPixels(ball.pos),
+      {
+        x: ball.vel.x * this.mapper.pixelsPerMeter,
+        y: -ball.vel.y * this.mapper.pixelsPerMeter,
+      },
+      deltaSeconds,
+      BALL_RADIUS,
+    );
+    if (jawCollision) {
+      this.resolvedKnuckleContacts.add(ball.localId);
+      const pixelVelocity = {
+        x: ball.vel.x * this.mapper.pixelsPerMeter,
+        y: -ball.vel.y * this.mapper.pixelsPerMeter,
+      };
+      const normalSpeed = pixelVelocity.x * jawCollision.normal.x + pixelVelocity.y * jawCollision.normal.y;
+      pixelVelocity.x -= 2 * e * normalSpeed * jawCollision.normal.x;
+      pixelVelocity.y -= 2 * e * normalSpeed * jawCollision.normal.y;
+      ball.vel.set(
+        pixelVelocity.x / this.mapper.pixelsPerMeter,
+        -pixelVelocity.y / this.mapper.pixelsPerMeter,
+        0,
+      );
+      ball.rvel.multiplyScalar(0.5);
+      this.postUpdateCushionContacts.set(ball.localId, jawCollision.position);
+      this.visibleCushionContacts.set(ball.localId, jawCollision.position);
+      this.events.push({
+        type: 'cushion',
+        ballId: ball.localId,
+        speed: Math.abs(normalSpeed) / this.mapper.pixelsPerMeter,
+      });
+      return false;
+    }
     const visualPocket = this.findVisualDropPocket(futurePixels);
     const pocketThroat = this.isInMiddlePocketThroat(futurePixels) || this.isInCornerPocketThroat(futurePixels);
-    const approachingPocketJaw = (visualPocket || this.isNearPocketJaw(futurePixels))
+    const nearPocketJaw = this.isNearPocketJaw(futurePixels);
+    const approachingPocketJaw = (visualPocket || nearPocketJaw)
       ? this.findApproachingKnuckle(ball, deltaSeconds)
       : undefined;
     if (approachingPocketJaw) {
@@ -384,30 +418,6 @@ export class ProfessionalPoolEngine {
     return awayFromKnuckle.dot(ball.vel) < 0 ? knuckle : undefined;
   }
 
-  private configureVisualTableGeometry(): void {
-    const center = {
-      x: (PLAY_AREA.left + PLAY_AREA.right) / 2,
-      y: (PLAY_AREA.top + PLAY_AREA.bottom) / 2,
-    };
-    const rightLimit = this.mapper.toPhysics({
-      // PocketGeometry is generated from the accepted model's original jaw
-      // placement. Straight cushion contacts are tightened afterwards.
-      x: PLAY_AREA.right - TABLE_GEOMETRY_CENTER_INSET,
-      y: center.y,
-    }).x;
-    const topLimit = this.mapper.toPhysics({
-      x: center.x,
-      // Keep the imported model's pocket jaws and throats in their accepted
-      // positions. visualBoundsFor supplies the stricter straight-rail limit.
-      y: PLAY_AREA.top + TABLE_GEOMETRY_CENTER_INSET,
-    }).y;
-
-    TableGeometry.tableX = Math.abs(rightLimit);
-    TableGeometry.tableY = Math.abs(topLimit);
-    TableGeometry.X = TableGeometry.tableX + R;
-    TableGeometry.Y = TableGeometry.tableY + R;
-  }
-
   private configureStraightCushionContacts(): void {
     const rightLimit = this.mapper.toPhysics({
       x: BALL_CENTER_BOUNDS.right,
@@ -418,11 +428,12 @@ export class ProfessionalPoolEngine {
       y: BALL_CENTER_BOUNDS.top,
     }).y;
 
-    // PocketGeometry has already captured the accepted model's jaw and throat
-    // positions. Only uninterrupted straight-cushion contacts move to the
-    // full-radius ball-center limits, so pocket openings stay unchanged.
+    // PocketGeometry is generated after these final limits are set, keeping
+    // every jaw tangent to the same ball-center boundary as the straight rail.
     TableGeometry.tableX = Math.abs(rightLimit);
     TableGeometry.tableY = Math.abs(topLimit);
+    TableGeometry.X = TableGeometry.tableX + R;
+    TableGeometry.Y = TableGeometry.tableY + R;
   }
 
   private createVisualDropPockets(): VisualDropPocket[] {
@@ -472,7 +483,7 @@ export class ProfessionalPoolEngine {
     const middleOffset = Math.abs(point.x - TABLE.width / 2);
     const nearMiddleJaw =
       nearHorizontalNose &&
-      middleOffset >= POCKET_MOUTHS.middleCaptureHalf &&
+      middleOffset >= POCKET_MOUTHS.middleCaptureHalf - BALL_RADIUS &&
       middleOffset <= POCKET_MOUTHS.middleCaptureHalf + BALL_RADIUS * 2;
 
     const nearCorner =
@@ -549,7 +560,7 @@ export class ProfessionalPoolEngine {
       xDirection,
       yDirection,
       BALL_RADIUS / 2,
-      POCKET_MOUTHS.cornerCapture,
+      CORNER_POCKET_CAPTURE_DEPTH,
     );
     return withinOpening && inMouth;
   }

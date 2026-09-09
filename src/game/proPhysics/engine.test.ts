@@ -489,6 +489,59 @@ describe('ProfessionalPoolEngine', () => {
     ).toHaveLength(0);
   });
 
+  it('bounces diagonal hits on all four middle-pocket jaws before pocket capture', () => {
+    const cases = [
+      {
+        name: 'upper-left',
+        x: TABLE.width / 2 - 55,
+        y: PLAY_AREA.top + BALL_RADIUS * 5,
+        vx: 1,
+        vy: 2.4,
+      },
+      {
+        name: 'upper-right',
+        x: TABLE.width / 2 + 55,
+        y: PLAY_AREA.top + BALL_RADIUS * 5,
+        vx: -1,
+        vy: 2.4,
+      },
+      {
+        name: 'lower-left',
+        x: TABLE.width / 2 - 55,
+        y: PLAY_AREA.bottom - BALL_RADIUS * 5,
+        vx: 1,
+        vy: -2.4,
+      },
+      {
+        name: 'lower-right',
+        x: TABLE.width / 2 + 55,
+        y: PLAY_AREA.bottom - BALL_RADIUS * 5,
+        vx: -1,
+        vy: -2.4,
+      },
+    ];
+
+    for (const jaw of cases) {
+      const engine = new ProfessionalPoolEngine();
+      engine.rack([
+        { id: 0, kind: 'cue', position: CUE_START },
+        { id: 1, kind: 'target', position: { x: jaw.x, y: jaw.y }, label: 1 },
+      ]);
+      engine.setBallVelocity(1, { x: jaw.vx, y: jaw.vy });
+
+      const events = [];
+      let result = engine.step(1 / 60);
+      for (let frame = 0; frame < 120; frame += 1) {
+        events.push(...result.events);
+        result = engine.step(1 / 60);
+      }
+
+      expect(events.some((event) => event.type === 'cushion' && event.ballId === 1), jaw.name).toBe(true);
+      expect(events.filter((event) => event.type === 'pocket' && event.ballId === 1), jaw.name).toHaveLength(0);
+      expect(result.balls.find((ball) => ball.id === 1)?.pocketed, jaw.name).toBe(false);
+    }
+  });
+
   it('lets a centered ball enter the middle pocket throat without bouncing off the cushion', () => {
     const engine = new ProfessionalPoolEngine();
     engine.rack([
@@ -519,7 +572,7 @@ describe('ProfessionalPoolEngine', () => {
     expect(result.balls.find((ball) => ball.id === 1)?.pocketed).toBe(true);
   });
 
-  it('lets a ball enter the lower-right corner pocket without bouncing out', () => {
+  it('lets a ball enter the lower-right corner pocket after a physical jaw contact', () => {
     const engine = new ProfessionalPoolEngine();
     engine.rack([
       { id: 0, kind: 'cue', position: CUE_START },
@@ -544,7 +597,7 @@ describe('ProfessionalPoolEngine', () => {
       events.push(...result.events);
     }
 
-    expect(events.filter((event) => event.type === 'cushion' && event.ballId === 1)).toHaveLength(0);
+    expect(events.some((event) => event.type === 'cushion' && event.ballId === 1)).toBe(true);
     expect(events.filter((event) => event.type === 'pocket' && event.ballId === 1)).toHaveLength(1);
     expect(result.balls.find((ball) => ball.id === 1)?.pocketed).toBe(true);
   });
@@ -650,7 +703,7 @@ describe('ProfessionalPoolEngine', () => {
     }
   });
 
-  it('lets angled shots from the cloth fall into corner pockets', () => {
+  it('rebounds angled shots whose ball edge clips any corner-pocket jaw', () => {
     const cases = [
       {
         name: 'upper-left',
@@ -691,17 +744,18 @@ describe('ProfessionalPoolEngine', () => {
         events.push(...result.events);
       }
 
-      expect(events.filter((event) => event.type === 'pocket' && event.ballId === 1), corner.name).toHaveLength(1);
-      expect(result.balls.find((ball) => ball.id === 1)?.pocketed, corner.name).toBe(true);
+      expect(events.some((event) => event.type === 'cushion' && event.ballId === 1), corner.name).toBe(true);
+      expect(events.filter((event) => event.type === 'pocket' && event.ballId === 1), corner.name).toHaveLength(0);
+      expect(result.balls.find((ball) => ball.id === 1)?.pocketed, corner.name).toBe(false);
     }
   });
 
   it('drops balls that settle inside the visible corner pocket openings', () => {
     const cases = [
-      { name: 'upper-left', position: { x: PLAY_AREA.left + 16, y: PLAY_AREA.top + 16 } },
-      { name: 'upper-right', position: { x: PLAY_AREA.right - 16, y: PLAY_AREA.top + 16 } },
-      { name: 'lower-left', position: { x: PLAY_AREA.left + 16, y: PLAY_AREA.bottom - 16 } },
-      { name: 'lower-right', position: { x: PLAY_AREA.right - 16, y: PLAY_AREA.bottom - 16 } },
+      { name: 'upper-left', position: { x: PLAY_AREA.left + BALL_RADIUS / 2, y: PLAY_AREA.top + BALL_RADIUS / 2 } },
+      { name: 'upper-right', position: { x: PLAY_AREA.right - BALL_RADIUS / 2, y: PLAY_AREA.top + BALL_RADIUS / 2 } },
+      { name: 'lower-left', position: { x: PLAY_AREA.left + BALL_RADIUS / 2, y: PLAY_AREA.bottom - BALL_RADIUS / 2 } },
+      { name: 'lower-right', position: { x: PLAY_AREA.right - BALL_RADIUS / 2, y: PLAY_AREA.bottom - BALL_RADIUS / 2 } },
     ];
 
     for (const corner of cases) {
@@ -842,6 +896,35 @@ describe('ProfessionalPoolEngine', () => {
     expect(target?.position.y).toBeGreaterThanOrEqual(PLAY_AREA.top + BALL_RADIUS - CUSHION_NOSE_INSET - 1);
   });
 
+  it('keeps glancing jaw rebounds out of all four corner pockets', () => {
+    const cases = [
+      { name: 'upper-left', x: PLAY_AREA.left + 55, y: PLAY_AREA.top + BALL_RADIUS * 5, vx: -0.4, vy: 2.4 },
+      { name: 'upper-right', x: PLAY_AREA.right - 55, y: PLAY_AREA.top + BALL_RADIUS * 5, vx: 0.4, vy: 2.4 },
+      { name: 'lower-left', x: PLAY_AREA.left + 55, y: PLAY_AREA.bottom - BALL_RADIUS * 5, vx: -0.4, vy: -2.4 },
+      { name: 'lower-right', x: PLAY_AREA.right - 55, y: PLAY_AREA.bottom - BALL_RADIUS * 5, vx: 0.4, vy: -2.4 },
+    ];
+
+    for (const jaw of cases) {
+      const engine = new ProfessionalPoolEngine();
+      engine.rack([
+        { id: 0, kind: 'cue', position: CUE_START },
+        { id: 1, kind: 'target', position: { x: jaw.x, y: jaw.y }, label: 1 },
+      ]);
+      engine.setBallVelocity(1, { x: jaw.vx, y: jaw.vy });
+
+      const events = [];
+      let result = engine.step(1 / 60);
+      for (let frame = 0; frame < 120; frame += 1) {
+        events.push(...result.events);
+        result = engine.step(1 / 60);
+      }
+
+      expect(events.some((event) => event.type === 'cushion' && event.ballId === 1), jaw.name).toBe(true);
+      expect(events.filter((event) => event.type === 'pocket' && event.ballId === 1), jaw.name).toHaveLength(0);
+      expect(result.balls.find((ball) => ball.id === 1)?.pocketed, jaw.name).toBe(false);
+    }
+  });
+
   it('bounces off a middle-pocket jaw instead of falling through or being pulled back', () => {
     const engine = new ProfessionalPoolEngine();
     engine.rack([
@@ -898,7 +981,7 @@ describe('ProfessionalPoolEngine', () => {
     expect(crossedOutside).toBe(false);
   });
 
-  it('lets a ball rolling down the right rail fall into the lower-right corner pocket', () => {
+  it('rebounds a ball that follows the right rail into the lower-right jaw', () => {
     const engine = new ProfessionalPoolEngine();
     engine.rack([
       { id: 0, kind: 'cue', position: CUE_START },
@@ -923,14 +1006,16 @@ describe('ProfessionalPoolEngine', () => {
       events.push(...result.events);
     }
 
-    expect(events.filter((event) => event.type === 'pocket' && event.ballId === 1)).toHaveLength(1);
-    expect(result.balls.find((ball) => ball.id === 1)?.pocketed).toBe(true);
+    expect(events.some((event) => event.type === 'cushion' && event.ballId === 1)).toBe(true);
+    expect(events.filter((event) => event.type === 'pocket' && event.ballId === 1)).toHaveLength(0);
+    expect(result.balls.find((ball) => ball.id === 1)?.pocketed).toBe(false);
   });
 
-  it('lets rail-following balls fall into the lower-left and upper-right corner pockets', () => {
+  it('rebounds rail-following balls that run into lower-left and upper-right jaws', () => {
     const cases = [
       {
         name: 'lower-left from left rail',
+        outcome: 'jaw',
         position: {
           x: PLAY_AREA.left + BALL_RADIUS + CUSHION_NOSE_INSET + 2,
           y: PLAY_AREA.bottom - 150,
@@ -939,6 +1024,7 @@ describe('ProfessionalPoolEngine', () => {
       },
       {
         name: 'upper-right from right rail',
+        outcome: 'jaw',
         position: {
           x: PLAY_AREA.right - BALL_RADIUS - CUSHION_NOSE_INSET - 2,
           y: PLAY_AREA.top + 150,
@@ -947,6 +1033,7 @@ describe('ProfessionalPoolEngine', () => {
       },
       {
         name: 'lower-left from bottom rail',
+        outcome: 'pocket',
         position: {
           x: PLAY_AREA.left + 150,
           y: PLAY_AREA.bottom - BALL_RADIUS - CUSHION_NOSE_INSET - 2,
@@ -955,6 +1042,7 @@ describe('ProfessionalPoolEngine', () => {
       },
       {
         name: 'upper-right from top rail',
+        outcome: 'pocket',
         position: {
           x: PLAY_AREA.right - 150,
           y: PLAY_AREA.top + BALL_RADIUS + CUSHION_NOSE_INSET + 2,
@@ -963,6 +1051,7 @@ describe('ProfessionalPoolEngine', () => {
       },
       {
         name: 'lower-left through mouth without a one-frame outside-wall bounce',
+        outcome: 'jaw',
         position: {
           x: PLAY_AREA.left + 22,
           y: PLAY_AREA.bottom - 3,
@@ -971,6 +1060,7 @@ describe('ProfessionalPoolEngine', () => {
       },
       {
         name: 'upper-right through mouth without a one-frame outside-wall bounce',
+        outcome: 'jaw',
         position: {
           x: PLAY_AREA.right - 22,
           y: PLAY_AREA.top + 3,
@@ -996,12 +1086,21 @@ describe('ProfessionalPoolEngine', () => {
         events.push(...result.events);
       }
 
-      expect(events.filter((event) => event.type === 'pocket' && event.ballId === 1), corner.name).toHaveLength(1);
-      expect(result.balls.find((ball) => ball.id === 1)?.pocketed, corner.name).toBe(true);
+      const cushionEvents = events.filter((event) => event.type === 'cushion' && event.ballId === 1);
+      const pocketEvents = events.filter((event) => event.type === 'pocket' && event.ballId === 1);
+      if (corner.outcome === 'jaw') {
+        expect(cushionEvents.length, corner.name).toBeGreaterThan(0);
+        expect(pocketEvents, corner.name).toHaveLength(0);
+        expect(result.balls.find((ball) => ball.id === 1)?.pocketed, corner.name).toBe(false);
+      } else {
+        expect(cushionEvents, corner.name).toHaveLength(0);
+        expect(pocketEvents, corner.name).toHaveLength(1);
+        expect(result.balls.find((ball) => ball.id === 1)?.pocketed, corner.name).toBe(true);
+      }
     }
   });
 
-  it('does not reject valid lower-left and upper-right shots aimed at the pocket center', () => {
+  it('allows lower-left and upper-right jaw-assisted shots to continue into the pocket', () => {
     const cases = [
       {
         name: 'lower-left',
@@ -1036,13 +1135,13 @@ describe('ProfessionalPoolEngine', () => {
         events.push(...result.events);
       }
 
-      expect(events.filter((event) => event.type === 'cushion' && event.ballId === 1), shot.name).toHaveLength(0);
+      expect(events.some((event) => event.type === 'cushion' && event.ballId === 1), shot.name).toBe(true);
       expect(events.filter((event) => event.type === 'pocket' && event.ballId === 1), shot.name).toHaveLength(1);
       expect(result.balls.find((ball) => ball.id === 1)?.pocketed, shot.name).toBe(true);
     }
   });
 
-  it('does not bounce balls out of lower-left and upper-right pocket mouths during a long frame', () => {
+  it('resolves lower-left and upper-right jaw hits before pocket capture during a long frame', () => {
     const cases = [
       {
         name: 'lower-left',
@@ -1067,8 +1166,8 @@ describe('ProfessionalPoolEngine', () => {
 
       const result = engine.step(1 / 20);
 
-      expect(result.events.filter((event) => event.type === 'cushion' && event.ballId === 1), corner.name).toHaveLength(0);
-      expect(result.balls.find((ball) => ball.id === 1)?.pocketed, corner.name).toBe(true);
+      expect(result.events.some((event) => event.type === 'cushion' && event.ballId === 1), corner.name).toBe(true);
+      expect(result.balls.find((ball) => ball.id === 1)?.pocketed, corner.name).toBe(false);
     }
   });
 
