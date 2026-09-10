@@ -40,4 +40,10 @@ describe('daily growth tasks', () => {
       unclaimedCoins: 0,
     });
   });
+
+  it('uses the 66 coin check-in reward shown by the monthly calendar', () => {
+    const state = createDailyTaskState('2026-09-10');
+
+    expect(completeDailyTask(state, 'daily_check_in').coinReward).toBe(66);
+  });
 });

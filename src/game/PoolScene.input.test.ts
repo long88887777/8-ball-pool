@@ -14,6 +14,7 @@ vi.mock('phaser', () => ({
 
 import { CUE_START } from './constants';
 import { createEightBallState } from './eightBallRules';
+import { DEFAULT_EQUIPPED_CUE_ID, DEFAULT_PLAYER_WALLET } from './economy';
 import { PoolScene } from './PoolScene';
 import { createNineBallState } from './nineBallRules';
 import { createGameState, recordStroke } from './state';
@@ -55,6 +56,7 @@ type InputHarness = {
   aiThinking: boolean;
   onlineState: null;
   physicsEngine: { isSettled: ReturnType<typeof vi.fn> };
+  wallet: typeof DEFAULT_PLAYER_WALLET;
   aimLine: { clear: ReturnType<typeof vi.fn> };
   cueGraphics: { clear: ReturnType<typeof vi.fn> };
   updateAimHud: ReturnType<typeof vi.fn>;
@@ -108,6 +110,26 @@ function createInputHarness(): {
 }
 
 describe('PoolScene aim input', () => {
+  it('does not start aiming while the equipped cue needs repair', () => {
+    const { scene, handlers } = createInputHarness();
+    scene.wallet = {
+      ...DEFAULT_PLAYER_WALLET,
+      cueDurability: { [DEFAULT_EQUIPPED_CUE_ID]: 0 },
+    };
+    scene.bindInput();
+
+    handlers.get('pointerdown')!({
+      id: 42,
+      pointerId: 420,
+      worldX: CUE_START.x - 100,
+      worldY: CUE_START.y,
+      rightButtonDown: () => false,
+    });
+
+    expect(scene.aimState).toBeNull();
+    expect(scene.game.canvas?.setPointerCapture).not.toHaveBeenCalled();
+  });
+
   it('captures the active aim pointer so dragging outside the canvas can keep increasing power', () => {
     const { scene, handlers } = createInputHarness();
     scene.bindInput();

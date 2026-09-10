@@ -2,6 +2,9 @@ import { describe, expect, it } from 'vitest';
 import html from '../index.html?raw';
 import favicon from '../public/favicon.svg?raw';
 import posterBackgroundUrl from '../public/assets/pool-poster-background.webp?url';
+import rareCheckInChestUrl from '../public/assets/check-in/chest-rare.webp?url';
+import epicCheckInChestUrl from '../public/assets/check-in/chest-epic.webp?url';
+import legendaryCheckInChestUrl from '../public/assets/check-in/chest-legendary.webp?url';
 
 describe('app static assets', () => {
   it('declares an available favicon asset', async () => {
@@ -15,5 +18,13 @@ describe('app static assets', () => {
 
   it('declares an available poster artwork asset for the game background', () => {
     expect(posterBackgroundUrl).toContain('pool-poster-background');
+  });
+
+  it('bundles every monthly check-in chest quality', () => {
+    expect([rareCheckInChestUrl, epicCheckInChestUrl, legendaryCheckInChestUrl]).toEqual([
+      expect.stringContaining('chest-rare'),
+      expect.stringContaining('chest-epic'),
+      expect.stringContaining('chest-legendary'),
+    ]);
   });
 });

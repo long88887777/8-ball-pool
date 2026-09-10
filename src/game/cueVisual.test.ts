@@ -7,11 +7,11 @@ describe('cue sprite pose', () => {
     const style = CUE_CATALOG[0];
     const pose = computeCueSpritePose({ x: 320, y: 240 }, 0, 40, style);
 
-    expect(pose.textureKey).toBe('cue-classic-maple');
+    expect(pose.textureKey).toBe('cue-comet-tail');
     expect(pose.x).toBeCloseTo(275);
     expect(pose.y).toBeCloseTo(240);
     expect(pose.rotation).toBeCloseTo(Math.PI);
-    expect(pose.originX).toBeCloseTo(65 / 2172);
+    expect(pose.originX).toBeCloseTo(19 / 2172);
     expect(pose.originY).toBe(0.5);
     expect(pose.displayWidth).toBe(470);
     expect(pose.displayHeight).toBeCloseTo((470 * 160) / 2172);

@@ -134,6 +134,11 @@
           <section class="menu-secondary-actions" aria-labelledby="menu-secondary-title">
             <span id="menu-secondary-title" class="menu-secondary-title">更多</span>
             <div class="menu-action-group" aria-label="Player actions">
+              <button id="checkin-open" class="menu-growth-btn menu-checkin-btn" type="button">
+                <span class="menu-checkin-btn-icon" aria-hidden="true">✓</span>
+                <span>签到领奖励</span>
+                <span id="checkin-ready-dot" class="menu-checkin-ready-dot" hidden aria-label="有奖励可领取"></span>
+              </button>
               <button id="growth-panel-toggle" class="menu-growth-btn" type="button">个人成长</button>
               <button id="history-open" class="menu-growth-btn" type="button">对局历史</button>
               <button id="settings-open" class="menu-growth-btn" type="button">设置</button>
@@ -326,6 +331,108 @@
       </div>
     </section>
 
+    <section id="checkin-panel" class="checkin-overlay" hidden>
+      <div class="checkin-dialog" role="dialog" aria-modal="true" aria-labelledby="checkin-title">
+        <header class="checkin-header">
+          <div>
+            <p class="checkin-eyebrow">每日签到</p>
+            <h2 id="checkin-title">月度签到</h2>
+            <p id="checkin-month-label" class="checkin-month-label"></p>
+          </div>
+          <button id="checkin-close" class="checkin-close" type="button" aria-label="关闭签到奖励">×</button>
+        </header>
+
+        <div class="checkin-ledger" aria-label="签到概览">
+          <div class="checkin-ledger-item">
+            <span>本月已签到</span>
+            <strong id="checkin-total">0 <small>天</small></strong>
+          </div>
+          <div class="checkin-ledger-item checkin-ledger-card">
+            <span>补签卡</span>
+            <strong id="checkin-card-count">0 <small>张</small></strong>
+          </div>
+          <div class="checkin-ledger-item">
+            <span>补签进度</span>
+            <strong id="checkin-match-progress">0/3 <small>局</small></strong>
+          </div>
+          <div class="checkin-ledger-item">
+            <span>本月补签</span>
+            <strong id="checkin-makeup-count">0/7 <small>次</small></strong>
+          </div>
+        </div>
+
+        <div class="checkin-content">
+          <section class="checkin-calendar-card" aria-labelledby="checkin-calendar-title">
+            <div class="checkin-calendar-heading">
+              <div>
+                <span>本月进度</span>
+                <h3 id="checkin-calendar-title">每日奖励 66 金币</h3>
+              </div>
+              <div class="checkin-calendar-progress" aria-hidden="true">
+                <span id="checkin-calendar-progress-fill"></span>
+              </div>
+            </div>
+            <div class="checkin-weekdays" aria-hidden="true">
+              <span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span><span>日</span>
+            </div>
+            <div id="checkin-calendar" class="checkin-calendar" role="grid" aria-label="本月签到日历"></div>
+            <div class="checkin-action-bar">
+              <div>
+                <span id="checkin-selection-label">选择日期</span>
+                <strong id="checkin-selection-detail">今天可以签到</strong>
+              </div>
+              <button id="checkin-primary-action" type="button">今日签到 · +66</button>
+            </div>
+            <p id="checkin-feedback" class="checkin-feedback" aria-live="polite"></p>
+          </section>
+
+          <aside class="checkin-milestone-panel" aria-labelledby="checkin-milestone-title">
+            <div class="checkin-milestone-heading">
+              <span>阶段奖励</span>
+              <h3 id="checkin-milestone-title">本月宝箱</h3>
+            </div>
+            <div id="checkin-milestones" class="checkin-milestones"></div>
+            <div class="checkin-rule-note">
+              <span class="checkin-rule-note-icon" aria-hidden="true">3局</span>
+              <p><strong>完整完成 3 场对局</strong>可获得 1 张补签卡；每天最多补签 1 次，每月最多 7 次。</p>
+            </div>
+          </aside>
+        </div>
+      </div>
+    </section>
+
+    <section id="checkin-chest-modal" class="checkin-chest-overlay" hidden>
+      <div id="checkin-chest-dialog" class="checkin-chest-dialog" role="dialog" aria-modal="true" aria-labelledby="checkin-chest-title">
+        <button id="checkin-chest-close" class="checkin-chest-close" type="button" aria-label="关闭宝箱">×</button>
+        <div id="checkin-chest-intro" class="checkin-chest-intro">
+          <span id="checkin-chest-kicker" class="checkin-chest-kicker">稀有奖励</span>
+          <h2 id="checkin-chest-title">稀有球杆宝箱</h2>
+          <p id="checkin-chest-subtitle">奖池只包含同品质球杆</p>
+          <div class="checkin-chest-stage">
+            <span class="checkin-chest-aura" aria-hidden="true"></span>
+            <img id="checkin-chest-image" src="/assets/check-in/chest-rare.webp" alt="稀有球杆宝箱" />
+          </div>
+          <button id="checkin-chest-open" class="checkin-chest-open" type="button">开启宝箱</button>
+        </div>
+        <div id="checkin-roulette" class="checkin-roulette" hidden>
+          <div class="checkin-roulette-titlebar">
+            <span id="checkin-roulette-kicker">稀有奖池</span>
+            <strong>正在抽取球杆</strong>
+          </div>
+          <div class="checkin-roulette-window">
+            <span class="checkin-roulette-marker" aria-hidden="true"></span>
+            <div id="checkin-roulette-track" class="checkin-roulette-track"></div>
+          </div>
+          <div id="checkin-reward-result" class="checkin-reward-result" hidden>
+            <span id="checkin-reward-rarity"></span>
+            <h3 id="checkin-reward-name"></h3>
+            <p id="checkin-reward-detail"></p>
+            <button id="checkin-reward-accept" type="button">收下奖励</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
     <section id="history-panel" class="history-panel-overlay" hidden>
       <div class="history-panel-dialog">
         <div class="history-panel-header">
@@ -430,7 +537,25 @@
       <div class="challenge-dialog challenge-select-dialog">
         <h2 id="challenge-title">挑战模式</h2>
         <div id="challenge-grid" class="challenge-grid"></div>
+        <section id="challenge-reward-card" class="challenge-reward-card" data-status="locked">
+          <img src="assets/challenge-all-stars-chest.png" alt="满星通关宝箱" />
+          <div>
+            <strong>全关卡满星宝箱</strong>
+            <span id="challenge-reward-detail">集齐全部星星即可开启</span>
+          </div>
+          <button id="challenge-reward-open" type="button" disabled>尚未解锁</button>
+        </section>
         <button id="challenge-back" type="button">返回</button>
+      </div>
+    </section>
+
+    <section id="challenge-reward-modal" class="challenge-overlay challenge-reward-overlay" hidden>
+      <div class="challenge-dialog challenge-reward-dialog" role="dialog" aria-modal="true" aria-labelledby="challenge-reward-title">
+        <button id="challenge-reward-close" class="challenge-reward-close" type="button" aria-label="关闭">×</button>
+        <img class="challenge-reward-hero" src="assets/challenge-all-stars-chest.png" alt="开启的满星通关宝箱" />
+        <h2 id="challenge-reward-title">满星通关奖励</h2>
+        <p id="challenge-reward-hint"></p>
+        <div id="challenge-reward-options" class="challenge-reward-options"></div>
       </div>
     </section>
 
@@ -453,6 +578,8 @@
         </div>
         <div class="hud" aria-live="polite">
           <span id="coin-balance" class="coin-balance">金币 260</span>
+          <span id="ai-daily-coin-progress" hidden>人机金币 0/300</span>
+          <button id="cue-status" class="cue-status" type="button">彗星尾迹 · 耐用 50/50</button>
           <button id="daily-checkin" type="button">每日签到 +180</button>
           <span id="mode">Self Practice · 8-Ball</span>
           <span id="remaining">Balls 15</span>
@@ -639,15 +766,27 @@
     </main>
 
     <section id="cue-shop" class="cue-shop-overlay" hidden>
-      <div class="cue-shop-dialog">
+      <div class="cue-shop-dialog" role="dialog" aria-modal="true" aria-labelledby="cue-shop-title">
         <div class="cue-shop-header">
-          <div>
-            <p class="eyebrow">Cue Collection</p>
+          <div class="cue-shop-heading-copy">
             <h2 id="cue-shop-title">球杆收藏</h2>
+            <p class="cue-shop-subtitle">按品质与综合评分排列</p>
           </div>
-          <button id="cue-shop-close" class="cue-shop-close" type="button" aria-label="Close cue shop">&times;</button>
+          <button id="cue-shop-close" class="cue-shop-close" type="button" aria-label="关闭球杆收藏" title="关闭">&times;</button>
         </div>
-        <div id="cue-shop-balance" class="cue-shop-balance">金币 260</div>
+        <div class="cue-shop-ledger">
+          <div class="cue-shop-balance-wrap">
+            <span>当前金币</span>
+            <strong id="cue-shop-balance" class="cue-shop-balance">260</strong>
+          </div>
+          <div class="cue-shop-counts" aria-label="球杆库存摘要">
+            <span>30 支球杆</span>
+            <span>传说 4</span>
+            <span>史诗 6</span>
+            <span>稀有 8</span>
+            <span>基础 12</span>
+          </div>
+        </div>
         <div id="cue-shop-grid" class="cue-shop-grid"></div>
         <p id="cue-shop-feedback" class="cue-shop-feedback" aria-live="polite"></p>
       </div>
@@ -663,11 +802,11 @@
       >
         <div class="cue-detail-preview-header">
           <div>
-            <p class="eyebrow">Cue Detail</p>
+            <p class="eyebrow">球杆大图</p>
             <h2 id="cue-detail-preview-title">球杆预览</h2>
             <p id="cue-detail-preview-meta" class="cue-detail-preview-meta"></p>
           </div>
-          <button id="cue-detail-preview-close" class="cue-shop-close" type="button" aria-label="Close cue preview">&times;</button>
+          <button id="cue-detail-preview-close" class="cue-shop-close" type="button" aria-label="关闭球杆预览" title="关闭">&times;</button>
         </div>
         <div class="cue-detail-preview-stage">
           <img id="cue-detail-preview-image" src="" alt="" />

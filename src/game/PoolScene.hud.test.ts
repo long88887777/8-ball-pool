@@ -15,7 +15,7 @@ vi.mock('phaser', () => ({
 import { PoolScene } from './PoolScene';
 import { createChallengeState } from './challenge/challengeState';
 import { CHALLENGE_LEVELS } from './challenge/levels';
-import { DEFAULT_PLAYER_WALLET } from './economy';
+import { AI_DAILY_COIN_LIMIT, DEFAULT_PLAYER_WALLET, type MatchCoinMode, type PlayerWallet } from './economy';
 import { createNineBallState } from './nineBallRules';
 
 type HudHarness = {
@@ -29,8 +29,24 @@ type HudHarness = {
 };
 
 type EconomyHudHarness = {
+  gameMode: 'pvp' | 'ai' | 'challenge' | 'online';
   wallet: typeof DEFAULT_PLAYER_WALLET;
   renderEconomyHud: () => void;
+};
+
+type CoinSettlementHarness = {
+  gameMode: 'pvp' | 'ai' | 'challenge' | 'online';
+  wallet: PlayerWallet;
+  matchCoinSettled: boolean;
+  lastCoinDelta: number;
+  lastCoinMode: MatchCoinMode | null;
+  lastCoinDailyLimitReached: boolean;
+  settleMatchCoins: (won: boolean) => void;
+  formatCoinResultText: () => string;
+  localDateKey: () => string;
+  savePlayerWallet: (wallet: PlayerWallet) => PlayerWallet;
+  renderEconomyHud: ReturnType<typeof vi.fn>;
+  renderCueShop: ReturnType<typeof vi.fn>;
 };
 
 type MatchHudHarness = HudHarness & {
@@ -496,9 +512,16 @@ describe('PoolScene HUD', () => {
     const nodes: Record<string, HTMLElement> = {
       '#coin-balance': { textContent: '' } as HTMLElement,
       '#growth-stat-coins': { textContent: '' } as HTMLElement,
+      '#ai-daily-coin-progress': { textContent: '', hidden: true } as HTMLElement,
     };
 
-    scene.wallet = { ...DEFAULT_PLAYER_WALLET, coins: 880 };
+    scene.gameMode = 'ai';
+    scene.wallet = {
+      ...DEFAULT_PLAYER_WALLET,
+      coins: 880,
+      aiCoinEarnedDate: '2026-09-09',
+      aiCoinsEarned: 145,
+    };
 
     globalThis.document = {
       querySelector: vi.fn((selector: string) => nodes[selector] ?? null),
@@ -509,8 +532,74 @@ describe('PoolScene HUD', () => {
 
       expect(nodes['#coin-balance'].textContent).toBe('金币 880');
       expect(nodes['#growth-stat-coins'].textContent).toBe('880');
+      expect(nodes['#ai-daily-coin-progress'].hidden).toBe(false);
+      expect(nodes['#ai-daily-coin-progress'].textContent).toContain('/300');
     } finally {
       globalThis.document = previousDocument;
+    }
+  });
+
+  it('applies the AI daily cap when a scene settles a win', () => {
+    const scene = new PoolScene() as unknown as CoinSettlementHarness;
+    scene.gameMode = 'ai';
+    scene.wallet = {
+      ...DEFAULT_PLAYER_WALLET,
+      coins: 500,
+      aiCoinEarnedDate: '2026-09-09',
+      aiCoinsEarned: 285,
+    };
+    scene.matchCoinSettled = false;
+    scene.localDateKey = () => '2026-09-09';
+    scene.savePlayerWallet = (wallet) => {
+      scene.wallet = wallet;
+      return wallet;
+    };
+    scene.renderEconomyHud = vi.fn();
+    scene.renderCueShop = vi.fn();
+    const random = vi.spyOn(Math, 'random').mockReturnValue(0.999999);
+
+    try {
+      scene.settleMatchCoins(true);
+
+      expect(scene.wallet.coins).toBe(515);
+      expect(scene.wallet.aiCoinsEarned).toBe(AI_DAILY_COIN_LIMIT);
+      expect(scene.lastCoinDelta).toBe(15);
+      expect(scene.lastCoinMode).toBe('ai');
+      expect(scene.lastCoinDailyLimitReached).toBe(true);
+      expect(scene.formatCoinResultText()).toContain('受每日上限影响实际获得 15');
+    } finally {
+      random.mockRestore();
+    }
+  });
+
+  it('uses the uncapped PVP range for online matches', () => {
+    const scene = new PoolScene() as unknown as CoinSettlementHarness;
+    scene.gameMode = 'online';
+    scene.wallet = {
+      ...DEFAULT_PLAYER_WALLET,
+      coins: 500,
+      aiCoinEarnedDate: '2026-09-09',
+      aiCoinsEarned: AI_DAILY_COIN_LIMIT,
+    };
+    scene.matchCoinSettled = false;
+    scene.localDateKey = () => '2026-09-09';
+    scene.savePlayerWallet = (wallet) => {
+      scene.wallet = wallet;
+      return wallet;
+    };
+    scene.renderEconomyHud = vi.fn();
+    scene.renderCueShop = vi.fn();
+    const random = vi.spyOn(Math, 'random').mockReturnValue(0.999999);
+
+    try {
+      scene.settleMatchCoins(true);
+
+      expect(scene.wallet.coins).toBe(600);
+      expect(scene.wallet.aiCoinsEarned).toBe(AI_DAILY_COIN_LIMIT);
+      expect(scene.lastCoinDelta).toBe(100);
+      expect(scene.lastCoinMode).toBe('pvp');
+    } finally {
+      random.mockRestore();
     }
   });
 });

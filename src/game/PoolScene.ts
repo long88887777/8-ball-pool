@@ -3,6 +3,8 @@ import { AIController } from './ai/aiController';
 import type { AIDecision } from './ai/types';
 import { getAIDifficultyProfile, normalizeAIDifficulty, type AIDifficulty } from './ai/difficulty';
 import { PoolAudio } from './audio';
+import { applyCuePower, applyCueSpin, getCueGuideRatios } from './cueAttributes';
+import { createCueCollection } from './cueShopView';
 import { CHALLENGE_LEVELS, type ChallengeLevel } from './challenge/levels';
 import {
   createChallengeState,
@@ -25,6 +27,7 @@ import {
   isLevelUnlocked,
   type ChallengeProgress,
 } from './challenge/progress';
+import { claimChallengeReward, type ChallengeRewardResult } from './challenge/reward';
 import {
   BALLS,
   BALL_RADIUS,
@@ -52,21 +55,25 @@ import {
 } from './geometry';
 import { formatMessage, getCopy, getInitialLanguage, type GameCopy, type Language } from './i18n';
 import {
+  AI_DAILY_COIN_LIMIT,
   CUE_CATALOG,
   DAILY_CHECK_IN_REWARD,
   DEFAULT_PLAYER_WALLET,
-  MATCH_LOSS_PENALTY,
-  MATCH_WIN_REWARD,
   applyDailyCheckIn,
   applyMatchCoinResult,
   buyCue,
+  consumeEquippedCueDurability,
   equipCue,
+  getCueDurability,
+  getDailyAiCoinsEarned,
   getCueStyle,
   readPlayerWallet,
   readPlayerWalletSupabase,
+  repairCue,
   writePlayerWallet,
   writePlayerWalletSupabase,
   type CueStyle,
+  type MatchCoinMode,
   type PlayerWallet,
   type StorageAdapter,
 } from './economy';
@@ -95,6 +102,7 @@ import {
   type PlayerStats,
 } from './growth/stats';
 import { appendShotHistoryEntry, type ShotHistoryEntry } from './matchHistory';
+import { recordCompletedMatchForMakeup } from './checkIn';
 import { computeCueSpritePose } from './cueVisual';
 import {
   completeDailyTask,
@@ -289,6 +297,7 @@ export class PoolScene extends Phaser.Scene {
   private pushOutPassButton?: HTMLButtonElement;
   private dailyCheckInButton?: HTMLButtonElement;
   private cueShopOverlay?: HTMLElement;
+  private cueShopOpenButton?: HTMLButtonElement;
   private cueShopCloseButton?: HTMLButtonElement;
   private cueShopGrid?: HTMLElement;
   private cueShopFeedback?: HTMLElement;
@@ -310,7 +319,11 @@ export class PoolScene extends Phaser.Scene {
   private walletSaveQueue: Promise<void> = Promise.resolve();
   private matchCoinSettled = false;
   private lastCoinDelta = 0;
+  private lastCoinRolledAmount = 0;
   private lastCoinResultWon: boolean | null = null;
+  private lastCoinMode: MatchCoinMode | null = null;
+  private lastCoinDailyLimitReached = false;
+  private lastMakeupCardEarned = false;
   private playerStats: PlayerStats = createDefaultPlayerStats();
   private dailyTasks: DailyTaskState = createDailyTaskState(this.localDateKey());
   private growthSaveQueue: Promise<void> = Promise.resolve();
@@ -397,6 +410,8 @@ export class PoolScene extends Phaser.Scene {
       this.buyCueStyle(cueId);
     } else if (action === 'equip') {
       this.equipCueStyle(cueId);
+    } else if (action === 'repair') {
+      this.repairCueStyle(cueId);
     }
   };
   private rematchRequestHandler = (): void => {
@@ -1169,6 +1184,28 @@ export class PoolScene extends Phaser.Scene {
     }
 
     this.challengeSelectOverlay.hidden = false;
+    window.dispatchEvent(new Event('pool:challenge-select-ready'));
+  }
+
+  public async getChallengeRewardContext(): Promise<{ progress: ChallengeProgress; wallet: PlayerWallet }> {
+    await Promise.all([
+      this.challengeProgressSaveQueue.catch(() => undefined),
+      this.walletSaveQueue.catch(() => undefined),
+    ]);
+    const progress = this.cachedProgress ?? await readProgressSupabase(supabase);
+    this.cachedProgress = progress;
+    return { progress, wallet: this.wallet };
+  }
+
+  public async claimAllStarsReward(cueId?: string): Promise<ChallengeRewardResult> {
+    const { progress, wallet } = await this.getChallengeRewardContext();
+    const result = claimChallengeReward(progress, CHALLENGE_LEVELS, wallet, cueId);
+    if (result.claimed) {
+      this.savePlayerWallet(result.wallet);
+      this.renderEconomyHud();
+      this.renderCueShop();
+    }
+    return result;
   }
 
   private hideChallengeSelect(): void {
@@ -1379,6 +1416,7 @@ export class PoolScene extends Phaser.Scene {
   private bindEconomyUI(): void {
     this.dailyCheckInButton = document.querySelector<HTMLButtonElement>('#daily-checkin') ?? undefined;
     this.cueShopOverlay = document.querySelector<HTMLElement>('#cue-shop') ?? undefined;
+    this.cueShopOpenButton = document.querySelector<HTMLButtonElement>('#cue-status') ?? undefined;
     this.cueShopCloseButton = document.querySelector<HTMLButtonElement>('#cue-shop-close') ?? undefined;
     this.cueShopGrid = document.querySelector<HTMLElement>('#cue-shop-grid') ?? undefined;
     this.cueShopFeedback = document.querySelector<HTMLElement>('#cue-shop-feedback') ?? undefined;
@@ -1392,6 +1430,7 @@ export class PoolScene extends Phaser.Scene {
     this.rechargeMockPayButton = document.querySelector<HTMLButtonElement>('#recharge-mock-pay') ?? undefined;
 
     this.dailyCheckInButton?.addEventListener('click', this.dailyCheckInHandler);
+    this.cueShopOpenButton?.addEventListener('click', this.showCueShop);
     this.cueShopCloseButton?.addEventListener('click', this.cueShopCloseHandler);
     this.cueShopGrid?.addEventListener('click', this.cueShopActionHandler);
     this.rechargeCloseButton?.addEventListener('click', this.rechargeCloseHandler);
@@ -1405,6 +1444,7 @@ export class PoolScene extends Phaser.Scene {
 
   private unbindEconomyUI(): void {
     this.dailyCheckInButton?.removeEventListener('click', this.dailyCheckInHandler);
+    this.cueShopOpenButton?.removeEventListener('click', this.showCueShop);
     this.cueShopCloseButton?.removeEventListener('click', this.cueShopCloseHandler);
     this.cueShopGrid?.removeEventListener('click', this.cueShopActionHandler);
     this.rechargeCloseButton?.removeEventListener('click', this.rechargeCloseHandler);
@@ -1507,18 +1547,19 @@ export class PoolScene extends Phaser.Scene {
     const result = applyDailyCheckIn(this.wallet, this.localDateKey());
     this.savePlayerWallet(result.wallet);
     if (result.claimed) {
-      this.completeDailyGrowthTask('daily_check_in');
+      this.completeDailyGrowthTask('daily_check_in', false);
     }
     this.renderEconomyHud();
     this.renderCueShop(result.claimed ? `签到成功，获得 ${DAILY_CHECK_IN_REWARD} 金币。` : '今天已经签到过了。');
   }
 
-  private showCueShop(): void {
+  private readonly showCueShop = (): void => {
+    this.cancelAim();
     this.renderCueShop();
     if (this.cueShopOverlay) {
       this.cueShopOverlay.hidden = false;
     }
-  }
+  };
 
   private hideCueShop(): void {
     if (this.cueShopOverlay) {
@@ -1624,7 +1665,25 @@ export class PoolScene extends Phaser.Scene {
     const result = equipCue(this.wallet, cueId);
     this.savePlayerWallet(result.wallet);
     this.renderEconomyHud();
-    this.renderCueShop(result.equipped ? '已装备。' : '这支球杆还没有解锁。');
+    this.renderCueShop(result.equipped
+      ? '已装备。'
+      : result.reason === 'needs-repair'
+        ? '球杆耐用度为 0，请先维修。'
+        : '这支球杆还没有解锁。');
+  }
+
+  private repairCueStyle(cueId: string): void {
+    const result = repairCue(this.wallet, cueId);
+    if (result.repaired) {
+      this.savePlayerWallet(result.wallet);
+    }
+    this.renderEconomyHud();
+    this.updateAimHud();
+    this.renderCueShop(result.repaired
+      ? '维修完成，耐用度已恢复。'
+      : result.reason === 'not-enough-coins'
+        ? '金币不足，无法维修。'
+        : '这支球杆目前不需要维修。');
   }
 
   private currentCueStyle(): CueStyle {
@@ -1655,25 +1714,33 @@ export class PoolScene extends Phaser.Scene {
   }
 
   private settleMatchCoins(won: boolean): void {
-    if (this.matchCoinSettled) {
+    if (this.matchCoinSettled || this.gameMode === 'challenge') {
       return;
     }
-    const before = this.wallet.coins;
-    this.savePlayerWallet(applyMatchCoinResult(this.wallet, won));
+    const mode: MatchCoinMode = this.gameMode === 'ai' ? 'ai' : 'pvp';
+    const result = applyMatchCoinResult(this.wallet, {
+      mode,
+      won,
+      dateKey: this.localDateKey(),
+    });
+    this.savePlayerWallet(result.wallet);
     this.matchCoinSettled = true;
-    this.lastCoinDelta = this.wallet.coins - before;
+    this.lastCoinDelta = result.coinDelta;
+    this.lastCoinRolledAmount = result.rolledAmount;
     this.lastCoinResultWon = won;
+    this.lastCoinMode = mode;
+    this.lastCoinDailyLimitReached = result.dailyLimitReached;
     this.renderEconomyHud();
     this.renderCueShop();
   }
 
-  private completeDailyGrowthTask(taskId: DailyTaskId): void {
+  private completeDailyGrowthTask(taskId: DailyTaskId, creditTaskReward = true): void {
     const result = completeDailyTask(this.dailyTasks, taskId);
     if (!result.completedNow) {
       return;
     }
     this.dailyTasks = result.state;
-    if (result.coinReward > 0) {
+    if (creditTaskReward && result.coinReward > 0) {
       this.savePlayerWallet({
         ...this.wallet,
         coins: this.wallet.coins + result.coinReward,
@@ -1687,6 +1754,11 @@ export class PoolScene extends Phaser.Scene {
       return;
     }
     this.matchGrowthSettled = true;
+    if (reason === 'normal' && this.gameMode !== 'challenge') {
+      const makeupResult = recordCompletedMatchForMakeup(this.wallet);
+      this.savePlayerWallet(makeupResult.wallet);
+      this.lastMakeupCardEarned = makeupResult.cardEarned;
+    }
     const mode = this.growthMatchMode();
     const myIndex = this.localGrowthPlayerIndex();
     const strokes = this.localMatchTracker.playerStrokes[myIndex] || this.state.strokes;
@@ -1781,26 +1853,53 @@ export class PoolScene extends Phaser.Scene {
   }
 
   private formatCoinResultText(): string {
-    if (this.lastCoinResultWon === null) {
+    if (this.lastCoinResultWon === null || this.lastCoinMode === null) {
       return '';
     }
     const signed = this.lastCoinDelta >= 0 ? `+${this.lastCoinDelta}` : String(this.lastCoinDelta);
-    const reason = this.lastCoinResultWon ? `胜利奖励 ${MATCH_WIN_REWARD}` : `失败扣除 ${MATCH_LOSS_PENALTY}`;
-    return `${reason} 金币，本局结算 ${signed}，当前金币 ${this.wallet.coins}。`;
+    const modeLabel = this.lastCoinMode === 'ai' ? '人机对战' : '玩家对战';
+    let reason = this.lastCoinResultWon
+      ? `胜利随机奖励 ${this.lastCoinRolledAmount}`
+      : `失败随机扣除 ${this.lastCoinRolledAmount}`;
+    if (this.lastCoinResultWon && this.lastCoinDelta < this.lastCoinRolledAmount) {
+      reason += `，受每日上限影响实际获得 ${this.lastCoinDelta}`;
+    } else if (!this.lastCoinResultWon && Math.abs(this.lastCoinDelta) < this.lastCoinRolledAmount) {
+      reason += `，余额不足实际扣除 ${Math.abs(this.lastCoinDelta)}`;
+    }
+    const dailyProgress = this.lastCoinMode === 'ai'
+      ? ` 今日人机胜利金币 ${getDailyAiCoinsEarned(this.wallet, this.localDateKey())}/${AI_DAILY_COIN_LIMIT}${this.lastCoinDailyLimitReached ? '（已达上限）' : ''}。`
+      : '';
+    const makeupCardNotice = this.lastMakeupCardEarned ? ' 完成 3 场完整对局，获得 1 张补签卡。' : '';
+    return `${modeLabel}：${reason} 金币，本局结算 ${signed}，当前金币 ${this.wallet.coins}。${dailyProgress}${makeupCardNotice}`;
   }
 
   private renderEconomyHud(): void {
     const coinBalance = document.querySelector<HTMLElement>('#coin-balance');
     const growthCoins = document.querySelector<HTMLElement>('#growth-stat-coins');
     const cueName = this.currentCueStyle().name;
+    const cue = this.currentCueStyle();
+    const durability = getCueDurability(this.wallet, cue.id);
     if (coinBalance) {
       coinBalance.textContent = `金币 ${this.wallet.coins}`;
+    }
+    const aiDailyProgress = document.querySelector<HTMLElement>('#ai-daily-coin-progress');
+    if (aiDailyProgress) {
+      aiDailyProgress.hidden = this.gameMode !== 'ai';
+      aiDailyProgress.textContent = `人机金币 ${getDailyAiCoinsEarned(this.wallet, this.localDateKey())}/${AI_DAILY_COIN_LIMIT}`;
     }
     if (growthCoins) {
       growthCoins.textContent = String(this.wallet.coins);
     }
     const cueShopButton = document.querySelector<HTMLElement>('#cue-shop-open');
     if (cueShopButton) cueShopButton.title = `当前球杆：${cueName}`;
+    const cueStatus = document.querySelector<HTMLButtonElement>('#cue-status');
+    if (cueStatus) {
+      cueStatus.textContent = durability > 0
+        ? `${cueName} · 耐用 ${durability}/${cue.durability}`
+        : `${cueName} · 需要维修`;
+      cueStatus.classList.toggle('is-broken', durability <= 0);
+      cueStatus.title = durability > 0 ? '查看球杆属性' : `耐用度为 0，维修需要 ${cue.repairCost} 金币`;
+    }
     if (this.dailyCheckInButton) {
       const checkedIn = this.wallet.lastCheckInDate === this.localDateKey();
       this.dailyCheckInButton.textContent = checkedIn ? '今日已签到' : `每日签到 +${DAILY_CHECK_IN_REWARD}`;
@@ -1811,7 +1910,7 @@ export class PoolScene extends Phaser.Scene {
   private renderCueShop(feedback = ''): void {
     const balance = document.querySelector<HTMLElement>('#cue-shop-balance');
     if (balance) {
-      balance.textContent = `金币 ${this.wallet.coins}`;
+      balance.textContent = this.wallet.coins.toLocaleString('zh-CN');
     }
     if (this.cueShopFeedback) {
       this.cueShopFeedback.textContent = feedback;
@@ -1820,7 +1919,7 @@ export class PoolScene extends Phaser.Scene {
       return;
     }
 
-    this.cueShopGrid.replaceChildren(...CUE_CATALOG.map((cue) => this.createCueCard(cue)));
+    this.cueShopGrid.replaceChildren(createCueCollection(this.wallet));
   }
 
   private renderRechargePanel(): void {
@@ -1868,64 +1967,6 @@ export class PoolScene extends Phaser.Scene {
 
     button.append(title, price, bonus);
     return button;
-  }
-
-  private createCueCard(cue: CueStyle): HTMLElement {
-    const owned = this.wallet.unlockedCueIds.includes(cue.id);
-    const equipped = this.wallet.equippedCueId === cue.id;
-    const card = document.createElement('article');
-    card.className = `cue-card cue-rarity-${cue.rarity}${equipped ? ' is-equipped' : ''}`;
-    card.style.setProperty('--cue-shaft', this.cssColor(cue.shaftColor));
-    card.style.setProperty('--cue-forearm', this.cssColor(cue.forearmColor));
-    card.style.setProperty('--cue-wrap', this.cssColor(cue.wrapColor));
-    card.style.setProperty('--cue-accent', this.cssColor(cue.accentColor));
-    card.style.setProperty('--cue-gem', this.cssColor(cue.gemColor));
-
-    const preview = document.createElement('div');
-    preview.className = 'cue-preview';
-    preview.setAttribute('aria-hidden', 'true');
-    const previewImage = document.createElement('img');
-    previewImage.src = cue.assetPath;
-    previewImage.alt = '';
-    previewImage.loading = 'lazy';
-    previewImage.decoding = 'async';
-    preview.append(previewImage);
-
-    const name = document.createElement('h3');
-    name.textContent = cue.name;
-
-    const meta = document.createElement('p');
-    meta.className = 'cue-meta';
-    meta.textContent = `${this.rarityLabel(cue.rarity)} · ${cue.price === 0 ? '默认拥有' : `${cue.price} 金币`}`;
-
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.dataset.cueId = cue.id;
-    if (equipped) {
-      button.textContent = '已装备';
-      button.disabled = true;
-    } else if (owned) {
-      button.textContent = '装备';
-      button.dataset.cueAction = 'equip';
-    } else {
-      button.textContent = this.wallet.coins >= cue.price ? '解锁' : '金币不足';
-      button.dataset.cueAction = 'buy';
-      button.disabled = this.wallet.coins < cue.price;
-    }
-
-    card.append(preview, name, meta, button);
-    return card;
-  }
-
-  private cssColor(color: number): string {
-    return `#${color.toString(16).padStart(6, '0')}`;
-  }
-
-  private rarityLabel(rarity: CueStyle['rarity']): string {
-    if (rarity === 'legendary') return '传说';
-    if (rarity === 'epic') return '史诗';
-    if (rarity === 'rare') return '稀有';
-    return '基础';
   }
 
   private localDateKey(): string {
@@ -2033,6 +2074,7 @@ export class PoolScene extends Phaser.Scene {
       !this.aiThinking &&
       !this.isAITurn() &&
       !this.isOnlineOpponentTurn() &&
+      getCueDurability(this.wallet, this.wallet.equippedCueId) > 0 &&
       this.physicsEngine.isSettled()
     );
   }
@@ -2228,6 +2270,19 @@ export class PoolScene extends Phaser.Scene {
       return;
     }
 
+    const cueStyle = this.currentCueStyle();
+    const cueUse = consumeEquippedCueDurability(this.wallet);
+    if (!cueUse.used) {
+      this.renderEconomyHud();
+      this.renderCueShop('球杆耐用度为 0，请先花费金币维修。');
+      this.updateAimHud();
+      return;
+    }
+    this.savePlayerWallet(cueUse.wallet);
+    this.renderEconomyHud();
+    const shotPower = applyCuePower(aimIntent.power, cueStyle);
+    const shotSpin = applyCueSpin(this.selectedSpin, cueStyle);
+
     this.alignRulesCurrentPlayerWithOnlineShooter('me');
 
     const cueAngle = Math.atan2(aimIntent.direction.y, aimIntent.direction.x);
@@ -2246,15 +2301,15 @@ export class PoolScene extends Phaser.Scene {
       },
       onComplete: () => {
         this.hideCueStick();
-        this.applyCueImpulse(aimIntent);
+        this.applyCueImpulse(aimIntent, shotPower, shotSpin);
         this.strikeLocked = false;
         if (this.gameMode === 'online') {
-          this.sendOnlineShot(aimIntent.direction!, aimIntent.power, this.selectedSpin, cue);
+          this.sendOnlineShot(aimIntent.direction!, shotPower, shotSpin, cue);
         }
       },
     });
     const shooter = this.activeCurrentPlayer();
-    this.beginShotHistoryEntry(shooter, aimIntent.power, this.selectedSpin);
+    this.beginShotHistoryEntry(shooter, shotPower, shotSpin);
     this.localMatchTracker = recordPlayerStroke(this.localMatchTracker, shooter);
     this.state = recordStroke(this.state);
     this.startRulesShot();
@@ -2262,15 +2317,19 @@ export class PoolScene extends Phaser.Scene {
     this.updateHud();
   }
 
-  private applyCueImpulse(aimIntent: AimIntent): void {
+  private applyCueImpulse(
+    aimIntent: AimIntent,
+    cuePower = applyCuePower(aimIntent.power, this.currentCueStyle()),
+    cueSpin = applyCueSpin(this.selectedSpin, this.currentCueStyle()),
+  ): void {
     if (!aimIntent.direction) {
       return;
     }
-    const power = this.openingBreakPower(aimIntent.power);
+    const power = this.openingBreakPower(cuePower);
     this.physicsEngine.strikeCueBall({
       direction: aimIntent.direction,
       power,
-      contactOffset: this.selectedSpin,
+      contactOffset: cueSpin,
     });
     this.wasMoving = true;
     this.audio.play('cue');
@@ -2305,6 +2364,8 @@ export class PoolScene extends Phaser.Scene {
 
     const cueAngle = Math.atan2(direction.y, direction.x);
     const cueBack = getCuePullback(power);
+    const cueStyle = this.currentCueStyle();
+    const guideRatios = getCueGuideRatios(cueStyle, power);
 
     const aimLineEnabled = this.game.registry.get('aimLineEnabled') ?? true;
     if (aimLineEnabled) {
@@ -2312,10 +2373,10 @@ export class PoolScene extends Phaser.Scene {
       if (nearestHit) {
         const prediction = predictCollisionDirections(cue, direction, nearestHit.ballPos);
         if (prediction) {
-          this.drawPredictedCollisionRoutes(cue, prediction, power);
+          this.drawPredictedCollisionRoutes(cue, prediction, guideRatios);
         }
       } else {
-        const missEnd = projectRayToPlayArea(cue, direction);
+        const missEnd = this.scaleRouteEnd(cue, projectRayToPlayArea(cue, direction), guideRatios.miss);
         this.aimLine.lineStyle(3, 0xf6e7b4, 0.42);
         this.aimLine.beginPath();
         this.aimLine.moveTo(cue.x + direction.x * BALL_RADIUS, cue.y + direction.y * BALL_RADIUS);
@@ -2324,7 +2385,7 @@ export class PoolScene extends Phaser.Scene {
       }
     }
 
-    this.drawAimPowerRail(power);
+    this.drawAimPowerRail(applyCuePower(power, cueStyle));
     this.drawSpinAimFeedback(cue);
     this.renderCueStick(cue, cueAngle, cueBack);
   }
@@ -2342,6 +2403,7 @@ export class PoolScene extends Phaser.Scene {
       this.aimState.current.y.toFixed(2),
       this.selectedSpin.x.toFixed(3),
       this.selectedSpin.y.toFixed(3),
+      this.wallet.equippedCueId,
       aimLineEnabled ? 'aim-line' : 'no-aim-line',
     ].join(':');
   }
@@ -2369,7 +2431,7 @@ export class PoolScene extends Phaser.Scene {
       cueBallImpactCenter: Vector;
       targetBallCenter: Vector;
     },
-    power: number,
+    guideRatios: ReturnType<typeof getCueGuideRatios>,
   ): void {
     const hideTarget = this.gameMode === 'challenge' && !!this.currentLevel?.hideTargetRoute;
     const impactDistance = Math.hypot(prediction.cueBallImpactCenter.x - cue.x, prediction.cueBallImpactCenter.y - cue.y);
@@ -2383,13 +2445,13 @@ export class PoolScene extends Phaser.Scene {
     const targetEnd = hideTarget ? null : this.scaleRouteEnd(
       prediction.targetBallCenter,
       projectRayToPlayArea(prediction.targetBallCenter, prediction.targetBallDir),
-      0.52 + power * 0.36,
+      guideRatios.target,
     );
     const cueDeflectEnd = prediction.cueBallDeflectDir
       ? this.scaleRouteEnd(
           prediction.cueBallImpactCenter,
           projectRayToPlayArea(prediction.cueBallImpactCenter, prediction.cueBallDeflectDir),
-          0.32 + power * 0.3,
+          guideRatios.cueDeflection,
         )
       : null;
 
@@ -2933,7 +2995,11 @@ export class PoolScene extends Phaser.Scene {
     if (nearestHit) {
       const prediction = predictCollisionDirections(cue, shot.direction, nearestHit.ballPos);
       if (prediction) {
-        this.drawPredictedCollisionRoutes(cue, prediction, shot.power);
+        this.drawPredictedCollisionRoutes(
+          cue,
+          prediction,
+          getCueGuideRatios(this.currentCueStyle(), shot.power),
+        );
       }
     } else {
       const missEnd = projectRayToPlayArea(cue, shot.direction);
@@ -2992,7 +3058,11 @@ export class PoolScene extends Phaser.Scene {
     this.matchCoinSettled = false;
     this.matchGrowthSettled = false;
     this.lastCoinDelta = 0;
+    this.lastCoinRolledAmount = 0;
     this.lastCoinResultWon = null;
+    this.lastCoinMode = null;
+    this.lastCoinDailyLimitReached = false;
+    this.lastMakeupCardEarned = false;
     this.opponentShotResolved = false;
     this.opponentResultApplied = false;
     this.opponentTurnEndApplied = false;
@@ -3280,7 +3350,7 @@ export class PoolScene extends Phaser.Scene {
     }
     this.updateNineBallPushOutControl();
 
-    const percent = intent ? Math.round(intent.power * 100) : 0;
+    const percent = intent ? Math.round(applyCuePower(intent.power, this.currentCueStyle()) * 100) : 0;
     if (powerValue) {
       powerValue.textContent = `${percent}%`;
     }
@@ -3292,7 +3362,10 @@ export class PoolScene extends Phaser.Scene {
     }
     if (shotState) {
       if (!intent) {
-        shotState.textContent = this.language === 'zh' ? '拖动球桌开始瞄准' : 'Drag on the table to aim';
+        const needsRepair = getCueDurability(this.wallet, this.wallet.equippedCueId) <= 0;
+        shotState.textContent = needsRepair
+          ? (this.language === 'zh' ? '球杆耐用度为 0，请打开球杆属性维修' : 'Cue durability is 0. Open cue stats to repair it')
+          : (this.language === 'zh' ? '拖动球桌开始瞄准' : 'Drag on the table to aim');
       } else if (intent.canShoot) {
         shotState.textContent = this.language === 'zh' ? '滑动微调 · 松开击球 · Esc 取消' : 'Slide to fine-tune · Release to shoot · Esc cancels';
       } else {
@@ -4663,7 +4736,11 @@ export class PoolScene extends Phaser.Scene {
     this.setElementHidden('#rematch-countdown', true);
     this.matchCoinSettled = false;
     this.lastCoinDelta = 0;
+    this.lastCoinRolledAmount = 0;
     this.lastCoinResultWon = null;
+    this.lastCoinMode = null;
+    this.lastCoinDailyLimitReached = false;
+    this.lastMakeupCardEarned = false;
     this.matchGrowthSettled = false;
     this.restartRack();
 
@@ -4805,7 +4882,11 @@ export class PoolScene extends Phaser.Scene {
     this.onlineGameSeq = 1;
     this.matchCoinSettled = false;
     this.lastCoinDelta = 0;
+    this.lastCoinRolledAmount = 0;
     this.lastCoinResultWon = null;
+    this.lastCoinMode = null;
+    this.lastCoinDailyLimitReached = false;
+    this.lastMakeupCardEarned = false;
     this.matchGrowthSettled = false;
     this.pendingResult = null;
     this.pendingTurnEnd = null;

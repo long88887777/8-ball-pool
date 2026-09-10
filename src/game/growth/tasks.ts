@@ -20,7 +20,7 @@ export type DailyTaskState = {
 export const DAILY_TASKS: DailyTaskDefinition[] = [
   { id: 'play_match', title: '完成 1 局', rewardCoins: 60 },
   { id: 'win_match', title: '赢 1 局', rewardCoins: 90 },
-  { id: 'daily_check_in', title: '每日签到', rewardCoins: 40 },
+  { id: 'daily_check_in', title: '每日签到', rewardCoins: 66 },
   { id: 'pass_challenge', title: '通过 1 个挑战关', rewardCoins: 80 },
 ];
 

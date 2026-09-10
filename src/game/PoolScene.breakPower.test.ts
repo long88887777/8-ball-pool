@@ -13,6 +13,8 @@ vi.mock('phaser', () => ({
 }));
 
 import { CUE_START, type Vector } from './constants';
+import { applyCuePower } from './cueAttributes';
+import { DEFAULT_PLAYER_WALLET, getCueStyle } from './economy';
 import { PoolScene } from './PoolScene';
 import { createEightBallState, startEightBallShot, type EightBallState } from './eightBallRules';
 import { createNineBallState, startNineBallShot, type NineBallState } from './nineBallRules';
@@ -71,13 +73,13 @@ function createIntent(power: number): AimIntent {
 }
 
 describe('PoolScene eight-ball break power', () => {
-  it('uses 150% power for the first eight-ball break impulse', () => {
+  it('uses 150% of the equipped cue power for the first eight-ball break impulse', () => {
     const scene = createOpeningBreakScene();
 
     scene.applyCueImpulse(createIntent(0.8));
 
     const shot = scene.physicsEngine.strikeCueBall.mock.calls[0][0];
-    expect(shot.power).toBeCloseTo(1.2);
+    expect(shot.power).toBeCloseTo(applyCuePower(0.8, getCueStyle(DEFAULT_PLAYER_WALLET.equippedCueId)) * 1.5);
   });
 
   it('keeps later eight-ball shots at the selected power', () => {
@@ -87,7 +89,8 @@ describe('PoolScene eight-ball break power', () => {
 
     laterEightBall.applyCueImpulse(createIntent(0.8));
 
-    expect(laterEightBall.physicsEngine.strikeCueBall.mock.calls[0][0].power).toBe(0.8);
+    expect(laterEightBall.physicsEngine.strikeCueBall.mock.calls[0][0].power)
+      .toBeCloseTo(applyCuePower(0.8, getCueStyle(DEFAULT_PLAYER_WALLET.equippedCueId)));
   });
 
   it('sends 150% opening power to online opponents', () => {
@@ -114,14 +117,14 @@ describe('PoolScene eight-ball break power', () => {
 });
 
 describe('PoolScene nine-ball break power', () => {
-  it('uses 150% power for the first nine-ball break impulse', () => {
+  it('uses 150% of the equipped cue power for the first nine-ball break impulse', () => {
     const scene = createOpeningBreakScene();
     scene.gameRuleset = 'nine-ball';
 
     scene.applyCueImpulse(createIntent(0.8));
 
     const shot = scene.physicsEngine.strikeCueBall.mock.calls[0][0];
-    expect(shot.power).toBeCloseTo(1.2);
+    expect(shot.power).toBeCloseTo(applyCuePower(0.8, getCueStyle(DEFAULT_PLAYER_WALLET.equippedCueId)) * 1.5);
   });
 
   it('keeps later nine-ball shots at the selected power', () => {
@@ -131,6 +134,7 @@ describe('PoolScene nine-ball break power', () => {
 
     scene.applyCueImpulse(createIntent(0.8));
 
-    expect(scene.physicsEngine.strikeCueBall.mock.calls[0][0].power).toBe(0.8);
+    expect(scene.physicsEngine.strikeCueBall.mock.calls[0][0].power)
+      .toBeCloseTo(applyCuePower(0.8, getCueStyle(DEFAULT_PLAYER_WALLET.equippedCueId)));
   });
 });

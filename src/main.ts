@@ -11,23 +11,45 @@ import { initAuthPage, showAuthPage, hideAuthPage } from './auth/authPage';
 import { initMatchmaking, openMatchModal } from './online/matchmaking';
 import type { RoomInfo } from './online/types';
 import { CHALLENGE_LEVELS } from './game/challenge/levels';
-import { isLevelUnlocked, readProgressSupabase } from './game/challenge/progress';
+import { isLevelUnlocked, readProgressSupabase, type ChallengeProgress } from './game/challenge/progress';
+import {
+  ALL_STARS_COIN_REWARD,
+  claimChallengeReward,
+  getChallengeRewardStatus,
+  getUnownedRareCues,
+  type ChallengeRewardResult,
+} from './game/challenge/reward';
 import { summarizeChallengeStars } from './game/growth/challengeSummary';
-import { readDailyTaskStateSupabase, readPlayerStatsSupabase } from './game/growth/persistence';
+import { readDailyTaskStateSupabase, readPlayerStatsSupabase, writeDailyTaskStateSupabase } from './game/growth/persistence';
 import { getRankProgress, summarizeStats, type PlayerStats } from './game/growth/stats';
-import { DAILY_TASKS, summarizeDailyTasks, type DailyTaskState } from './game/growth/tasks';
+import { DAILY_TASKS, completeDailyTask, summarizeDailyTasks, type DailyTaskState } from './game/growth/tasks';
 import {
   CUE_CATALOG,
   DEFAULT_PLAYER_WALLET,
   buyCue,
   equipCue,
+  getCueDurability,
   readPlayerWalletSupabase,
+  repairCue,
   writePlayerWallet,
   writePlayerWalletSupabase,
-  type CueStyle,
   type PlayerWallet,
   type StorageAdapter,
 } from './game/economy';
+import {
+  DAILY_CHECK_IN_REWARD,
+  MATCHES_PER_MAKEUP_CARD,
+  MAX_MONTHLY_MAKEUPS,
+  applyDailyCheckIn,
+  applyMakeupCheckIn,
+  getCheckInClaimKey,
+  getCheckInMilestones,
+  getMonthCheckInDates,
+  getMonthlyMakeupCount,
+  openCheckInChest,
+  type CheckInMilestone,
+  type CheckInRarity,
+} from './game/checkIn';
 import {
   createRechargeOrder,
   fetchRechargePackages,
@@ -50,6 +72,7 @@ import {
 import { showGameShellForNewGame } from './gameShellVisibility';
 import { installSplashCursor } from './splashCursor';
 import { closeCuePreview, isCuePreviewEscape, openCuePreview, type CuePreviewState } from './cuePreview';
+import { createCueCollection, getCueRarityLabel } from './game/cueShopView';
 import {
   formatRecentMatchSummary,
   formatShotHistoryEntry,
@@ -110,6 +133,8 @@ let rechargeBusy = false;
 let modeSelectionState: ModeSelectionState = createModeSelectionState();
 let selectedHistoryIndex: number | null = null;
 let challengeSelectRequestId = 0;
+let currentChallengeProgress: ChallengeProgress | null = null;
+let challengeRewardClaimBusy = false;
 let currentAvatarSelection: AvatarSelection = createDefaultAvatarSelection();
 let pendingAvatarSelection: AvatarSelection = currentAvatarSelection;
 let cropState: CropState | null = null;
@@ -120,24 +145,37 @@ let cropDragStart: { x: number; y: number; state: CropState } | null = null;
 let cuePreviewState: CuePreviewState = closeCuePreview();
 let cuePreviewPreviousOverflow = '';
 let cuePreviewReturnFocus: HTMLElement | null = null;
+let selectedCheckInDate: string | null = null;
+let pendingCheckInMilestone: CheckInMilestone | null = null;
+let checkInOpening = false;
 
 const shellLanguage: Language = 'zh';
 
 const rechargeClient = supabase as unknown as SupabaseRechargeClient;
-const disposeSplashCursor = installSplashCursor({
-  DENSITY_DISSIPATION: 5,
-  VELOCITY_DISSIPATION: 1,
-  PRESSURE: 0.15,
-  CURL: 9,
-  SPLAT_RADIUS: 0.09,
-  SPLAT_FORCE: 3000,
-  COLOR_UPDATE_SPEED: 2,
-  RAINBOW_MODE: true,
-  COLOR: '#24484d',
-});
+let disposeSplashCursor: (() => void) | null = null;
+
+function showMenuSplashCursor(): void {
+  if (disposeSplashCursor) return;
+  disposeSplashCursor = installSplashCursor({
+    DENSITY_DISSIPATION: 5,
+    VELOCITY_DISSIPATION: 1,
+    PRESSURE: 0.15,
+    CURL: 9,
+    SPLAT_RADIUS: 0.09,
+    SPLAT_FORCE: 3000,
+    COLOR_UPDATE_SPEED: 2,
+    RAINBOW_MODE: true,
+    COLOR: '#24484d',
+  });
+}
+
+function hideMenuSplashCursor(): void {
+  disposeSplashCursor?.();
+  disposeSplashCursor = null;
+}
 
 if (import.meta.hot) {
-  import.meta.hot.dispose(disposeSplashCursor);
+  import.meta.hot.dispose(hideMenuSplashCursor);
 }
 
 function selectedAIDifficulty(): AIDifficulty {
@@ -151,6 +189,7 @@ function startGame(
   ruleset: GameRuleset = roomInfo?.ruleset ?? 'eight-ball',
   challengeLevelId?: number,
 ): void {
+  hideMenuSplashCursor();
   showGameShellForNewGame();
   hideEconomyPanels();
 
@@ -212,6 +251,7 @@ function backToMenu(): void {
   if (shell) shell.hidden = true;
   if (pauseOverlay) pauseOverlay.hidden = true;
   if (challengeSelect) challengeSelect.hidden = true;
+  showMenuSplashCursor();
   void loadGrowthOverview();
 }
 
@@ -281,8 +321,13 @@ async function showChallengeSelect(): Promise<void> {
   const requestId = ++challengeSelectRequestId;
   showChallengeSelectLoadingState({ overlay, grid, title, backBtn });
 
-  const progress = await readProgressSupabase(supabase);
+  const [progress, wallet] = await Promise.all([
+    readProgressSupabase(supabase),
+    readPlayerWalletSupabase(supabase),
+  ]);
   if (requestId !== challengeSelectRequestId || overlay.hidden) return;
+  currentChallengeProgress = progress;
+  currentWallet = wallet;
 
   grid.replaceChildren(...CHALLENGE_LEVELS.map((level) => {
     const unlocked = isLevelUnlocked(progress, level.id);
@@ -316,6 +361,7 @@ async function showChallengeSelect(): Promise<void> {
     }
     return card;
   }));
+  renderChallengeRewardPanel(progress, currentWallet);
   overlay.hidden = false;
 }
 
@@ -323,6 +369,139 @@ function hideChallengeSelect(): void {
   challengeSelectRequestId += 1;
   const overlay = document.getElementById('challenge-select');
   if (overlay) overlay.hidden = true;
+  hideChallengeRewardModal();
+}
+
+async function refreshChallengeRewardPanel(): Promise<void> {
+  const scene = currentGame?.scene.getScene('PoolScene') as PoolScene | undefined;
+  if (scene) {
+    const context = await scene.getChallengeRewardContext();
+    currentChallengeProgress = context.progress;
+    currentWallet = context.wallet;
+  } else if (!currentChallengeProgress) {
+    [currentChallengeProgress, currentWallet] = await Promise.all([
+      readProgressSupabase(supabase),
+      readPlayerWalletSupabase(supabase),
+    ]);
+  }
+  if (currentChallengeProgress) {
+    renderChallengeRewardPanel(currentChallengeProgress, currentWallet);
+  }
+}
+
+function renderChallengeRewardPanel(progress: ChallengeProgress, wallet: PlayerWallet): void {
+  const card = document.getElementById('challenge-reward-card');
+  const detail = document.getElementById('challenge-reward-detail');
+  const action = document.querySelector<HTMLButtonElement>('#challenge-reward-open');
+  if (!card || !detail || !action) return;
+
+  const summary = summarizeChallengeStars(progress, CHALLENGE_LEVELS);
+  const status = getChallengeRewardStatus(progress, CHALLENGE_LEVELS, wallet);
+  card.dataset.status = status;
+  card.hidden = false;
+  if (status === 'claimed') {
+    detail.textContent = '满星宝箱已领取';
+    action.textContent = '已领取';
+    action.disabled = true;
+    return;
+  }
+  if (status === 'locked') {
+    detail.textContent = `集齐全部 ${summary.totalStars} 颗星即可开启 · 当前 ${summary.earnedStars}/${summary.totalStars}`;
+    action.textContent = '尚未解锁';
+    action.disabled = true;
+    return;
+  }
+
+  detail.textContent = status === 'coins'
+    ? `稀有球杆已全部拥有，开启后获得 ${ALL_STARS_COIN_REWARD} 金币`
+    : `从 ${getUnownedRareCues(wallet).length} 支未拥有的稀有球杆中任选 1 支`;
+  action.textContent = '开启宝箱';
+  action.disabled = false;
+}
+
+async function showChallengeRewardModal(): Promise<void> {
+  await refreshChallengeRewardPanel();
+  if (!currentChallengeProgress) return;
+  const overlay = document.getElementById('challenge-reward-modal');
+  const options = document.getElementById('challenge-reward-options');
+  const hint = document.getElementById('challenge-reward-hint');
+  if (!overlay || !options || !hint) return;
+
+  const status = getChallengeRewardStatus(currentChallengeProgress, CHALLENGE_LEVELS, currentWallet);
+  if (status === 'locked' || status === 'claimed') return;
+  options.replaceChildren();
+  if (status === 'coins') {
+    hint.textContent = `你的稀有球杆已集齐，本次宝箱将发放 ${ALL_STARS_COIN_REWARD} 金币。`;
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'challenge-reward-coin-action';
+    button.dataset.rewardAction = 'claim-coins';
+    button.textContent = `领取 ${ALL_STARS_COIN_REWARD} 金币`;
+    options.append(button);
+  } else {
+    hint.textContent = '请选择一支尚未拥有的稀有球杆，确认后不可更换。';
+    options.replaceChildren(...getUnownedRareCues(currentWallet).map((cue) => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'challenge-reward-cue';
+      button.dataset.rewardAction = 'claim-cue';
+      button.dataset.cueId = cue.id;
+      const image = document.createElement('img');
+      image.src = cue.assetPath;
+      image.alt = cue.name;
+      const name = document.createElement('strong');
+      name.textContent = cue.name;
+      const stats = document.createElement('span');
+      stats.textContent = `力量 ${cue.power} · 准度 ${cue.accuracy} · 加塞 ${cue.spin}`;
+      button.append(image, name, stats);
+      return button;
+    }));
+  }
+  overlay.hidden = false;
+}
+
+function hideChallengeRewardModal(): void {
+  const overlay = document.getElementById('challenge-reward-modal');
+  if (overlay) overlay.hidden = true;
+}
+
+async function claimSelectedChallengeReward(cueId?: string): Promise<void> {
+  if (!currentChallengeProgress || challengeRewardClaimBusy) return;
+  challengeRewardClaimBusy = true;
+  const buttons = document.querySelectorAll<HTMLButtonElement>('#challenge-reward-options button');
+  buttons.forEach((button) => { button.disabled = true; });
+  try {
+    const scene = currentGame?.scene.getScene('PoolScene') as PoolScene | undefined;
+    const result = scene
+      ? await scene.claimAllStarsReward(cueId)
+      : claimChallengeReward(currentChallengeProgress, CHALLENGE_LEVELS, currentWallet, cueId);
+    if (result.claimed && !scene) {
+      saveMenuWallet(result.wallet);
+    } else if (result.claimed) {
+      currentWallet = result.wallet;
+    }
+    renderChallengeRewardReceipt(result);
+    renderChallengeRewardPanel(currentChallengeProgress, currentWallet);
+  } finally {
+    challengeRewardClaimBusy = false;
+    buttons.forEach((button) => { button.disabled = false; });
+  }
+}
+
+function renderChallengeRewardReceipt(result: ChallengeRewardResult): void {
+  if (!result.claimed) return;
+  const options = document.getElementById('challenge-reward-options');
+  const hint = document.getElementById('challenge-reward-hint');
+  if (!options || !hint) return;
+  hint.textContent = result.cue
+    ? `已获得稀有球杆「${result.cue.name}」，可前往球杆收藏装备。`
+    : `已获得 ${result.coinsAwarded} 金币。`;
+  const done = document.createElement('button');
+  done.type = 'button';
+  done.className = 'challenge-reward-coin-action';
+  done.dataset.rewardAction = 'close';
+  done.textContent = '收下奖励';
+  options.replaceChildren(done);
 }
 
 function returnFromChallengeSelect(): void {
@@ -357,6 +536,18 @@ document.querySelectorAll<HTMLButtonElement>('[data-ruleset]').forEach((btn) => 
 
 document.getElementById('ruleset-back')?.addEventListener('click', hideRulesetMenu);
 document.getElementById('challenge-back')?.addEventListener('click', returnFromChallengeSelect);
+document.getElementById('challenge-reward-open')?.addEventListener('click', () => void showChallengeRewardModal());
+document.getElementById('challenge-reward-close')?.addEventListener('click', hideChallengeRewardModal);
+document.getElementById('challenge-reward-options')?.addEventListener('click', (event) => {
+  const button = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-reward-action]');
+  if (!button) return;
+  if (button.dataset.rewardAction === 'close') {
+    hideChallengeRewardModal();
+    return;
+  }
+  void claimSelectedChallengeReward(button.dataset.cueId);
+});
+window.addEventListener('pool:challenge-select-ready', () => void refreshChallengeRewardPanel());
 
 document.getElementById('btn-back')?.addEventListener('click', requestBackToMenu);
 window.addEventListener('pool:return-to-menu', backToMenu);
@@ -917,11 +1108,402 @@ function browserStorage(): StorageAdapter {
 function renderMenuEconomy(): void {
   setText('growth-stat-coins', String(currentWallet.coins));
   setText('coin-balance', `金币 ${currentWallet.coins}`);
-  setText('cue-shop-balance', `金币 ${currentWallet.coins}`);
+  setText('cue-shop-balance', currentWallet.coins.toLocaleString('zh-CN'));
   setText('recharge-balance', `金币 ${currentWallet.coins}`);
   setText('cue-shop-open', getCopy(shellLanguage).shell.cueCollection);
+  renderCheckInPanel();
   renderCueShop();
   renderRechargePanel();
+}
+
+const CHECK_IN_CHEST_ASSETS: Record<CheckInRarity, string> = {
+  rare: '/assets/check-in/chest-rare.webp',
+  epic: '/assets/check-in/chest-epic.webp',
+  legendary: '/assets/check-in/chest-legendary.webp',
+};
+
+const CHECK_IN_RARITY_COPY: Record<CheckInRarity, { en: string; zh: string }> = {
+  rare: { en: 'RARE', zh: '稀有' },
+  epic: { en: 'EPIC', zh: '史诗' },
+  legendary: { en: 'LEGENDARY', zh: '传说' },
+};
+
+async function showCheckInPanel(): Promise<void> {
+  const overlay = document.getElementById('checkin-panel');
+  if (!overlay) return;
+  overlay.hidden = false;
+  document.documentElement.classList.add('checkin-open');
+  document.body.classList.add('checkin-open');
+  selectedCheckInDate = localDateKey();
+  setCheckInFeedback('正在同步签到记录…');
+  renderCheckInPanel();
+  currentWallet = await readPlayerWalletSupabase(supabase);
+  if (overlay.hidden) return;
+  setCheckInFeedback('');
+  renderMenuEconomy();
+}
+
+function hideCheckInPanel(): void {
+  const overlay = document.getElementById('checkin-panel');
+  if (overlay) overlay.hidden = true;
+  document.documentElement.classList.remove('checkin-open');
+  document.body.classList.remove('checkin-open');
+  selectedCheckInDate = null;
+}
+
+function renderCheckInPanel(): void {
+  const calendar = document.getElementById('checkin-calendar');
+  const milestones = document.getElementById('checkin-milestones');
+  if (!calendar || !milestones) return;
+
+  const todayKey = localDateKey();
+  const today = parseLocalDateKey(todayKey);
+  const monthKey = todayKey.slice(0, 7);
+  const monthDates = getMonthCheckInDates(currentWallet, todayKey);
+  const checked = new Set(monthDates);
+  const milestoneDefinitions = getCheckInMilestones(todayKey);
+  const totalDays = milestoneDefinitions[2].days;
+  const monthlyMakeups = getMonthlyMakeupCount(currentWallet, todayKey);
+  const currentSelection = selectedCheckInDate?.startsWith(`${monthKey}-`)
+    ? selectedCheckInDate
+    : todayKey;
+  selectedCheckInDate = currentSelection;
+
+  const monthLabel = new Intl.DateTimeFormat('zh-CN', { year: 'numeric', month: 'long' }).format(today);
+  setText('checkin-month-label', `${monthLabel} · 每天登录可领取 ${DAILY_CHECK_IN_REWARD} 金币`);
+  setText('checkin-total', `${monthDates.length} 天`);
+  setText('checkin-card-count', `${currentWallet.makeupCards} 张`);
+  setText('checkin-match-progress', `${currentWallet.makeupMatchProgress}/${MATCHES_PER_MAKEUP_CARD} 局`);
+  setText('checkin-makeup-count', `${monthlyMakeups}/${MAX_MONTHLY_MAKEUPS} 次`);
+  setStyle('checkin-calendar-progress-fill', 'width', `${Math.round((monthDates.length / totalDays) * 100)}%`);
+
+  const firstWeekday = (new Date(today.getFullYear(), today.getMonth(), 1).getDay() + 6) % 7;
+  const calendarNodes: HTMLElement[] = [];
+  for (let index = 0; index < firstWeekday; index += 1) {
+    const placeholder = document.createElement('span');
+    placeholder.className = 'checkin-day is-placeholder';
+    placeholder.setAttribute('aria-hidden', 'true');
+    calendarNodes.push(placeholder);
+  }
+  for (let day = 1; day <= totalDays; day += 1) {
+    const dateKey = `${monthKey}-${String(day).padStart(2, '0')}`;
+    const isChecked = checked.has(dateKey);
+    const isToday = dateKey === todayKey;
+    const isFuture = dateKey > todayKey;
+    const isMissed = dateKey < todayKey && !isChecked;
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = [
+      'checkin-day',
+      isChecked ? 'is-checked' : '',
+      isToday ? 'is-today' : '',
+      isFuture ? 'is-future' : '',
+      isMissed ? 'is-missed' : '',
+      dateKey === currentSelection ? 'is-selected' : '',
+    ].filter(Boolean).join(' ');
+    button.dataset.checkinDate = dateKey;
+    button.disabled = isFuture;
+    button.setAttribute('role', 'gridcell');
+    button.setAttribute('aria-label', `${today.getMonth() + 1}月${day}日${isChecked ? '，已签到' : isToday ? '，今天可签到' : isMissed ? '，可补签' : '，尚未开放'}`);
+
+    const number = document.createElement('span');
+    number.className = 'checkin-day-number';
+    number.textContent = String(day);
+    const reward = document.createElement('span');
+    reward.className = 'checkin-day-reward';
+    reward.textContent = isChecked ? '已领取' : '+66';
+    button.append(number, reward);
+    if (isChecked) {
+      const stamp = document.createElement('span');
+      stamp.className = 'checkin-day-stamp';
+      stamp.textContent = '✓';
+      stamp.setAttribute('aria-hidden', 'true');
+      button.append(stamp);
+    }
+    if (isToday) {
+      const label = document.createElement('span');
+      label.className = 'checkin-day-today-label';
+      label.textContent = '今天';
+      label.setAttribute('aria-hidden', 'true');
+      button.append(label);
+    }
+    calendarNodes.push(button);
+  }
+  calendar.replaceChildren(...calendarNodes);
+  renderCheckInSelection(currentSelection, todayKey, checked, monthlyMakeups);
+
+  const milestoneNodes = milestoneDefinitions.map((milestone) => {
+    const rarityCopy = CHECK_IN_RARITY_COPY[milestone.rarity];
+    const claimKey = getCheckInClaimKey(todayKey, milestone.days);
+    const opened = currentWallet.checkInRewardClaims.includes(claimKey);
+    const ready = !opened && monthDates.length >= milestone.days;
+    const card = document.createElement('article');
+    card.className = `checkin-milestone${ready ? ' is-ready' : ''}${opened ? ' is-opened' : ''}`;
+    card.dataset.rarity = milestone.rarity;
+
+    const image = document.createElement('img');
+    image.src = CHECK_IN_CHEST_ASSETS[milestone.rarity];
+    image.alt = `${rarityCopy.zh}球杆宝箱`;
+
+    const copy = document.createElement('div');
+    copy.className = 'checkin-milestone-copy';
+    const kicker = document.createElement('span');
+    kicker.textContent = milestone.days === totalDays ? '全月签到' : `签到 ${milestone.days} 天`;
+    const title = document.createElement('strong');
+    title.textContent = `${rarityCopy.zh}球杆宝箱`;
+    const detail = document.createElement('small');
+    detail.textContent = `随机获得 1 支${rarityCopy.zh}球杆`;
+    const action = document.createElement('button');
+    action.type = 'button';
+    action.className = 'checkin-milestone-action';
+    action.dataset.checkinChestDays = String(milestone.days);
+    action.disabled = !ready;
+    action.textContent = opened ? '已领取' : ready ? '开启宝箱' : `${monthDates.length}/${milestone.days}`;
+    copy.append(kicker, title, detail, action);
+    card.append(image, copy);
+    return card;
+  });
+  milestones.replaceChildren(...milestoneNodes);
+
+  const hasMissedDay = monthDates.length < Math.max(0, today.getDate() - 1);
+  const makeupReady = currentWallet.makeupCards > 0
+    && hasMissedDay
+    && currentWallet.lastMakeupDate !== todayKey
+    && monthlyMakeups < MAX_MONTHLY_MAKEUPS;
+  const hasReadyReward = !checked.has(todayKey) || makeupReady || milestoneDefinitions.some((milestone) => (
+    monthDates.length >= milestone.days
+      && !currentWallet.checkInRewardClaims.includes(getCheckInClaimKey(todayKey, milestone.days))
+  ));
+  const readyDot = document.getElementById('checkin-ready-dot');
+  if (readyDot) readyDot.hidden = !hasReadyReward;
+}
+
+function renderCheckInSelection(
+  dateKey: string,
+  todayKey: string,
+  checked: Set<string>,
+  monthlyMakeups: number,
+): void {
+  const action = document.getElementById('checkin-primary-action') as HTMLButtonElement | null;
+  if (!action) return;
+  const selectedDate = parseLocalDateKey(dateKey);
+  const dateLabel = `${selectedDate.getMonth() + 1}月${selectedDate.getDate()}日`;
+  setText('checkin-selection-label', dateKey === todayKey ? '今日签到' : dateLabel);
+
+  if (checked.has(dateKey)) {
+    setText('checkin-selection-detail', '该日期奖励已经领取');
+    action.textContent = '已签到';
+    action.disabled = true;
+    return;
+  }
+  if (dateKey === todayKey) {
+    setText('checkin-selection-detail', `领取 ${DAILY_CHECK_IN_REWARD} 金币并计入本月里程碑`);
+    action.textContent = `今日签到 · +${DAILY_CHECK_IN_REWARD}`;
+    action.disabled = false;
+    return;
+  }
+  if (dateKey > todayKey) {
+    setText('checkin-selection-detail', '未来日期尚未开放');
+    action.textContent = '尚未开放';
+    action.disabled = true;
+    return;
+  }
+  if (currentWallet.makeupCards <= 0) {
+    setText('checkin-selection-detail', '完整完成 3 场对局可获得 1 张补签卡');
+    action.textContent = '暂无补签卡';
+    action.disabled = true;
+    return;
+  }
+  if (currentWallet.lastMakeupDate === todayKey) {
+    setText('checkin-selection-detail', '每天最多补签 1 次，请明天再来');
+    action.textContent = '今日已补签';
+    action.disabled = true;
+    return;
+  }
+  if (monthlyMakeups >= MAX_MONTHLY_MAKEUPS) {
+    setText('checkin-selection-detail', '本月 7 次补签额度已经用完');
+    action.textContent = '本月已达上限';
+    action.disabled = true;
+    return;
+  }
+
+  setText('checkin-selection-detail', `消耗 1 张补签卡，领取 ${DAILY_CHECK_IN_REWARD} 金币`);
+  action.textContent = `补签 ${dateLabel} · +${DAILY_CHECK_IN_REWARD}`;
+  action.disabled = false;
+}
+
+function selectCheckInDate(dateKey: string): void {
+  selectedCheckInDate = dateKey;
+  setCheckInFeedback('');
+  renderCheckInPanel();
+}
+
+function claimSelectedCheckInDate(): void {
+  const todayKey = localDateKey();
+  const targetDateKey = selectedCheckInDate ?? todayKey;
+  const result = targetDateKey === todayKey
+    ? applyDailyCheckIn(currentWallet, todayKey)
+    : applyMakeupCheckIn(currentWallet, { targetDateKey, currentDateKey: todayKey });
+  if (!result.claimed) {
+    setCheckInFeedback(checkInFailureCopy(result.reason));
+    renderCheckInPanel();
+    return;
+  }
+
+  saveMenuWallet(result.wallet);
+  setCheckInFeedback(targetDateKey === todayKey
+    ? `签到成功，${DAILY_CHECK_IN_REWARD} 金币已到账。`
+    : `补签成功，已消耗 1 张补签卡并获得 ${DAILY_CHECK_IN_REWARD} 金币。`);
+  if (targetDateKey === todayKey) void completeMenuDailyCheckInTask();
+}
+
+function checkInFailureCopy(reason: string | undefined): string {
+  switch (reason) {
+    case 'no-card': return '补签卡不足，完整完成 3 场对局可获得 1 张。';
+    case 'daily-limit': return '今天已经补签过了，每天最多补签 1 次。';
+    case 'monthly-limit': return '本月最多补签 7 次，额度已经用完。';
+    case 'already-checked-in': return '该日期已经签到过了。';
+    case 'not-past-day': return '只能补签当月已经过去的日期。';
+    default: return '当前日期无法签到，请稍后再试。';
+  }
+}
+
+async function completeMenuDailyCheckInTask(): Promise<void> {
+  const dateKey = localDateKey();
+  const tasks = await readDailyTaskStateSupabase(supabase, dateKey, browserStorage());
+  const result = completeDailyTask(tasks, 'daily_check_in');
+  if (!result.completedNow) return;
+  await Promise.all([
+    walletSaveQueue,
+    writeDailyTaskStateSupabase(supabase, result.state, browserStorage()),
+  ]);
+  await loadGrowthOverview();
+}
+
+function setCheckInFeedback(message: string): void {
+  setText('checkin-feedback', message);
+}
+
+function showCheckInChest(days: number): void {
+  const dateKey = localDateKey();
+  const milestone = getCheckInMilestones(dateKey).find((entry) => entry.days === days);
+  if (!milestone) return;
+  pendingCheckInMilestone = milestone;
+  checkInOpening = false;
+  const rarityCopy = CHECK_IN_RARITY_COPY[milestone.rarity];
+  const overlay = document.getElementById('checkin-chest-modal');
+  const dialog = document.getElementById('checkin-chest-dialog');
+  const image = document.getElementById('checkin-chest-image') as HTMLImageElement | null;
+  const intro = document.getElementById('checkin-chest-intro');
+  const roulette = document.getElementById('checkin-roulette');
+  const result = document.getElementById('checkin-reward-result');
+  if (!overlay || !dialog || !image || !intro || !roulette || !result) return;
+
+  dialog.dataset.rarity = milestone.rarity;
+  image.src = CHECK_IN_CHEST_ASSETS[milestone.rarity];
+  image.alt = `${rarityCopy.zh}球杆宝箱`;
+  setText('checkin-chest-kicker', `${rarityCopy.zh}奖励`);
+  setText('checkin-chest-title', `${rarityCopy.zh}球杆宝箱`);
+  setText('checkin-chest-subtitle', `仅包含${rarityCopy.zh}品质球杆 · 重复球杆自动折算金币`);
+  intro.hidden = false;
+  roulette.hidden = true;
+  result.hidden = true;
+  (document.getElementById('checkin-chest-open') as HTMLButtonElement | null)?.removeAttribute('disabled');
+  (document.getElementById('checkin-chest-close') as HTMLButtonElement | null)?.removeAttribute('disabled');
+  overlay.hidden = false;
+}
+
+function hideCheckInChest(): void {
+  if (checkInOpening) return;
+  const overlay = document.getElementById('checkin-chest-modal');
+  if (overlay) overlay.hidden = true;
+  pendingCheckInMilestone = null;
+  renderCheckInPanel();
+}
+
+function openPendingCheckInChest(): void {
+  if (!pendingCheckInMilestone || checkInOpening) return;
+  const milestone = pendingCheckInMilestone;
+  const result = openCheckInChest(currentWallet, CUE_CATALOG, {
+    dateKey: localDateKey(),
+    days: milestone.days,
+  });
+  if (!result.opened || !result.cue) {
+    setCheckInFeedback(result.reason === 'already-opened' ? '这个宝箱已经领取过了。' : '宝箱尚未解锁。');
+    hideCheckInChest();
+    return;
+  }
+
+  checkInOpening = true;
+  saveMenuWallet(result.wallet);
+  const intro = document.getElementById('checkin-chest-intro');
+  const roulette = document.getElementById('checkin-roulette');
+  const rewardResult = document.getElementById('checkin-reward-result');
+  const track = document.getElementById('checkin-roulette-track');
+  const windowEl = document.querySelector<HTMLElement>('.checkin-roulette-window');
+  const close = document.getElementById('checkin-chest-close') as HTMLButtonElement | null;
+  if (!intro || !roulette || !rewardResult || !track || !windowEl) return;
+  if (close) close.disabled = true;
+  intro.hidden = true;
+  roulette.hidden = false;
+  rewardResult.hidden = true;
+
+  const rarityCopy = CHECK_IN_RARITY_COPY[milestone.rarity];
+  setText('checkin-roulette-kicker', `${rarityCopy.zh}奖池`);
+  const pool = CUE_CATALOG.filter((cue) => cue.rarity === milestone.rarity);
+  const winnerIndex = 34;
+  const nodes = Array.from({ length: 40 }, (_, index) => {
+    const cue = index === winnerIndex ? result.cue! : pool[Math.floor(Math.random() * pool.length)];
+    const item = document.createElement('div');
+    item.className = `checkin-roulette-cue${index === winnerIndex ? ' is-winner' : ''}`;
+    item.dataset.rouletteIndex = String(index);
+    const image = document.createElement('img');
+    image.src = cue.assetPath;
+    image.alt = '';
+    image.setAttribute('aria-hidden', 'true');
+    const name = document.createElement('span');
+    name.textContent = cue.name;
+    item.append(image, name);
+    return item;
+  });
+  track.style.transition = 'none';
+  track.style.transform = 'translate3d(0, 0, 0)';
+  track.replaceChildren(...nodes);
+
+  const finish = (): void => {
+    if (!checkInOpening) return;
+    checkInOpening = false;
+    if (close) close.disabled = false;
+    setText('checkin-reward-rarity', `${rarityCopy.zh}品质`);
+    setText('checkin-reward-name', result.cue!.name);
+    setText('checkin-reward-detail', result.duplicate
+      ? `抽到重复球杆，已自动转换为 ${result.coinsAwarded.toLocaleString('zh-CN')} 金币。`
+      : '新球杆已加入收藏，可在球杆收藏中装备。');
+    rewardResult.hidden = false;
+    renderCheckInPanel();
+  };
+
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    const winner = track.querySelector<HTMLElement>(`[data-roulette-index="${winnerIndex}"]`);
+    if (!winner) {
+      finish();
+      return;
+    }
+    const target = (windowEl.clientWidth / 2) - (winner.offsetLeft + winner.offsetWidth / 2);
+    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const duration = reducedMotion ? 450 : 5_600;
+    track.style.transition = `transform ${duration}ms cubic-bezier(0.06, 0.74, 0.12, 1)`;
+    track.style.transform = `translate3d(${target}px, 0, 0)`;
+    track.addEventListener('transitionend', (event) => {
+      if (event.propertyName === 'transform') finish();
+    }, { once: true });
+    window.setTimeout(finish, duration + 180);
+  }));
+}
+
+function parseLocalDateKey(dateKey: string): Date {
+  const [year, month, day] = dateKey.split('-').map(Number);
+  return new Date(year, month - 1, day);
 }
 
 function showCueShop(): void {
@@ -951,7 +1533,10 @@ function showCueDetailPreview(cueId: string, returnFocus?: HTMLElement | null): 
   image.src = cue.assetPath;
   image.alt = `${cue.name} 球杆大图`;
   title.textContent = cue.name;
-  meta.textContent = `${rarityLabel(cue.rarity)} · 点击遮罩或按 Esc 关闭`;
+  const durability = currentWallet.unlockedCueIds.includes(cue.id)
+    ? getCueDurability(currentWallet, cue.id)
+    : cue.durability;
+  meta.textContent = `${getCueRarityLabel(cue.rarity)} · 力量 ${cue.power} · 准度 ${cue.accuracy} · 加塞 ${cue.spin} · 耐用 ${durability}/${cue.durability}`;
   overlay.hidden = false;
   overlay.setAttribute('aria-hidden', 'false');
   document.body.style.overflow = 'hidden';
@@ -992,6 +1577,8 @@ function hideRechargePanel(): void {
 }
 
 function hideEconomyPanels(): void {
+  hideCheckInPanel();
+  hideCheckInChest();
   hideCueShop();
   hideRechargePanel();
   hideHistoryPanel();
@@ -1117,59 +1704,11 @@ function renderCueShop(feedback = ''): void {
   const feedbackEl = document.getElementById('cue-shop-feedback');
   if (feedbackEl) feedbackEl.textContent = feedback;
 
+  setText('cue-shop-balance', currentWallet.coins.toLocaleString('zh-CN'));
+
   const grid = document.getElementById('cue-shop-grid');
   if (!grid) return;
-  grid.replaceChildren(...CUE_CATALOG.map((cue) => createCueCard(cue)));
-}
-
-function createCueCard(cue: CueStyle): HTMLElement {
-  const owned = currentWallet.unlockedCueIds.includes(cue.id);
-  const equipped = currentWallet.equippedCueId === cue.id;
-  const card = document.createElement('article');
-  card.className = `cue-card cue-rarity-${cue.rarity}${equipped ? ' is-equipped' : ''}`;
-  card.style.setProperty('--cue-shaft', cssColor(cue.shaftColor));
-  card.style.setProperty('--cue-forearm', cssColor(cue.forearmColor));
-  card.style.setProperty('--cue-wrap', cssColor(cue.wrapColor));
-  card.style.setProperty('--cue-accent', cssColor(cue.accentColor));
-  card.style.setProperty('--cue-gem', cssColor(cue.gemColor));
-
-  const preview = document.createElement('div');
-  preview.className = 'cue-preview';
-  preview.dataset.cuePreviewId = cue.id;
-  preview.setAttribute('role', 'button');
-  preview.tabIndex = 0;
-  preview.setAttribute('aria-label', `查看 ${cue.name} 大图`);
-  const previewImage = document.createElement('img');
-  previewImage.src = cue.assetPath;
-  previewImage.alt = '';
-  previewImage.loading = 'lazy';
-  previewImage.decoding = 'async';
-  preview.append(previewImage);
-
-  const name = document.createElement('h3');
-  name.textContent = cue.name;
-
-  const meta = document.createElement('p');
-  meta.className = 'cue-meta';
-  meta.textContent = `${rarityLabel(cue.rarity)} · ${cue.price === 0 ? '默认拥有' : `${cue.price} 金币`}`;
-
-  const button = document.createElement('button');
-  button.type = 'button';
-  button.dataset.cueId = cue.id;
-  if (equipped) {
-    button.textContent = '已装备';
-    button.disabled = true;
-  } else if (owned) {
-    button.textContent = '装备';
-    button.dataset.cueAction = 'equip';
-  } else {
-    button.textContent = currentWallet.coins >= cue.price ? '解锁' : '金币不足';
-    button.dataset.cueAction = 'buy';
-    button.disabled = currentWallet.coins < cue.price;
-  }
-
-  card.append(preview, name, meta, button);
-  return card;
+  grid.replaceChildren(createCueCollection(currentWallet));
 }
 
 function buyCueStyle(cueId: string): void {
@@ -1188,23 +1727,29 @@ function equipCueStyle(cueId: string): void {
   if (result.equipped) {
     saveMenuWallet(result.wallet);
   }
-  renderCueShop(result.equipped ? '已装备。' : '这支球杆还没有解锁。');
+  renderCueShop(result.equipped
+    ? '已装备。'
+    : result.reason === 'needs-repair'
+      ? '球杆耐用度为 0，请先维修。'
+      : '这支球杆还没有解锁。');
 }
 
-function cssColor(color: number): string {
-  return `#${color.toString(16).padStart(6, '0')}`;
-}
-
-function rarityLabel(rarity: CueStyle['rarity']): string {
-  if (rarity === 'legendary') return '传说';
-  if (rarity === 'epic') return '史诗';
-  if (rarity === 'rare') return '稀有';
-  return '基础';
+function repairCueStyle(cueId: string): void {
+  const result = repairCue(currentWallet, cueId);
+  if (result.repaired) {
+    saveMenuWallet(result.wallet);
+  }
+  renderCueShop(result.repaired
+    ? '维修完成，耐用度已恢复。'
+    : result.reason === 'not-enough-coins'
+      ? '金币不足，无法维修。'
+      : '这支球杆目前不需要维修。');
 }
 
 function showMenu(): void {
   const menu = document.getElementById('main-menu');
   if (menu) menu.hidden = false;
+  showMenuSplashCursor();
 }
 
 async function init(): Promise<void> {
@@ -1246,6 +1791,7 @@ async function init(): Promise<void> {
       backToMenu();
       const menu = document.getElementById('main-menu');
       if (menu) menu.hidden = true;
+      hideMenuSplashCursor();
       showAuthPage();
     }
   });
@@ -1254,6 +1800,7 @@ async function init(): Promise<void> {
     if (guestMode) {
       guestMode = false;
       backToMenu();
+      hideMenuSplashCursor();
       showAuthPage();
       return;
     }
@@ -1269,6 +1816,42 @@ async function init(): Promise<void> {
   document.getElementById('growth-panel-close')?.addEventListener('click', () => {
     const panel = document.getElementById('growth-panel');
     if (panel) panel.hidden = true;
+  });
+
+  document.getElementById('checkin-open')?.addEventListener('click', () => {
+    void showCheckInPanel();
+  });
+  document.getElementById('checkin-close')?.addEventListener('click', hideCheckInPanel);
+  document.getElementById('checkin-panel')?.addEventListener('click', (event) => {
+    if (event.target === event.currentTarget) hideCheckInPanel();
+  });
+  document.getElementById('checkin-calendar')?.addEventListener('click', (event) => {
+    const target = event.target as HTMLElement | null;
+    const button = target?.closest<HTMLButtonElement>('[data-checkin-date]');
+    if (button?.dataset.checkinDate) selectCheckInDate(button.dataset.checkinDate);
+  });
+  document.getElementById('checkin-primary-action')?.addEventListener('click', claimSelectedCheckInDate);
+  document.getElementById('checkin-milestones')?.addEventListener('click', (event) => {
+    const target = event.target as HTMLElement | null;
+    const button = target?.closest<HTMLButtonElement>('[data-checkin-chest-days]');
+    const days = Number(button?.dataset.checkinChestDays);
+    if (Number.isInteger(days)) showCheckInChest(days);
+  });
+  document.getElementById('checkin-chest-open')?.addEventListener('click', openPendingCheckInChest);
+  document.getElementById('checkin-chest-close')?.addEventListener('click', hideCheckInChest);
+  document.getElementById('checkin-reward-accept')?.addEventListener('click', hideCheckInChest);
+  document.getElementById('checkin-chest-modal')?.addEventListener('click', (event) => {
+    if (event.target === event.currentTarget) hideCheckInChest();
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape') return;
+    const chest = document.getElementById('checkin-chest-modal');
+    if (chest && !chest.hidden) {
+      hideCheckInChest();
+      return;
+    }
+    const panel = document.getElementById('checkin-panel');
+    if (panel && !panel.hidden) hideCheckInPanel();
   });
 
   document.getElementById('history-open')?.addEventListener('click', showHistoryPanel);
@@ -1365,6 +1948,7 @@ async function init(): Promise<void> {
       showCueDetailPreview(previewTrigger.dataset.cuePreviewId ?? '', previewTrigger);
       return;
     }
+    if (currentGame) return;
     const button = target?.closest<HTMLButtonElement>('[data-cue-action]');
     if (!button) return;
     const cueId = button.dataset.cueId;
@@ -1374,6 +1958,8 @@ async function init(): Promise<void> {
       buyCueStyle(cueId);
     } else if (action === 'equip') {
       equipCueStyle(cueId);
+    } else if (action === 'repair') {
+      repairCueStyle(cueId);
     }
   });
   document.getElementById('cue-shop-grid')?.addEventListener('keydown', (event) => {
