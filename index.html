@@ -334,69 +334,55 @@
     <section id="checkin-panel" class="checkin-overlay" hidden>
       <div class="checkin-dialog" role="dialog" aria-modal="true" aria-labelledby="checkin-title">
         <header class="checkin-header">
-          <div>
-            <p class="checkin-eyebrow">每日签到</p>
-            <h2 id="checkin-title">月度签到</h2>
-            <p id="checkin-month-label" class="checkin-month-label"></p>
+          <div class="checkin-toolbar">
+            <button id="checkin-close" class="checkin-close" type="button" aria-label="关闭签到奖励">返回</button>
+            <span class="checkin-toolbar-divider" aria-hidden="true"></span>
+            <div class="checkin-header-mark" aria-hidden="true"><span>8</span><strong>台球厅</strong></div>
+            <div class="checkin-toolbar-actions">
+              <span id="checkin-coin-balance" class="checkin-balance">金币 0</span>
+              <button class="checkin-settings-shortcut" type="button" tabindex="-1" aria-hidden="true">设置</button>
+            </div>
           </div>
-          <button id="checkin-close" class="checkin-close" type="button" aria-label="关闭签到奖励">×</button>
+          <div class="checkin-hero-row">
+            <div class="checkin-title-group">
+              <h2 id="checkin-title"><span id="checkin-month-title">每日</span>签到</h2>
+              <p id="checkin-month-label" class="checkin-month-label"></p>
+            </div>
+            <div class="checkin-ledger" aria-label="签到概览">
+              <div class="checkin-ledger-item">
+                <span>本轮签到</span>
+                <strong id="checkin-total">0/30 天</strong>
+              </div>
+              <div class="checkin-ledger-item checkin-ledger-card">
+                <span>补签卡</span>
+                <strong id="checkin-card-count">0 张</strong>
+              </div>
+              <div class="checkin-ledger-item">
+                <span>补签进度</span>
+                <strong id="checkin-match-progress">0/3 局</strong>
+              </div>
+              <div class="checkin-rule-note">
+                <span class="checkin-rule-note-icon" aria-hidden="true">i</span>
+                <p><strong>完整完成 3 场对局</strong>获得 1 张补签卡<br />每天推进 1 格 · 每轮最多补签 7 次</p>
+              </div>
+            </div>
+          </div>
         </header>
-
-        <div class="checkin-ledger" aria-label="签到概览">
-          <div class="checkin-ledger-item">
-            <span>本月已签到</span>
-            <strong id="checkin-total">0 <small>天</small></strong>
-          </div>
-          <div class="checkin-ledger-item checkin-ledger-card">
-            <span>补签卡</span>
-            <strong id="checkin-card-count">0 <small>张</small></strong>
-          </div>
-          <div class="checkin-ledger-item">
-            <span>补签进度</span>
-            <strong id="checkin-match-progress">0/3 <small>局</small></strong>
-          </div>
-          <div class="checkin-ledger-item">
-            <span>本月补签</span>
-            <strong id="checkin-makeup-count">0/7 <small>次</small></strong>
-          </div>
-        </div>
 
         <div class="checkin-content">
           <section class="checkin-calendar-card" aria-labelledby="checkin-calendar-title">
-            <div class="checkin-calendar-heading">
-              <div>
-                <span>本月进度</span>
-                <h3 id="checkin-calendar-title">每日奖励 66 金币</h3>
-              </div>
-              <div class="checkin-calendar-progress" aria-hidden="true">
-                <span id="checkin-calendar-progress-fill"></span>
-              </div>
+            <div class="checkin-table-surface">
+              <h3 id="checkin-calendar-title" class="visually-hidden">30 天签到路线</h3>
+              <img class="checkin-route-map" src="/assets/check-in/season-route-line.webp" alt="" aria-hidden="true" />
+              <div id="checkin-calendar" class="checkin-calendar" role="grid" aria-label="30 天循环签到轨迹"></div>
+              <aside class="checkin-milestone-panel" aria-labelledby="checkin-milestone-title">
+                <h3 id="checkin-milestone-title" class="visually-hidden">签到里程碑宝箱</h3>
+                <div id="checkin-milestones" class="checkin-milestones"></div>
+              </aside>
+              <span class="checkin-coin-burst" aria-hidden="true">+66 金币</span>
             </div>
-            <div class="checkin-weekdays" aria-hidden="true">
-              <span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span><span>日</span>
-            </div>
-            <div id="checkin-calendar" class="checkin-calendar" role="grid" aria-label="本月签到日历"></div>
-            <div class="checkin-action-bar">
-              <div>
-                <span id="checkin-selection-label">选择日期</span>
-                <strong id="checkin-selection-detail">今天可以签到</strong>
-              </div>
-              <button id="checkin-primary-action" type="button">今日签到 · +66</button>
-            </div>
-            <p id="checkin-feedback" class="checkin-feedback" aria-live="polite"></p>
-          </section>
 
-          <aside class="checkin-milestone-panel" aria-labelledby="checkin-milestone-title">
-            <div class="checkin-milestone-heading">
-              <span>阶段奖励</span>
-              <h3 id="checkin-milestone-title">本月宝箱</h3>
-            </div>
-            <div id="checkin-milestones" class="checkin-milestones"></div>
-            <div class="checkin-rule-note">
-              <span class="checkin-rule-note-icon" aria-hidden="true">3局</span>
-              <p><strong>完整完成 3 场对局</strong>可获得 1 张补签卡；每天最多补签 1 次，每月最多 7 次。</p>
-            </div>
-          </aside>
+          </section>
         </div>
       </div>
     </section>

@@ -37,15 +37,15 @@ import {
   type StorageAdapter,
 } from './game/economy';
 import {
+  CHECK_IN_CYCLE_LENGTH,
   DAILY_CHECK_IN_REWARD,
   MATCHES_PER_MAKEUP_CARD,
-  MAX_MONTHLY_MAKEUPS,
+  MAX_CYCLE_MAKEUPS,
   applyDailyCheckIn,
   applyMakeupCheckIn,
   getCheckInClaimKey,
   getCheckInMilestones,
-  getMonthCheckInDates,
-  getMonthlyMakeupCount,
+  getSequentialCheckInState,
   openCheckInChest,
   type CheckInMilestone,
   type CheckInRarity,
@@ -145,7 +145,7 @@ let cropDragStart: { x: number; y: number; state: CropState } | null = null;
 let cuePreviewState: CuePreviewState = closeCuePreview();
 let cuePreviewPreviousOverflow = '';
 let cuePreviewReturnFocus: HTMLElement | null = null;
-let selectedCheckInDate: string | null = null;
+let selectedCheckInDay: number | null = null;
 let pendingCheckInMilestone: CheckInMilestone | null = null;
 let checkInOpening = false;
 
@@ -1134,7 +1134,7 @@ async function showCheckInPanel(): Promise<void> {
   overlay.hidden = false;
   document.documentElement.classList.add('checkin-open');
   document.body.classList.add('checkin-open');
-  selectedCheckInDate = localDateKey();
+  selectedCheckInDay = null;
   setCheckInFeedback('正在同步签到记录…');
   renderCheckInPanel();
   currentWallet = await readPlayerWalletSupabase(supabase);
@@ -1148,7 +1148,7 @@ function hideCheckInPanel(): void {
   if (overlay) overlay.hidden = true;
   document.documentElement.classList.remove('checkin-open');
   document.body.classList.remove('checkin-open');
-  selectedCheckInDate = null;
+  selectedCheckInDay = null;
 }
 
 function renderCheckInPanel(): void {
@@ -1157,54 +1157,47 @@ function renderCheckInPanel(): void {
   if (!calendar || !milestones) return;
 
   const todayKey = localDateKey();
-  const today = parseLocalDateKey(todayKey);
-  const monthKey = todayKey.slice(0, 7);
-  const monthDates = getMonthCheckInDates(currentWallet, todayKey);
-  const checked = new Set(monthDates);
-  const milestoneDefinitions = getCheckInMilestones(todayKey);
-  const totalDays = milestoneDefinitions[2].days;
-  const monthlyMakeups = getMonthlyMakeupCount(currentWallet, todayKey);
-  const currentSelection = selectedCheckInDate?.startsWith(`${monthKey}-`)
-    ? selectedCheckInDate
-    : todayKey;
-  selectedCheckInDate = currentSelection;
+  const state = getSequentialCheckInState(currentWallet);
+  const milestoneDefinitions = getCheckInMilestones();
+  const selectedDay = selectedCheckInDay && selectedCheckInDay >= 1 && selectedCheckInDay <= CHECK_IN_CYCLE_LENGTH
+    ? selectedCheckInDay
+    : state.progress >= CHECK_IN_CYCLE_LENGTH ? CHECK_IN_CYCLE_LENGTH : state.nextDay;
+  selectedCheckInDay = selectedDay;
 
-  const monthLabel = new Intl.DateTimeFormat('zh-CN', { year: 'numeric', month: 'long' }).format(today);
-  setText('checkin-month-label', `${monthLabel} · 每天登录可领取 ${DAILY_CHECK_IN_REWARD} 金币`);
-  setText('checkin-total', `${monthDates.length} 天`);
+  setText('checkin-month-title', '每日');
+  setText('checkin-month-label', `从第 1 天开始，每天推进 1 格 · 每格领取 ${DAILY_CHECK_IN_REWARD} 金币`);
+  setText('checkin-coin-balance', `金币 ${currentWallet.coins.toLocaleString('zh-CN')}`);
+  setText('checkin-total', `${state.progress}/${CHECK_IN_CYCLE_LENGTH} 天`);
   setText('checkin-card-count', `${currentWallet.makeupCards} 张`);
   setText('checkin-match-progress', `${currentWallet.makeupMatchProgress}/${MATCHES_PER_MAKEUP_CARD} 局`);
-  setText('checkin-makeup-count', `${monthlyMakeups}/${MAX_MONTHLY_MAKEUPS} 次`);
-  setStyle('checkin-calendar-progress-fill', 'width', `${Math.round((monthDates.length / totalDays) * 100)}%`);
+  setText('checkin-makeup-count', `${state.makeupCount}/${MAX_CYCLE_MAKEUPS} 次`);
+  const hasDailyClaim = hasSequentialDailyCheckInToday(currentWallet, todayKey, state.cycle);
+  const makeupReady = hasDailyClaim
+    && currentWallet.makeupCards > 0
+    && state.progress < CHECK_IN_CYCLE_LENGTH
+    && currentWallet.lastMakeupDate !== todayKey
+    && state.makeupCount < MAX_CYCLE_MAKEUPS;
+  const canClaimNext = !hasDailyClaim || makeupReady;
 
-  const firstWeekday = (new Date(today.getFullYear(), today.getMonth(), 1).getDay() + 6) % 7;
   const calendarNodes: HTMLElement[] = [];
-  for (let index = 0; index < firstWeekday; index += 1) {
-    const placeholder = document.createElement('span');
-    placeholder.className = 'checkin-day is-placeholder';
-    placeholder.setAttribute('aria-hidden', 'true');
-    calendarNodes.push(placeholder);
-  }
-  for (let day = 1; day <= totalDays; day += 1) {
-    const dateKey = `${monthKey}-${String(day).padStart(2, '0')}`;
-    const isChecked = checked.has(dateKey);
-    const isToday = dateKey === todayKey;
-    const isFuture = dateKey > todayKey;
-    const isMissed = dateKey < todayKey && !isChecked;
+  for (let day = 1; day <= CHECK_IN_CYCLE_LENGTH; day += 1) {
+    const isChecked = day <= state.progress;
+    const isNext = state.progress < CHECK_IN_CYCLE_LENGTH && day === state.nextDay;
+    const isFuture = day > state.nextDay && !isChecked;
     const button = document.createElement('button');
     button.type = 'button';
     button.className = [
       'checkin-day',
+      milestoneDefinitions.some((milestone) => milestone.days === day) ? 'is-milestone-day' : '',
       isChecked ? 'is-checked' : '',
-      isToday ? 'is-today' : '',
+      isNext ? 'is-today is-next' : '',
       isFuture ? 'is-future' : '',
-      isMissed ? 'is-missed' : '',
-      dateKey === currentSelection ? 'is-selected' : '',
+      day === selectedDay ? 'is-selected' : '',
     ].filter(Boolean).join(' ');
-    button.dataset.checkinDate = dateKey;
-    button.disabled = isFuture;
+    button.dataset.checkinDay = String(day);
+    button.disabled = !isNext || !canClaimNext || milestoneDefinitions.some((milestone) => milestone.days === day);
     button.setAttribute('role', 'gridcell');
-    button.setAttribute('aria-label', `${today.getMonth() + 1}月${day}日${isChecked ? '，已签到' : isToday ? '，今天可签到' : isMissed ? '，可补签' : '，尚未开放'}`);
+    button.setAttribute('aria-label', `第${day}天${isChecked ? '，已签到' : isNext && canClaimNext ? '，点击签到' : isNext ? '，今日不可签到' : '，尚未开放'}`);
 
     const number = document.createElement('span');
     number.className = 'checkin-day-number';
@@ -1220,26 +1213,42 @@ function renderCheckInPanel(): void {
       stamp.setAttribute('aria-hidden', 'true');
       button.append(stamp);
     }
-    if (isToday) {
+    if (isNext) {
       const label = document.createElement('span');
       label.className = 'checkin-day-today-label';
-      label.textContent = '今天';
+      label.textContent = '下一签';
       label.setAttribute('aria-hidden', 'true');
-      button.append(label);
+      const cue = document.createElement('img');
+      cue.className = 'checkin-day-cue';
+      cue.src = '/assets/cues/cue-comet-tail.png';
+      cue.alt = '';
+      cue.setAttribute('aria-hidden', 'true');
+      button.append(label, cue);
     }
     calendarNodes.push(button);
   }
   calendar.replaceChildren(...calendarNodes);
-  renderCheckInSelection(currentSelection, todayKey, checked, monthlyMakeups);
+
+  const nextMilestone = milestoneDefinitions.find((milestone) => state.progress < milestone.days);
+  if (nextMilestone) {
+    const rarityCopy = CHECK_IN_RARITY_COPY[nextMilestone.rarity];
+    setText('checkin-next-reward', `${rarityCopy.zh}宝箱 · 还差 ${nextMilestone.days - state.progress} 天`);
+  } else {
+    setText('checkin-next-reward', '本轮里程碑已全部达成');
+  }
 
   const milestoneNodes = milestoneDefinitions.map((milestone) => {
     const rarityCopy = CHECK_IN_RARITY_COPY[milestone.rarity];
-    const claimKey = getCheckInClaimKey(todayKey, milestone.days);
+    const claimKey = getCheckInClaimKey(state.cycle, milestone.days);
     const opened = currentWallet.checkInRewardClaims.includes(claimKey);
-    const ready = !opened && monthDates.length >= milestone.days;
+    const ready = !opened && state.progress >= milestone.days;
+    const isNext = state.progress < CHECK_IN_CYCLE_LENGTH && state.nextDay === milestone.days;
+    const isNextClaimable = isNext && canClaimNext;
     const card = document.createElement('article');
-    card.className = `checkin-milestone${ready ? ' is-ready' : ''}${opened ? ' is-opened' : ''}`;
+    card.className = `checkin-milestone${ready ? ' is-ready' : ''}${opened ? ' is-opened' : ''}${isNextClaimable ? ' is-next' : ''}`;
     card.dataset.rarity = milestone.rarity;
+    card.dataset.checkinDay = String(milestone.days);
+    card.setAttribute('aria-label', `第${milestone.days}天，${rarityCopy.zh}球杆宝箱${opened ? '，已领取' : ready ? '，可开启' : isNext ? '，点击签到' : '，尚未解锁'}`);
 
     const image = document.createElement('img');
     image.src = CHECK_IN_CHEST_ASSETS[milestone.rarity];
@@ -1248,7 +1257,7 @@ function renderCheckInPanel(): void {
     const copy = document.createElement('div');
     copy.className = 'checkin-milestone-copy';
     const kicker = document.createElement('span');
-    kicker.textContent = milestone.days === totalDays ? '全月签到' : `签到 ${milestone.days} 天`;
+    kicker.textContent = `第 ${milestone.days} 天`;
     const title = document.createElement('strong');
     title.textContent = `${rarityCopy.zh}球杆宝箱`;
     const detail = document.createElement('small');
@@ -1257,114 +1266,98 @@ function renderCheckInPanel(): void {
     action.type = 'button';
     action.className = 'checkin-milestone-action';
     action.dataset.checkinChestDays = String(milestone.days);
-    action.disabled = !ready;
-    action.textContent = opened ? '已领取' : ready ? '开启宝箱' : `${monthDates.length}/${milestone.days}`;
+    action.disabled = opened || (!ready && !isNextClaimable);
+    action.textContent = opened ? '已领取' : ready ? '开启宝箱' : isNextClaimable ? `签到 +${DAILY_CHECK_IN_REWARD}` : `${state.progress}/${milestone.days}`;
     copy.append(kicker, title, detail, action);
     card.append(image, copy);
     return card;
   });
   milestones.replaceChildren(...milestoneNodes);
 
-  const hasMissedDay = monthDates.length < Math.max(0, today.getDate() - 1);
-  const makeupReady = currentWallet.makeupCards > 0
-    && hasMissedDay
-    && currentWallet.lastMakeupDate !== todayKey
-    && monthlyMakeups < MAX_MONTHLY_MAKEUPS;
-  const hasReadyReward = !checked.has(todayKey) || makeupReady || milestoneDefinitions.some((milestone) => (
-    monthDates.length >= milestone.days
-      && !currentWallet.checkInRewardClaims.includes(getCheckInClaimKey(todayKey, milestone.days))
+  const hasReadyReward = !hasDailyClaim || makeupReady || milestoneDefinitions.some((milestone) => (
+    state.progress >= milestone.days
+      && !currentWallet.checkInRewardClaims.includes(getCheckInClaimKey(state.cycle, milestone.days))
   ));
   const readyDot = document.getElementById('checkin-ready-dot');
   if (readyDot) readyDot.hidden = !hasReadyReward;
 }
 
-function renderCheckInSelection(
-  dateKey: string,
-  todayKey: string,
-  checked: Set<string>,
-  monthlyMakeups: number,
-): void {
-  const action = document.getElementById('checkin-primary-action') as HTMLButtonElement | null;
-  if (!action) return;
-  const selectedDate = parseLocalDateKey(dateKey);
-  const dateLabel = `${selectedDate.getMonth() + 1}月${selectedDate.getDate()}日`;
-  setText('checkin-selection-label', dateKey === todayKey ? '今日签到' : dateLabel);
-
-  if (checked.has(dateKey)) {
-    setText('checkin-selection-detail', '该日期奖励已经领取');
-    action.textContent = '已签到';
-    action.disabled = true;
-    return;
-  }
-  if (dateKey === todayKey) {
-    setText('checkin-selection-detail', `领取 ${DAILY_CHECK_IN_REWARD} 金币并计入本月里程碑`);
-    action.textContent = `今日签到 · +${DAILY_CHECK_IN_REWARD}`;
-    action.disabled = false;
-    return;
-  }
-  if (dateKey > todayKey) {
-    setText('checkin-selection-detail', '未来日期尚未开放');
-    action.textContent = '尚未开放';
-    action.disabled = true;
-    return;
-  }
-  if (currentWallet.makeupCards <= 0) {
-    setText('checkin-selection-detail', '完整完成 3 场对局可获得 1 张补签卡');
-    action.textContent = '暂无补签卡';
-    action.disabled = true;
-    return;
-  }
-  if (currentWallet.lastMakeupDate === todayKey) {
-    setText('checkin-selection-detail', '每天最多补签 1 次，请明天再来');
-    action.textContent = '今日已补签';
-    action.disabled = true;
-    return;
-  }
-  if (monthlyMakeups >= MAX_MONTHLY_MAKEUPS) {
-    setText('checkin-selection-detail', '本月 7 次补签额度已经用完');
-    action.textContent = '本月已达上限';
-    action.disabled = true;
-    return;
-  }
-
-  setText('checkin-selection-detail', `消耗 1 张补签卡，领取 ${DAILY_CHECK_IN_REWARD} 金币`);
-  action.textContent = `补签 ${dateLabel} · +${DAILY_CHECK_IN_REWARD}`;
-  action.disabled = false;
-}
-
-function selectCheckInDate(dateKey: string): void {
-  selectedCheckInDate = dateKey;
+function selectCheckInDay(day: number): void {
+  selectedCheckInDay = day;
   setCheckInFeedback('');
   renderCheckInPanel();
 }
 
-function claimSelectedCheckInDate(): void {
+function claimNextCheckIn(): { claimed: boolean; day?: number; cycle?: number } {
   const todayKey = localDateKey();
-  const targetDateKey = selectedCheckInDate ?? todayKey;
-  const result = targetDateKey === todayKey
+  const state = getSequentialCheckInState(currentWallet);
+  const isDaily = !hasSequentialDailyCheckInToday(currentWallet, todayKey, state.cycle);
+  const result = isDaily
     ? applyDailyCheckIn(currentWallet, todayKey)
-    : applyMakeupCheckIn(currentWallet, { targetDateKey, currentDateKey: todayKey });
+    : applyMakeupCheckIn(currentWallet, todayKey);
   if (!result.claimed) {
     setCheckInFeedback(checkInFailureCopy(result.reason));
     renderCheckInPanel();
-    return;
+    return result;
   }
 
   saveMenuWallet(result.wallet);
-  setCheckInFeedback(targetDateKey === todayKey
-    ? `签到成功，${DAILY_CHECK_IN_REWARD} 金币已到账。`
+  selectedCheckInDay = result.day ?? null;
+  playCheckInClaimAnimation();
+  setCheckInFeedback(isDaily
+    ? `第 ${result.day} 天签到成功，${DAILY_CHECK_IN_REWARD} 金币已到账。`
     : `补签成功，已消耗 1 张补签卡并获得 ${DAILY_CHECK_IN_REWARD} 金币。`);
-  if (targetDateKey === todayKey) void completeMenuDailyCheckInTask();
+  if (isDaily) void completeMenuDailyCheckInTask();
+  return result;
+}
+
+function activateCheckInMilestone(days: number): void {
+  const state = getSequentialCheckInState(currentWallet);
+  const claimKey = getCheckInClaimKey(state.cycle, days);
+  if (currentWallet.checkInRewardClaims.includes(claimKey)) {
+    setCheckInFeedback(`第 ${days} 天宝箱已经领取。`);
+    return;
+  }
+  if (state.progress >= days) {
+    showCheckInChest(days);
+    return;
+  }
+  if (state.nextDay !== days) {
+    setCheckInFeedback(`再签到 ${days - state.progress} 天即可解锁这个宝箱。`);
+    return;
+  }
+
+  const result = claimNextCheckIn();
+  if (result.claimed && result.day === days) {
+    window.setTimeout(() => showCheckInChest(days), 520);
+  }
+}
+
+function hasSequentialDailyCheckInToday(wallet: PlayerWallet, todayKey: string, cycle: number): boolean {
+  return wallet.lastCheckInDate === todayKey && wallet.checkInRewardClaims.some((entry) => (
+    entry.startsWith(`daily-v2:${cycle}:day:`) && entry.endsWith(':daily')
+  ));
+}
+
+function playCheckInClaimAnimation(): void {
+  const dialog = document.querySelector<HTMLElement>('.checkin-dialog');
+  if (!dialog) return;
+  dialog.classList.remove('is-rewarding');
+  void dialog.offsetWidth;
+  dialog.classList.add('is-rewarding');
+  window.setTimeout(() => dialog.classList.remove('is-rewarding'), 1_100);
 }
 
 function checkInFailureCopy(reason: string | undefined): string {
   switch (reason) {
     case 'no-card': return '补签卡不足，完整完成 3 场对局可获得 1 张。';
     case 'daily-limit': return '今天已经补签过了，每天最多补签 1 次。';
-    case 'monthly-limit': return '本月最多补签 7 次，额度已经用完。';
-    case 'already-checked-in': return '该日期已经签到过了。';
-    case 'not-past-day': return '只能补签当月已经过去的日期。';
-    default: return '当前日期无法签到，请稍后再试。';
+    case 'cycle-limit': return '每轮最多使用 7 次补签，额度已经用完。';
+    case 'cycle-complete': return '本轮签到已经完成。';
+    case 'daily-check-in-required': return '请先完成今天的正常签到。';
+    case 'pending-reward': return '请先领取本轮尚未开启的宝箱。';
+    case 'already-checked-in': return '今天已经签到过了。';
+    default: return '当前无法签到，请稍后再试。';
   }
 }
 
@@ -1385,8 +1378,7 @@ function setCheckInFeedback(message: string): void {
 }
 
 function showCheckInChest(days: number): void {
-  const dateKey = localDateKey();
-  const milestone = getCheckInMilestones(dateKey).find((entry) => entry.days === days);
+  const milestone = getCheckInMilestones().find((entry) => entry.days === days);
   if (!milestone) return;
   pendingCheckInMilestone = milestone;
   checkInOpening = false;
@@ -1424,8 +1416,9 @@ function hideCheckInChest(): void {
 function openPendingCheckInChest(): void {
   if (!pendingCheckInMilestone || checkInOpening) return;
   const milestone = pendingCheckInMilestone;
+  const state = getSequentialCheckInState(currentWallet);
   const result = openCheckInChest(currentWallet, CUE_CATALOG, {
-    dateKey: localDateKey(),
+    cycle: state.cycle,
     days: milestone.days,
   });
   if (!result.opened || !result.cue) {
@@ -1827,15 +1820,20 @@ async function init(): Promise<void> {
   });
   document.getElementById('checkin-calendar')?.addEventListener('click', (event) => {
     const target = event.target as HTMLElement | null;
-    const button = target?.closest<HTMLButtonElement>('[data-checkin-date]');
-    if (button?.dataset.checkinDate) selectCheckInDate(button.dataset.checkinDate);
+    const button = target?.closest<HTMLButtonElement>('[data-checkin-day]');
+    const day = Number(button?.dataset.checkinDay);
+    if (!Number.isInteger(day) || button?.disabled) return;
+    const state = getSequentialCheckInState(currentWallet);
+    if (day === state.nextDay) claimNextCheckIn();
   });
-  document.getElementById('checkin-primary-action')?.addEventListener('click', claimSelectedCheckInDate);
   document.getElementById('checkin-milestones')?.addEventListener('click', (event) => {
     const target = event.target as HTMLElement | null;
     const button = target?.closest<HTMLButtonElement>('[data-checkin-chest-days]');
-    const days = Number(button?.dataset.checkinChestDays);
-    if (Number.isInteger(days)) showCheckInChest(days);
+    const card = target?.closest<HTMLElement>('[data-checkin-day]');
+    const days = Number(button?.dataset.checkinChestDays ?? card?.dataset.checkinDay);
+    if (Number.isInteger(days)) {
+      activateCheckInMilestone(days);
+    }
   });
   document.getElementById('checkin-chest-open')?.addEventListener('click', openPendingCheckInChest);
   document.getElementById('checkin-chest-close')?.addEventListener('click', hideCheckInChest);

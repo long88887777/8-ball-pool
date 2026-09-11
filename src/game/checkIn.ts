@@ -7,43 +7,98 @@ export type CheckInMilestone = {
   rarity: CheckInRarity;
 };
 
+export type SequentialCheckInState = {
+  cycle: number;
+  progress: number;
+  nextDay: number;
+  makeupCount: number;
+};
+
 export const DAILY_CHECK_IN_REWARD = 66;
+export const CHECK_IN_CYCLE_LENGTH = 30;
 export const MATCHES_PER_MAKEUP_CARD = 3;
-export const MAX_MONTHLY_MAKEUPS = 7;
+export const MAX_CYCLE_MAKEUPS = 7;
 export const DUPLICATE_CUE_COMPENSATION: Record<CheckInRarity, number> = {
   rare: 888,
   epic: 2_666,
   legendary: 6_666,
 };
 
-export function getCheckInMilestones(dateKey: string): CheckInMilestone[] {
-  return [
-    { days: 7, rarity: 'rare' },
-    { days: 14, rarity: 'epic' },
-    { days: daysInMonth(dateKey), rarity: 'legendary' },
-  ];
+const CHECK_IN_MARKER_PREFIX = 'daily-v2';
+const CHECK_IN_MILESTONES: CheckInMilestone[] = [
+  { days: 7, rarity: 'rare' },
+  { days: 14, rarity: 'epic' },
+  { days: CHECK_IN_CYCLE_LENGTH, rarity: 'legendary' },
+];
+
+export function getCheckInMilestones(): CheckInMilestone[] {
+  return CHECK_IN_MILESTONES.map((milestone) => ({ ...milestone }));
 }
 
-export function getMonthCheckInDates(wallet: PlayerWallet, dateKey: string): string[] {
-  const monthKey = getMonthKey(dateKey);
-  if (!monthKey) return [];
-  return wallet.checkInDates.filter((entry) => entry.startsWith(`${monthKey}-`));
+export function getCheckInDayClaimKey(cycle: number, day: number, source: 'daily' | 'makeup'): string {
+  return `${CHECK_IN_MARKER_PREFIX}:${cycle}:day:${day}:${source}`;
 }
 
-export function getMonthlyMakeupCount(wallet: PlayerWallet, dateKey: string): number {
-  const monthKey = getMonthKey(dateKey);
-  return monthKey ? wallet.monthlyMakeupCounts[monthKey] ?? 0 : 0;
+export function getCheckInClaimKey(cycle: number, days: number): string {
+  return `${CHECK_IN_MARKER_PREFIX}:${cycle}:reward:${days}`;
+}
+
+export function getSequentialCheckInState(wallet: PlayerWallet): SequentialCheckInState {
+  const dayClaims = wallet.checkInRewardClaims.flatMap((entry) => {
+    const match = /^daily-v2:(\d+):day:(\d+):(daily|makeup)$/.exec(entry);
+    if (!match) return [];
+    return [{ cycle: Number(match[1]), day: Number(match[2]), source: match[3] as 'daily' | 'makeup' }];
+  });
+  const rewardCycles = wallet.checkInRewardClaims.flatMap((entry) => {
+    const match = /^daily-v2:(\d+):reward:(7|14|30)$/.exec(entry);
+    return match ? [Number(match[1])] : [];
+  });
+  const cycle = Math.max(1, ...dayClaims.map((claim) => claim.cycle), ...rewardCycles);
+  const cycleClaims = dayClaims.filter((claim) => claim.cycle === cycle);
+  const claimedDays = new Set(cycleClaims.map((claim) => claim.day));
+  let progress = 0;
+  while (progress < CHECK_IN_CYCLE_LENGTH && claimedDays.has(progress + 1)) progress += 1;
+  const makeupCount = cycleClaims.filter((claim) => claim.source === 'makeup' && claim.day <= progress).length;
+
+  return {
+    cycle,
+    progress,
+    nextDay: progress >= CHECK_IN_CYCLE_LENGTH ? 1 : progress + 1,
+    makeupCount,
+  };
 }
 
 export function applyDailyCheckIn(
   wallet: PlayerWallet,
   dateKey: string,
-): { wallet: PlayerWallet; claimed: boolean; reason?: 'already-checked-in' | 'invalid-date' } {
+): {
+  wallet: PlayerWallet;
+  claimed: boolean;
+  day?: number;
+  cycle?: number;
+  reason?: 'already-checked-in' | 'invalid-date' | 'pending-reward';
+} {
   if (!isDateKey(dateKey)) {
     return { wallet, claimed: false, reason: 'invalid-date' };
   }
-  if (wallet.checkInDates.includes(dateKey)) {
+
+  const state = getSequentialCheckInState(wallet);
+  const hasSequentialClaims = wallet.checkInRewardClaims.some((entry) => entry.startsWith(`${CHECK_IN_MARKER_PREFIX}:`));
+  if (hasSequentialClaims && wallet.lastCheckInDate === dateKey) {
     return { wallet, claimed: false, reason: 'already-checked-in' };
+  }
+
+  let cycle = state.cycle;
+  let day = state.nextDay;
+  if (state.progress >= CHECK_IN_CYCLE_LENGTH) {
+    const hasPendingReward = CHECK_IN_MILESTONES.some((milestone) => (
+      !wallet.checkInRewardClaims.includes(getCheckInClaimKey(state.cycle, milestone.days))
+    ));
+    if (hasPendingReward) {
+      return { wallet, claimed: false, reason: 'pending-reward' };
+    }
+    cycle += 1;
+    day = 1;
   }
 
   return {
@@ -51,33 +106,37 @@ export function applyDailyCheckIn(
       ...wallet,
       coins: wallet.coins + DAILY_CHECK_IN_REWARD,
       lastCheckInDate: dateKey,
-      checkInDates: [...wallet.checkInDates, dateKey].sort(),
+      checkInDates: Array.from(new Set([...wallet.checkInDates, dateKey])).sort(),
+      checkInRewardClaims: [
+        ...wallet.checkInRewardClaims,
+        getCheckInDayClaimKey(cycle, day, 'daily'),
+      ],
     },
     claimed: true,
+    day,
+    cycle,
   };
 }
 
 export function applyMakeupCheckIn(
   wallet: PlayerWallet,
-  options: { targetDateKey: string; currentDateKey: string },
+  currentDateKey: string,
 ): {
   wallet: PlayerWallet;
   claimed: boolean;
-  reason?: 'invalid-date' | 'not-past-day' | 'outside-current-month' | 'already-checked-in' | 'no-card' | 'daily-limit' | 'monthly-limit';
+  day?: number;
+  cycle?: number;
+  reason?: 'invalid-date' | 'daily-check-in-required' | 'no-card' | 'daily-limit' | 'cycle-limit' | 'cycle-complete';
 } {
-  const { targetDateKey, currentDateKey } = options;
-  if (!isDateKey(targetDateKey) || !isDateKey(currentDateKey)) {
+  if (!isDateKey(currentDateKey)) {
     return { wallet, claimed: false, reason: 'invalid-date' };
   }
-  if (targetDateKey >= currentDateKey) {
-    return { wallet, claimed: false, reason: 'not-past-day' };
+  const state = getSequentialCheckInState(wallet);
+  if (wallet.lastCheckInDate !== currentDateKey || state.progress === 0) {
+    return { wallet, claimed: false, reason: 'daily-check-in-required' };
   }
-  const currentMonthKey = getMonthKey(currentDateKey)!;
-  if (getMonthKey(targetDateKey) !== currentMonthKey) {
-    return { wallet, claimed: false, reason: 'outside-current-month' };
-  }
-  if (wallet.checkInDates.includes(targetDateKey)) {
-    return { wallet, claimed: false, reason: 'already-checked-in' };
+  if (state.progress >= CHECK_IN_CYCLE_LENGTH) {
+    return { wallet, claimed: false, reason: 'cycle-complete' };
   }
   if (wallet.makeupCards <= 0) {
     return { wallet, claimed: false, reason: 'no-card' };
@@ -85,24 +144,25 @@ export function applyMakeupCheckIn(
   if (wallet.lastMakeupDate === currentDateKey) {
     return { wallet, claimed: false, reason: 'daily-limit' };
   }
-  const monthlyCount = getMonthlyMakeupCount(wallet, currentDateKey);
-  if (monthlyCount >= MAX_MONTHLY_MAKEUPS) {
-    return { wallet, claimed: false, reason: 'monthly-limit' };
+  if (state.makeupCount >= MAX_CYCLE_MAKEUPS) {
+    return { wallet, claimed: false, reason: 'cycle-limit' };
   }
 
+  const day = state.progress + 1;
   return {
     wallet: {
       ...wallet,
       coins: wallet.coins + DAILY_CHECK_IN_REWARD,
-      checkInDates: [...wallet.checkInDates, targetDateKey].sort(),
       makeupCards: wallet.makeupCards - 1,
       lastMakeupDate: currentDateKey,
-      monthlyMakeupCounts: {
-        ...wallet.monthlyMakeupCounts,
-        [currentMonthKey]: monthlyCount + 1,
-      },
+      checkInRewardClaims: [
+        ...wallet.checkInRewardClaims,
+        getCheckInDayClaimKey(state.cycle, day, 'makeup'),
+      ],
     },
     claimed: true,
+    day,
+    cycle: state.cycle,
   };
 }
 
@@ -128,14 +188,10 @@ export function recordCompletedMatchForMakeup(wallet: PlayerWallet): {
   };
 }
 
-export function getCheckInClaimKey(dateKey: string, days: number): string {
-  return `${getMonthKey(dateKey) ?? 'invalid'}:${days}`;
-}
-
 export function openCheckInChest(
   wallet: PlayerWallet,
   cueCatalog: CueStyle[],
-  options: { dateKey: string; days: number; random?: () => number },
+  options: { cycle: number; days: number; random?: () => number },
 ): {
   wallet: PlayerWallet;
   opened: boolean;
@@ -144,17 +200,15 @@ export function openCheckInChest(
   coinsAwarded: number;
   reason?: 'invalid-milestone' | 'locked' | 'already-opened' | 'empty-pool';
 } {
-  if (daysInMonth(options.dateKey) === 0) {
+  const milestone = CHECK_IN_MILESTONES.find((entry) => entry.days === options.days);
+  if (!milestone || !Number.isInteger(options.cycle) || options.cycle < 1) {
     return { wallet, opened: false, coinsAwarded: 0, reason: 'invalid-milestone' };
   }
-  const milestone = getCheckInMilestones(options.dateKey).find((entry) => entry.days === options.days);
-  if (!milestone) {
-    return { wallet, opened: false, coinsAwarded: 0, reason: 'invalid-milestone' };
-  }
-  if (getMonthCheckInDates(wallet, options.dateKey).length < milestone.days) {
+  const state = getSequentialCheckInState(wallet);
+  if (state.cycle !== options.cycle || state.progress < milestone.days) {
     return { wallet, opened: false, coinsAwarded: 0, reason: 'locked' };
   }
-  const claimKey = getCheckInClaimKey(options.dateKey, milestone.days);
+  const claimKey = getCheckInClaimKey(options.cycle, milestone.days);
   if (wallet.checkInRewardClaims.includes(claimKey)) {
     return { wallet, opened: false, coinsAwarded: 0, reason: 'already-opened' };
   }
@@ -184,17 +238,6 @@ export function openCheckInChest(
     duplicate,
     coinsAwarded,
   };
-}
-
-export function daysInMonth(dateKey: string): number {
-  const monthKey = getMonthKey(dateKey);
-  if (!monthKey) return 0;
-  const [year, month] = monthKey.split('-').map(Number);
-  return new Date(Date.UTC(year, month, 0)).getUTCDate();
-}
-
-function getMonthKey(dateKey: string): string | null {
-  return isDateKey(dateKey) ? dateKey.slice(0, 7) : null;
 }
 
 function isDateKey(value: string): boolean {

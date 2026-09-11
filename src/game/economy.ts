@@ -547,7 +547,10 @@ function normalizeMonthlyMakeupCounts(value: unknown): Record<string, number> {
 function normalizeCheckInRewardClaims(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   return Array.from(new Set(value.filter((entry): entry is string => (
-    typeof entry === 'string' && /^\d{4}-(0[1-9]|1[0-2]):(7|14|2[89]|3[01])$/.test(entry)
+    typeof entry === 'string' && (
+      /^\d{4}-(0[1-9]|1[0-2]):(7|14|2[89]|3[01])$/.test(entry)
+      || /^daily-v2:[1-9]\d*:(?:day:(?:[1-9]|[12]\d|30):(daily|makeup)|reward:(7|14|30))$/.test(entry)
+    )
   )))).sort();
 }
 
