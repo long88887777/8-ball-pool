@@ -5346,11 +5346,12 @@ body.checkin-open {
 /* Exact visual target replica — 2026-09-11 */
 .checkin-overlay {
   padding: 0;
-  background: #173b43 url('/assets/check-in/daily-checkin-lounge-bg.png') center / cover fixed no-repeat;
+  background: #dff4e8 url('/assets/check-in/daily-checkin-bg-botanical-glasshouse.png') center / cover fixed no-repeat;
   backdrop-filter: none;
 }
 
 .checkin-dialog {
+  isolation: isolate;
   width: 100vw;
   max-width: none;
   height: 100vh;
@@ -5360,11 +5361,120 @@ body.checkin-open {
   border: 0;
   border-radius: 0;
   background:
-    linear-gradient(180deg, rgba(15, 50, 58, 0.16), rgba(10, 38, 46, 0.3)),
-    url('/assets/check-in/daily-checkin-lounge-bg.png') center / cover fixed no-repeat;
+    linear-gradient(180deg, rgba(30, 92, 78, 0.06), rgba(18, 79, 72, 0.14)),
+    url('/assets/check-in/daily-checkin-bg-botanical-glasshouse.png') center / cover fixed no-repeat;
   color: #fff8ec;
   box-shadow: none;
   font-family: 'Segoe UI Variable Display', 'PingFang SC', 'Microsoft YaHei UI', sans-serif;
+}
+
+.checkin-garden-decor {
+  position: fixed;
+  z-index: 4;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.checkin-garden-decor::before {
+  position: absolute;
+  top: 22%;
+  right: -9%;
+  width: 38vw;
+  height: 38vw;
+  border-radius: 50%;
+  content: '';
+  background: radial-gradient(circle, rgba(255, 250, 194, 0.24), rgba(255, 255, 255, 0) 68%);
+  animation: checkin-garden-sunwash 11s ease-in-out infinite alternate;
+}
+
+.checkin-garden-orb {
+  position: absolute;
+  display: block;
+  width: clamp(28px, 4vw, 58px);
+  aspect-ratio: 1;
+  border: 1px solid rgba(255, 255, 255, 0.82);
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 31% 25%, rgba(255, 255, 255, 0.98) 0 6%, transparent 7%),
+    radial-gradient(circle at 68% 72%, rgba(255, 193, 111, 0.34), transparent 42%),
+    linear-gradient(145deg, rgba(155, 242, 222, 0.32), rgba(136, 192, 255, 0.12));
+  box-shadow: inset -6px -8px 15px rgba(73, 150, 159, 0.12), 0 8px 20px rgba(14, 88, 80, 0.18);
+  backdrop-filter: blur(1px);
+  animation: checkin-garden-orb-float 7.5s ease-in-out infinite alternate;
+}
+
+.checkin-garden-orb i {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 24%;
+  aspect-ratio: 1;
+  border-radius: 50% 10% 50% 10%;
+  background: #ff927d;
+  box-shadow: 7px 0 #ffd664, 0 7px #fff3a8, -7px 0 #ffb4a6, 0 -7px #fff;
+  opacity: 0.86;
+  transform: translate(-50%, -50%) rotate(45deg);
+}
+
+.checkin-garden-orb-one { top: 32%; left: 1.4%; }
+.checkin-garden-orb-two { top: 42%; right: 1.8%; width: clamp(24px, 3.2vw, 46px); animation-delay: -2.8s; }
+.checkin-garden-orb-three { right: 6%; bottom: 4%; width: clamp(18px, 2.4vw, 34px); animation-delay: -5.1s; }
+
+.checkin-garden-butterfly {
+  position: absolute;
+  top: 26%;
+  right: 4.2%;
+  width: 5px;
+  height: 19px;
+  border-radius: 999px;
+  background: #325b53;
+  filter: drop-shadow(0 4px 5px rgba(24, 80, 69, 0.26));
+  transform: rotate(18deg);
+  animation: checkin-garden-butterfly-bob 5.6s ease-in-out infinite alternate;
+}
+
+.checkin-garden-butterfly::before,
+.checkin-garden-butterfly::after {
+  position: absolute;
+  top: 1px;
+  width: 18px;
+  height: 23px;
+  content: '';
+  background: linear-gradient(145deg, #ffdf67, #ff8178 58%, #70cfc0);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.55);
+  transform-origin: right center;
+  animation: checkin-garden-wing-left 760ms ease-in-out infinite alternate;
+}
+
+.checkin-garden-butterfly::before {
+  right: 3px;
+  border-radius: 75% 28% 72% 35%;
+}
+
+.checkin-garden-butterfly::after {
+  left: 3px;
+  border-radius: 28% 75% 35% 72%;
+  transform-origin: left center;
+  animation-name: checkin-garden-wing-right;
+}
+
+.checkin-garden-sparkles {
+  position: absolute;
+  top: 31%;
+  left: 3.5%;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: #fffbd2;
+  box-shadow: 20px 74px #fff, 9px 162px #d8fff3, calc(93vw - 30px) 26px #fff, calc(95vw - 16px) 145px #fff5a9, calc(89vw - 10px) 330px #d8fff3;
+  animation: checkin-garden-sparkle 3.8s ease-in-out infinite;
+}
+
+.checkin-header,
+.checkin-content {
+  position: relative;
+  z-index: 2;
 }
 
 .checkin-header {
@@ -5881,6 +5991,36 @@ body.checkin-open {
   100% { opacity: 1; filter: drop-shadow(0 0 14px var(--milestone-color)); }
 }
 
+@keyframes checkin-garden-orb-float {
+  from { transform: translate3d(0, 5px, 0) rotate(-4deg); }
+  to { transform: translate3d(8px, -14px, 0) rotate(7deg); }
+}
+
+@keyframes checkin-garden-sunwash {
+  from { opacity: 0.52; transform: scale(0.92); }
+  to { opacity: 0.86; transform: scale(1.08); }
+}
+
+@keyframes checkin-garden-butterfly-bob {
+  from { transform: translate3d(0, 4px, 0) rotate(12deg); }
+  to { transform: translate3d(-13px, -9px, 0) rotate(22deg); }
+}
+
+@keyframes checkin-garden-wing-left {
+  from { transform: perspective(30px) rotateY(8deg) rotate(-12deg); }
+  to { transform: perspective(30px) rotateY(58deg) rotate(-4deg); }
+}
+
+@keyframes checkin-garden-wing-right {
+  from { transform: perspective(30px) rotateY(-8deg) rotate(12deg); }
+  to { transform: perspective(30px) rotateY(-58deg) rotate(4deg); }
+}
+
+@keyframes checkin-garden-sparkle {
+  0%, 100% { opacity: 0.26; transform: scale(0.75); }
+  50% { opacity: 0.92; transform: scale(1.25); }
+}
+
 @media (max-width: 940px) {
   .checkin-header { padding: 12px 18px 8px; }
   .checkin-hero-row { grid-template-columns: 0.72fr 1.4fr; gap: 18px; }
@@ -5911,7 +6051,13 @@ body.checkin-open {
 @media (prefers-reduced-motion: reduce) {
   .checkin-day,
   .checkin-milestone.is-ready,
-  .checkin-dialog.is-rewarding .checkin-day.is-checked.is-selected { animation: none; }
+  .checkin-dialog.is-rewarding .checkin-day.is-checked.is-selected,
+  .checkin-garden-decor::before,
+  .checkin-garden-orb,
+  .checkin-garden-butterfly,
+  .checkin-garden-butterfly::before,
+  .checkin-garden-butterfly::after,
+  .checkin-garden-sparkles { animation: none; }
 }
 
 .auth-page {

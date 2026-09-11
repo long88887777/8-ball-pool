@@ -5,6 +5,7 @@ import posterBackgroundUrl from '../public/assets/pool-poster-background.webp?ur
 import rareCheckInChestUrl from '../public/assets/check-in/chest-rare.webp?url';
 import epicCheckInChestUrl from '../public/assets/check-in/chest-epic.webp?url';
 import legendaryCheckInChestUrl from '../public/assets/check-in/chest-legendary.webp?url';
+import dailyCheckInBackgroundUrl from '../public/assets/check-in/daily-checkin-bg-botanical-glasshouse.png?url';
 
 describe('app static assets', () => {
   it('declares an available favicon asset', async () => {
@@ -26,5 +27,9 @@ describe('app static assets', () => {
       expect.stringContaining('chest-epic'),
       expect.stringContaining('chest-legendary'),
     ]);
+  });
+
+  it('bundles the daily check-in glasshouse background', () => {
+    expect(dailyCheckInBackgroundUrl).toContain('daily-checkin-bg-botanical-glasshouse');
   });
 });
