@@ -11,7 +11,15 @@ export type Ball3DDefinition = {
   cueSpot?: boolean;
 };
 
-export type Ball3DStatusCallback = (active: boolean) => void;
+export type Ball3DRenderStatus =
+  | 'loading'
+  | 'ready'
+  | 'context-lost'
+  | 'table-asset-failed'
+  | 'renderer-unavailable'
+  | 'destroyed';
+
+export type Ball3DStatusCallback = (active: boolean, status: Ball3DRenderStatus) => void;
 
 type PocketAnimation = {
   pocket: Vector;
@@ -55,7 +63,6 @@ export class Ball3DRenderer {
   private readonly tableTextures = new Set<THREE.Texture>();
   private readonly container: HTMLElement;
   private readonly loader = new GLTFLoader();
-  private readonly proceduralTable: THREE.Group;
   private readonly onStatusChange: Ball3DStatusCallback;
   private readonly rotationAxis = new THREE.Vector3();
   private readonly rotationDelta = new THREE.Quaternion();
@@ -80,7 +87,7 @@ export class Ball3DRenderer {
   private readonly handleContextRestored = (): void => {
     if (this.destroyed) return;
     this.contextLost = false;
-    if (this.tableAssetState !== 'failed') {
+    if (this.tableAssetState === 'loaded') {
       this.setAvailable(true, 'ready');
     }
   };
@@ -146,11 +153,8 @@ export class Ball3DRenderer {
       opacity: 0.38,
       depthWrite: false,
     });
-    this.proceduralTable = createProceduralTable();
-    this.proceduralTable.renderOrder = 0;
-    this.scene.add(this.proceduralTable);
     this.resize();
-    this.setAvailable(true, 'ready');
+    this.setAvailable(false, 'loading');
     void this.loadAssets();
   }
 
@@ -178,15 +182,12 @@ export class Ball3DRenderer {
     if (table.status === 'fulfilled') {
       this.tableAsset = table.value.scene;
       prepareTableAsset(this.tableAsset, this.tableTextures);
-      this.scene.remove(this.proceduralTable);
       this.scene.add(this.tableAsset);
       this.tableAssetState = 'loaded';
       this.renderer.domElement.dataset.tableAsset = 'loaded';
-      if (!this.contextLost) this.setAvailable(true, 'ready');
     } else {
       this.tableAssetState = 'failed';
       this.renderer.domElement.dataset.tableAsset = 'failed';
-      this.setAvailable(false, 'table-asset-failed');
       console.info('pool-table.glb unavailable; using the Phaser 2D fallback.', table.reason);
     }
 
@@ -199,14 +200,20 @@ export class Ball3DRenderer {
       this.renderer.domElement.dataset.ballAsset = 'procedural';
       console.info('pool-ball.glb unavailable; using the Three.js UV-sphere fallback.', ball.reason);
     }
+
+    if (this.tableAssetState === 'loaded' && !this.contextLost) {
+      this.setAvailable(true, 'ready');
+    } else if (this.tableAssetState === 'failed') {
+      this.setAvailable(false, 'table-asset-failed');
+    }
   }
 
-  private setAvailable(active: boolean, status: string): void {
+  private setAvailable(active: boolean, status: Ball3DRenderStatus): void {
     if (this.destroyed && active) return;
     this.available = active;
     this.renderer.domElement.dataset.status = status;
     this.renderer.domElement.style.display = active ? 'block' : 'none';
-    this.onStatusChange(active);
+    this.onStatusChange(active, status);
   }
 
   reset(definitions: Ball3DDefinition[]): void {
@@ -490,8 +497,6 @@ export class Ball3DRenderer {
       disposeObjectMaterials(this.ballAsset);
       this.ballAsset = null;
     }
-    this.scene.remove(this.proceduralTable);
-    disposeObjectMaterials(this.proceduralTable);
     this.fallbackBallGeometry.dispose();
     this.shadowMaterial.map?.dispose();
     this.shadowMaterial.dispose();
@@ -499,7 +504,7 @@ export class Ball3DRenderer {
     this.tableTextures.clear();
     this.renderer.domElement.removeEventListener('webglcontextlost', this.handleContextLost);
     this.renderer.domElement.removeEventListener('webglcontextrestored', this.handleContextRestored);
-    this.onStatusChange(false);
+    this.onStatusChange(false, 'destroyed');
     this.renderer.renderLists.dispose();
     this.renderer.dispose();
     this.renderer.forceContextLoss();
@@ -512,7 +517,7 @@ export function createBall3DRenderer(
   onStatusChange: Ball3DStatusCallback = () => undefined,
 ): Ball3DRenderer | null {
   if (!Ball3DRenderer.canCreate(container)) {
-    onStatusChange(false);
+    onStatusChange(false, 'renderer-unavailable');
     return null;
   }
   try {
@@ -521,7 +526,7 @@ export function createBall3DRenderer(
     }
     return new Ball3DRenderer(container, onStatusChange);
   } catch (error) {
-    onStatusChange(false);
+    onStatusChange(false, 'renderer-unavailable');
     console.warn('3D pool renderer unavailable; using 2D fallback sprites.', error);
     return null;
   }
@@ -752,88 +757,6 @@ function setObjectOpacity(object: THREE.Object3D, opacity: number): void {
       material.depthWrite = opacity >= 1;
     }
   });
-}
-
-function createProceduralTable(): THREE.Group {
-  const group = new THREE.Group();
-  const wood = new THREE.MeshStandardMaterial({ color: 0x4b2115, roughness: 0.35 });
-  const woodDark = new THREE.MeshStandardMaterial({ color: 0x180908, roughness: 0.5 });
-  const cloth = new THREE.MeshStandardMaterial({ color: 0x126f78, roughness: 0.82 });
-  const rubber = new THREE.MeshStandardMaterial({ color: 0x073a48, roughness: 0.56 });
-  const black = new THREE.MeshStandardMaterial({ color: 0x010306, roughness: 0.84 });
-  const red = new THREE.MeshStandardMaterial({ color: 0x3b0d18, roughness: 0.67 });
-  addBox(group, TABLE.width / 2, TABLE.height / 2, 8, TABLE.width - 22, TABLE.height - 22, 34, woodDark, 16);
-  addFrame(group, TABLE.width / 2, TABLE.height / 2, TABLE.width - 54, TABLE.height - 54, PLAY_AREA.right - PLAY_AREA.left + 18, PLAY_AREA.bottom - PLAY_AREA.top + 18, 30, 28, wood, 12);
-  addBox(group, TABLE.width / 2, TABLE.height / 2, 34, PLAY_AREA.right - PLAY_AREA.left, PLAY_AREA.bottom - PLAY_AREA.top, 8, cloth, 3);
-  addBox(group, TABLE.width / 2, PLAY_AREA.top - 3, 52, TABLE.width - 190, 34, 28, rubber, 10);
-  addBox(group, TABLE.width / 2, PLAY_AREA.bottom + 3, 52, TABLE.width - 190, 34, 28, rubber, 10);
-  addBox(group, PLAY_AREA.left - 3, TABLE.height / 2, 52, 34, PLAY_AREA.bottom - PLAY_AREA.top - 120, 28, rubber, 10);
-  addBox(group, PLAY_AREA.right + 3, TABLE.height / 2, 52, 34, PLAY_AREA.bottom - PLAY_AREA.top - 120, 28, rubber, 10);
-  POCKETS.forEach(({ x, y }) => {
-    const rim = new THREE.Mesh(new THREE.TorusGeometry(29, 4, 10, 40), rubber);
-    rim.position.set(x, TABLE.height - y, 64);
-    rim.rotation.x = Math.PI / 2;
-    group.add(rim);
-    const hole = new THREE.Mesh(new THREE.CylinderGeometry(24, 20, 22, 40), black);
-    hole.position.set(x, TABLE.height - y, 47);
-    group.add(hole);
-    const lining = new THREE.Mesh(new THREE.CylinderGeometry(27, 23, 12, 40), red);
-    lining.position.set(x, TABLE.height - y, 56);
-    group.add(lining);
-  });
-  group.traverse((child) => {
-    if (child instanceof THREE.Mesh) {
-      child.castShadow = true;
-      child.receiveShadow = true;
-    }
-  });
-  return group;
-}
-
-function addBox(
-  group: THREE.Group,
-  x: number,
-  y: number,
-  z: number,
-  width: number,
-  height: number,
-  depth: number,
-  material: THREE.Material,
-  bevelWidth: number,
-): void {
-  const mesh = new THREE.Mesh(new THREE.BoxGeometry(width, height, depth), material);
-  mesh.position.set(x, y, z);
-  mesh.castShadow = true;
-  mesh.receiveShadow = true;
-  group.add(mesh);
-  if (bevelWidth > 0) {
-    const inner = new THREE.Mesh(new THREE.BoxGeometry(Math.max(1, width - bevelWidth), Math.max(1, height - bevelWidth), depth + 1), material);
-    inner.position.copy(mesh.position);
-    inner.castShadow = true;
-    inner.receiveShadow = true;
-    group.add(inner);
-  }
-}
-
-function addFrame(
-  group: THREE.Group,
-  centerX: number,
-  centerY: number,
-  outerWidth: number,
-  outerHeight: number,
-  innerWidth: number,
-  innerHeight: number,
-  z: number,
-  depth: number,
-  material: THREE.Material,
-  bevelWidth: number,
-): void {
-  const sideWidth = Math.max(4, (outerWidth - innerWidth) / 2);
-  const sideHeight = Math.max(4, (outerHeight - innerHeight) / 2);
-  addBox(group, centerX, centerY - (outerHeight - sideHeight) / 2, z, outerWidth, sideHeight, depth, material, bevelWidth);
-  addBox(group, centerX, centerY + (outerHeight - sideHeight) / 2, z, outerWidth, sideHeight, depth, material, bevelWidth);
-  addBox(group, centerX - (outerWidth - sideWidth) / 2, centerY, z, sideWidth, innerHeight, depth, material, bevelWidth);
-  addBox(group, centerX + (outerWidth - sideWidth) / 2, centerY, z, sideWidth, innerHeight, depth, material, bevelWidth);
 }
 
 function createBallTexture3D(definition: Ball3DDefinition): THREE.CanvasTexture {

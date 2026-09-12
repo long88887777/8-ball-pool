@@ -125,7 +125,13 @@ import {
   type CueSpinPreset,
 } from './proPhysics/spin';
 import type { PhysicsBallSnapshot, PhysicsEvent } from './proPhysics/types';
-import { createBall3DRenderer, createDefaultBall3DDefinitions, type Ball3DRenderer } from './ball3d';
+import { finishGameTableLoading } from '../gameShellVisibility';
+import {
+  createBall3DRenderer,
+  createDefaultBall3DDefinitions,
+  type Ball3DRenderer,
+  type Ball3DRenderStatus,
+} from './ball3d';
 import {
   createBallTexture,
   drawPoolHall,
@@ -539,7 +545,7 @@ export class PoolScene extends Phaser.Scene {
       : document.querySelector<HTMLElement>('#game') ?? this.game.canvas?.parentElement;
     this.ball3dRenderer = createBall3DRenderer(
       ballLayerContainer,
-      (active) => this.setThreeLayerActive(active),
+      (active, status) => this.handleThreeLayerStatus(active, status),
     );
     this.createHandTexture();
     this.handSprite = this.add.image(0, 0, 'hand').setDepth(DEPTH.ball + 1).setVisible(false);
@@ -738,6 +744,11 @@ export class PoolScene extends Phaser.Scene {
     if (active && this.ball3dRenderer && this.cueBall) {
       this.reset3DBalls();
     }
+  }
+
+  private handleThreeLayerStatus(active: boolean, status: Ball3DRenderStatus): void {
+    this.setThreeLayerActive(active);
+    if (status !== 'loading' && typeof document !== 'undefined') finishGameTableLoading();
   }
 
 

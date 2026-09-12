@@ -1,5 +1,13 @@
 import './monitoring';
 import Phaser from 'phaser';
+import { validatePasswordChange } from './accountSettings';
+import { gameAudio, type GameSound } from './audioDirector';
+import {
+  DEFAULT_AUDIO_PREFERENCES,
+  readAudioPreferences,
+  writeAudioPreferences,
+  type AudioPreferences,
+} from './audioPreferences';
 import { PoolScene } from './game/PoolScene';
 import { type GameRuleset } from './game/gameRules';
 import { normalizeAIDifficulty, type AIDifficulty } from './game/ai/difficulty';
@@ -148,6 +156,7 @@ let cuePreviewReturnFocus: HTMLElement | null = null;
 let selectedCheckInDay: number | null = null;
 let pendingCheckInMilestone: CheckInMilestone | null = null;
 let checkInOpening = false;
+let audioPreferences: AudioPreferences = { ...DEFAULT_AUDIO_PREFERENCES };
 
 const shellLanguage: Language = 'zh';
 
@@ -175,7 +184,10 @@ function hideMenuSplashCursor(): void {
 }
 
 if (import.meta.hot) {
-  import.meta.hot.dispose(hideMenuSplashCursor);
+  import.meta.hot.dispose(() => {
+    hideMenuSplashCursor();
+    gameAudio.dispose();
+  });
 }
 
 function selectedAIDifficulty(): AIDifficulty {
@@ -190,6 +202,7 @@ function startGame(
   challengeLevelId?: number,
 ): void {
   hideMenuSplashCursor();
+  gameAudio.setScene('game');
   showGameShellForNewGame();
   hideEconomyPanels();
 
@@ -200,6 +213,7 @@ function startGame(
     height: 640,
     transparent: true,
     backgroundColor: '#10100e',
+    audio: { noAudio: true },
     scene: [PoolScene],
     physics: {
       default: 'matter',
@@ -251,6 +265,7 @@ function backToMenu(): void {
   if (shell) shell.hidden = true;
   if (pauseOverlay) pauseOverlay.hidden = true;
   if (challengeSelect) challengeSelect.hidden = true;
+  gameAudio.setScene('menu');
   showMenuSplashCursor();
   void loadGrowthOverview();
 }
@@ -1034,15 +1049,141 @@ function showSettingsPanel(): void {
   renderSettingsPanel();
   const overlay = document.getElementById('settings-panel');
   if (overlay) overlay.hidden = false;
+  hideMenuSplashCursor();
+  void renderSettingsAccount();
 }
 
 function hideSettingsPanel(): void {
   const overlay = document.getElementById('settings-panel');
   if (overlay) overlay.hidden = true;
+  const passwordForm = document.getElementById('settings-password-form') as HTMLFormElement | null;
+  passwordForm?.reset();
+  setSettingsFeedback('');
+  const menu = document.getElementById('main-menu');
+  if (!currentGame && menu && !menu.hidden) showMenuSplashCursor();
 }
 
 function renderSettingsPanel(): void {
   setText('settings-controls-note', getCopy(shellLanguage).shell.smoothAimNote);
+  renderAudioPreferences();
+}
+
+function renderAudioPreferences(): void {
+  const musicInput = document.getElementById('settings-music-volume') as HTMLInputElement | null;
+  const soundInput = document.getElementById('settings-sound-volume') as HTMLInputElement | null;
+  if (musicInput) {
+    musicInput.value = String(audioPreferences.musicVolume);
+    musicInput.style.setProperty('--range-progress', `${audioPreferences.musicVolume}%`);
+  }
+  if (soundInput) {
+    soundInput.value = String(audioPreferences.soundVolume);
+    soundInput.style.setProperty('--range-progress', `${audioPreferences.soundVolume}%`);
+  }
+  setText('settings-music-value', volumeLabel(audioPreferences.musicVolume));
+  setText('settings-sound-value', volumeLabel(audioPreferences.soundVolume));
+}
+
+function updateAudioPreferencesFromControls(): void {
+  const musicInput = document.getElementById('settings-music-volume') as HTMLInputElement | null;
+  const soundInput = document.getElementById('settings-sound-volume') as HTMLInputElement | null;
+  audioPreferences = writeAudioPreferences(browserStorage(), {
+    musicVolume: Number(musicInput?.value ?? audioPreferences.musicVolume),
+    soundVolume: Number(soundInput?.value ?? audioPreferences.soundVolume),
+  });
+  gameAudio.setPreferences(audioPreferences);
+  renderAudioPreferences();
+}
+
+function volumeLabel(volume: number): string {
+  return volume === 0 ? '静音' : `${volume}%`;
+}
+
+async function renderSettingsAccount(): Promise<void> {
+  const passwordInputs = document.querySelectorAll<HTMLInputElement>('#settings-password-form input');
+  const passwordButton = document.getElementById('settings-password-save') as HTMLButtonElement | null;
+
+  if (guestMode) {
+    setText('settings-account-email', '游客模式');
+    setText('settings-account-note', '登录账号后可修改密码并同步游戏进度。');
+    passwordInputs.forEach((input) => { input.disabled = true; });
+    if (passwordButton) passwordButton.disabled = true;
+    return;
+  }
+
+  const { data: { user } } = await supabase.auth.getUser();
+  setText('settings-account-email', user?.email ?? '已登录账号');
+  setText('settings-account-note', '密码更新后，下次登录请使用新密码。');
+  passwordInputs.forEach((input) => { input.disabled = !user; });
+  if (passwordButton) passwordButton.disabled = !user;
+}
+
+async function updateAccountPassword(event: SubmitEvent): Promise<void> {
+  event.preventDefault();
+  const nextPassword = document.getElementById('settings-new-password') as HTMLInputElement | null;
+  const confirmPassword = document.getElementById('settings-confirm-password') as HTMLInputElement | null;
+  const submitButton = document.getElementById('settings-password-save') as HTMLButtonElement | null;
+  const password = nextPassword?.value ?? '';
+  const validation = validatePasswordChange(password, confirmPassword?.value ?? '');
+
+  if (guestMode) {
+    setSettingsFeedback('游客模式不能修改密码，请先登录账号。', 'error');
+    gameAudio.play('warning');
+    return;
+  }
+  if (!validation.valid) {
+    setSettingsFeedback(validation.message, 'error');
+    gameAudio.play('warning');
+    if (validation.field === 'password') nextPassword?.focus();
+    else confirmPassword?.focus();
+    return;
+  }
+
+  if (submitButton) {
+    submitButton.disabled = true;
+    submitButton.textContent = '正在更新…';
+  }
+  setSettingsFeedback('');
+  const { error } = await supabase.auth.updateUser({ password });
+  if (submitButton) {
+    submitButton.disabled = false;
+    submitButton.textContent = '更新密码';
+  }
+
+  if (error) {
+    setSettingsFeedback(`修改失败：${error.message}`, 'error');
+    gameAudio.play('warning');
+    return;
+  }
+
+  (event.currentTarget as HTMLFormElement).reset();
+  setSettingsFeedback('密码已更新。', 'success');
+  gameAudio.play('success');
+}
+
+function setSettingsFeedback(message: string, tone: 'neutral' | 'success' | 'error' = 'neutral'): void {
+  const feedback = document.getElementById('settings-account-feedback');
+  if (!feedback) return;
+  feedback.textContent = message;
+  feedback.dataset.tone = tone;
+}
+
+function installUiAudioFeedback(): void {
+  document.addEventListener('click', (event) => {
+    const target = event.target as HTMLElement | null;
+    const control = target?.closest<HTMLElement>('button, [role="button"]');
+    if (!control || control.getAttribute('aria-disabled') === 'true' || (control as HTMLButtonElement).disabled) return;
+    gameAudio.play(resolveUiSound(control));
+  });
+}
+
+function resolveUiSound(control: HTMLElement): GameSound {
+  const requested = control.dataset.audioCue as GameSound | undefined;
+  if (requested) return requested;
+
+  const identity = `${control.id} ${control.className}`;
+  if (/close|back|logout|cancel|challenge-menu|victory-menu/.test(identity)) return 'back';
+  if (/menu-btn|ruleset-option|challenge-card|mm-option|package-card|cue-shop-card/.test(identity)) return 'select';
+  return 'tap';
 }
 
 function applyShellCopy(): void {
@@ -1135,6 +1276,7 @@ async function showCheckInPanel(): Promise<void> {
   document.documentElement.classList.add('checkin-open');
   document.body.classList.add('checkin-open');
   selectedCheckInDay = null;
+  closeCheckInRules();
   setCheckInFeedback('正在同步签到记录…');
   renderCheckInPanel();
   currentWallet = await readPlayerWalletSupabase(supabase);
@@ -1149,6 +1291,7 @@ function hideCheckInPanel(): void {
   document.documentElement.classList.remove('checkin-open');
   document.body.classList.remove('checkin-open');
   selectedCheckInDay = null;
+  closeCheckInRules();
 }
 
 function renderCheckInPanel(): void {
@@ -1166,11 +1309,17 @@ function renderCheckInPanel(): void {
 
   setText('checkin-month-title', '每日');
   setText('checkin-month-label', `从第 1 天开始，每天推进 1 格 · 每格领取 ${DAILY_CHECK_IN_REWARD} 金币`);
-  setText('checkin-coin-balance', `金币 ${currentWallet.coins.toLocaleString('zh-CN')}`);
+  setText('checkin-cycle-label', `第 ${state.cycle} 轮`);
+  setText('checkin-coin-balance', currentWallet.coins.toLocaleString('zh-CN'));
   setText('checkin-total', `${state.progress}/${CHECK_IN_CYCLE_LENGTH} 天`);
   setText('checkin-card-count', `${currentWallet.makeupCards} 张`);
   setText('checkin-match-progress', `${currentWallet.makeupMatchProgress}/${MATCHES_PER_MAKEUP_CARD} 局`);
   setText('checkin-makeup-count', `${state.makeupCount}/${MAX_CYCLE_MAKEUPS} 次`);
+  const cycleMeter = document.getElementById('checkin-cycle-meter');
+  if (cycleMeter) cycleMeter.style.width = `${(state.progress / CHECK_IN_CYCLE_LENGTH) * 100}%`;
+  document.querySelectorAll<HTMLElement>('#checkin-match-lights i').forEach((light, index) => {
+    light.classList.toggle('is-filled', index < currentWallet.makeupMatchProgress);
+  });
   const hasDailyClaim = hasSequentialDailyCheckInToday(currentWallet, todayKey, state.cycle);
   const makeupReady = hasDailyClaim
     && currentWallet.makeupCards > 0
@@ -1346,6 +1495,22 @@ function playCheckInClaimAnimation(): void {
   void dialog.offsetWidth;
   dialog.classList.add('is-rewarding');
   window.setTimeout(() => dialog.classList.remove('is-rewarding'), 1_100);
+}
+
+function closeCheckInRules(): void {
+  const rules = document.getElementById('checkin-rule-note');
+  const toggle = document.getElementById('checkin-rules-toggle');
+  if (rules) rules.hidden = true;
+  toggle?.setAttribute('aria-expanded', 'false');
+}
+
+function toggleCheckInRules(): void {
+  const rules = document.getElementById('checkin-rule-note');
+  const toggle = document.getElementById('checkin-rules-toggle');
+  if (!rules || !toggle) return;
+  const shouldOpen = rules.hidden;
+  rules.hidden = !shouldOpen;
+  toggle.setAttribute('aria-expanded', String(shouldOpen));
 }
 
 function checkInFailureCopy(reason: string | undefined): string {
@@ -1742,10 +1907,30 @@ function repairCueStyle(cueId: string): void {
 function showMenu(): void {
   const menu = document.getElementById('main-menu');
   if (menu) menu.hidden = false;
+  gameAudio.setScene('menu');
   showMenuSplashCursor();
 }
 
+async function signOutCurrentPlayer(): Promise<string | null> {
+  if (guestMode) {
+    guestMode = false;
+    backToMenu();
+    const menu = document.getElementById('main-menu');
+    if (menu) menu.hidden = true;
+    hideMenuSplashCursor();
+    gameAudio.setScene('silent');
+    showAuthPage();
+    return null;
+  }
+
+  const { error } = await supabase.auth.signOut();
+  return error?.message ?? null;
+}
+
 async function init(): Promise<void> {
+  audioPreferences = readAudioPreferences(browserStorage());
+  gameAudio.setPreferences(audioPreferences);
+  installUiAudioFeedback();
   applyShellCopy();
   renderSettingsPanel();
   const { data: { session } } = await supabase.auth.getSession();
@@ -1773,6 +1958,7 @@ async function init(): Promise<void> {
   if (session) {
     onAuthSuccess();
   } else {
+    gameAudio.setScene('silent');
     showAuthPage();
     const menu = document.getElementById('main-menu');
     if (menu) menu.hidden = true;
@@ -1785,19 +1971,13 @@ async function init(): Promise<void> {
       const menu = document.getElementById('main-menu');
       if (menu) menu.hidden = true;
       hideMenuSplashCursor();
+      gameAudio.setScene('silent');
       showAuthPage();
     }
   });
 
   document.getElementById('btn-logout')?.addEventListener('click', async () => {
-    if (guestMode) {
-      guestMode = false;
-      backToMenu();
-      hideMenuSplashCursor();
-      showAuthPage();
-      return;
-    }
-    await supabase.auth.signOut();
+    await signOutCurrentPlayer();
   });
 
   document.getElementById('growth-panel-toggle')?.addEventListener('click', () => {
@@ -1815,6 +1995,7 @@ async function init(): Promise<void> {
     void showCheckInPanel();
   });
   document.getElementById('checkin-close')?.addEventListener('click', hideCheckInPanel);
+  document.getElementById('checkin-rules-toggle')?.addEventListener('click', toggleCheckInRules);
   document.getElementById('checkin-panel')?.addEventListener('click', (event) => {
     if (event.target === event.currentTarget) hideCheckInPanel();
   });
@@ -1843,13 +2024,23 @@ async function init(): Promise<void> {
   });
   document.addEventListener('keydown', (event) => {
     if (event.key !== 'Escape') return;
+    const checkInRules = document.getElementById('checkin-rule-note');
+    if (checkInRules && !checkInRules.hidden) {
+      closeCheckInRules();
+      return;
+    }
     const chest = document.getElementById('checkin-chest-modal');
     if (chest && !chest.hidden) {
       hideCheckInChest();
       return;
     }
     const panel = document.getElementById('checkin-panel');
-    if (panel && !panel.hidden) hideCheckInPanel();
+    if (panel && !panel.hidden) {
+      hideCheckInPanel();
+      return;
+    }
+    const settingsPanel = document.getElementById('settings-panel');
+    if (settingsPanel && !settingsPanel.hidden) hideSettingsPanel();
   });
 
   document.getElementById('history-open')?.addEventListener('click', showHistoryPanel);
@@ -1862,6 +2053,32 @@ async function init(): Promise<void> {
   });
   document.getElementById('settings-open')?.addEventListener('click', showSettingsPanel);
   document.getElementById('settings-close')?.addEventListener('click', hideSettingsPanel);
+  document.getElementById('settings-panel')?.addEventListener('click', (event) => {
+    if (event.target === event.currentTarget) hideSettingsPanel();
+  });
+  document.getElementById('settings-music-volume')?.addEventListener('input', updateAudioPreferencesFromControls);
+  document.getElementById('settings-sound-volume')?.addEventListener('input', updateAudioPreferencesFromControls);
+  document.getElementById('settings-sound-volume')?.addEventListener('change', () => gameAudio.play('select'));
+  document.getElementById('settings-audio-reset')?.addEventListener('click', () => {
+    audioPreferences = writeAudioPreferences(browserStorage(), DEFAULT_AUDIO_PREFERENCES);
+    gameAudio.setPreferences(audioPreferences);
+    renderAudioPreferences();
+  });
+  document.getElementById('settings-password-form')?.addEventListener('submit', (event) => {
+    void updateAccountPassword(event as SubmitEvent);
+  });
+  document.getElementById('settings-logout')?.addEventListener('click', async () => {
+    const button = document.getElementById('settings-logout') as HTMLButtonElement | null;
+    if (button) button.disabled = true;
+    const errorMessage = await signOutCurrentPlayer();
+    if (button) button.disabled = false;
+    if (errorMessage) {
+      setSettingsFeedback(`退出失败：${errorMessage}`, 'error');
+      gameAudio.play('warning');
+      return;
+    }
+    hideSettingsPanel();
+  });
   document.getElementById('profile-open')?.addEventListener('click', showProfilePanel);
   document.getElementById('profile-close')?.addEventListener('click', hideProfilePanel);
   document.getElementById('profile-cancel')?.addEventListener('click', hideProfilePanel);

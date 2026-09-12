@@ -5,9 +5,16 @@ export function showGameShellForNewGame(doc: GameShellDocument = document): void
   const menu = doc.getElementById('main-menu');
   const shell = doc.querySelector<HTMLElement>('.game-shell');
   const challengeSelect = doc.getElementById('challenge-select');
+  const game = doc.getElementById('game');
 
   if (staleVictoryOverlay) staleVictoryOverlay.hidden = true;
   if (menu) menu.hidden = true;
+  if (game) game.dataset.renderState = 'loading';
   if (shell) shell.hidden = false;
   if (challengeSelect) challengeSelect.hidden = true;
+}
+
+export function finishGameTableLoading(doc: GameShellDocument = document): void {
+  const game = doc.getElementById('game');
+  if (game) game.dataset.renderState = 'ready';
 }

@@ -342,37 +342,77 @@
         </div>
         <header class="checkin-header">
           <div class="checkin-toolbar">
-            <button id="checkin-close" class="checkin-close" type="button" aria-label="关闭签到奖励">返回</button>
+            <button id="checkin-close" class="checkin-close" type="button" aria-label="返回台球厅">
+              <span class="checkin-close-icon" aria-hidden="true">&#8592;</span>
+              <span>返回大厅</span>
+            </button>
             <span class="checkin-toolbar-divider" aria-hidden="true"></span>
-            <div class="checkin-header-mark" aria-hidden="true"><span>8</span><strong>台球厅</strong></div>
+            <div class="checkin-header-mark" aria-hidden="true">
+              <span>8</span>
+              <div>
+                <strong>台球厅</strong>
+                <small>签到巡回赛</small>
+              </div>
+            </div>
             <div class="checkin-toolbar-actions">
-              <span id="checkin-coin-balance" class="checkin-balance">金币 0</span>
-              <button class="checkin-settings-shortcut" type="button" tabindex="-1" aria-hidden="true">设置</button>
+              <span class="checkin-season-status"><i aria-hidden="true"></i><span id="checkin-cycle-label">第 1 轮</span></span>
+              <span class="checkin-balance">
+                <i class="checkin-coin-icon" aria-hidden="true"></i>
+                <span>金币</span>
+                <strong id="checkin-coin-balance">0</strong>
+              </span>
             </div>
           </div>
           <div class="checkin-hero-row">
             <div class="checkin-title-group">
-              <h2 id="checkin-title"><span id="checkin-month-title">每日</span>签到</h2>
+              <span class="checkin-title-kicker"><i aria-hidden="true"></i>30 天开球挑战</span>
+              <h2 id="checkin-title"><span id="checkin-month-title">每日</span><em>签到</em></h2>
               <p id="checkin-month-label" class="checkin-month-label"></p>
+              <div class="checkin-hero-meta">
+                <span id="checkin-next-reward" class="checkin-next-reward">稀有宝箱 · 还差 7 天</span>
+                <span id="checkin-feedback" class="checkin-feedback" role="status" aria-live="polite"></span>
+              </div>
             </div>
-            <div class="checkin-ledger" aria-label="签到概览">
+
+            <div class="checkin-header-art" aria-hidden="true">
+              <span class="checkin-header-art-pattern"></span>
+              <img src="/assets/check-in/billiards-header-ornaments-v2.png" alt="" />
+              <span class="checkin-header-art-caption"><strong>台球签到季</strong><small>每天点亮一颗球</small></span>
+            </div>
+
+            <section class="checkin-ledger" aria-label="签到概览">
               <div class="checkin-ledger-item">
-                <span>本轮签到</span>
-                <strong id="checkin-total">0/30 天</strong>
+                <span class="checkin-ledger-symbol checkin-ledger-ball" aria-hidden="true">30</span>
+                <div>
+                  <span>本轮签到</span>
+                  <strong id="checkin-total">0/30 天</strong>
+                  <span class="checkin-ledger-meter" aria-hidden="true"><i id="checkin-cycle-meter"></i></span>
+                </div>
               </div>
               <div class="checkin-ledger-item checkin-ledger-card">
-                <span>补签卡</span>
-                <strong id="checkin-card-count">0 张</strong>
+                <span class="checkin-ledger-symbol checkin-ledger-ticket" aria-hidden="true"><i></i></span>
+                <div>
+                  <span>补签卡</span>
+                  <strong id="checkin-card-count">0 张</strong>
+                  <small id="checkin-makeup-count">0/7 次</small>
+                </div>
               </div>
               <div class="checkin-ledger-item">
-                <span>补签进度</span>
-                <strong id="checkin-match-progress">0/3 局</strong>
+                <span class="checkin-ledger-symbol checkin-ledger-rack" aria-hidden="true"><i></i><i></i><i></i></span>
+                <div>
+                  <span>对局进度</span>
+                  <strong id="checkin-match-progress">0/3 局</strong>
+                  <span id="checkin-match-lights" class="checkin-match-lights" aria-hidden="true"><i></i><i></i><i></i></span>
+                </div>
               </div>
-              <div class="checkin-rule-note">
+              <button id="checkin-rules-toggle" class="checkin-rules-toggle" type="button" aria-expanded="false" aria-controls="checkin-rule-note">
+                <span>补签规则</span><i aria-hidden="true">+</i>
+              </button>
+              <div id="checkin-rule-note" class="checkin-rule-note" hidden>
                 <span class="checkin-rule-note-icon" aria-hidden="true">i</span>
-                <p><strong>完整完成 3 场对局</strong>获得 1 张补签卡<br />每天推进 1 格 · 每轮最多补签 7 次</p>
+                <p><strong>完整完成 3 场对局</strong>可获得 1 张补签卡。每天推进 1 格，每轮最多补签 7 次。</p>
               </div>
-            </div>
+            </section>
           </div>
         </header>
 
@@ -443,17 +483,76 @@
     </section>
 
     <section id="settings-panel" class="settings-panel-overlay" hidden>
-      <div class="settings-panel-dialog">
+      <div class="settings-panel-dialog" role="dialog" aria-modal="true" aria-labelledby="settings-title">
         <div class="settings-panel-header">
           <div>
-            <p class="eyebrow">Settings</p>
+            <p class="settings-kicker">偏好与账户</p>
             <h2 id="settings-title">设置</h2>
           </div>
           <button id="settings-close" class="settings-panel-close" type="button" aria-label="关闭">&times;</button>
         </div>
-        <div class="settings-section">
-          <h3 id="settings-controls-title">手感控制</h3>
-          <p id="settings-controls-note" class="settings-note">鼠标和触摸拖动已使用平滑精细瞄准。</p>
+        <div class="settings-panel-body">
+          <section class="settings-section settings-audio-section" aria-labelledby="settings-audio-title">
+            <div class="settings-section-heading">
+              <div>
+                <h3 id="settings-audio-title">声音</h3>
+                <p class="settings-note">菜单与选关播放《静夜球房》，对局播放《蓝毡微光》。</p>
+              </div>
+              <span class="settings-status-badge">原创纯音乐</span>
+            </div>
+
+            <label class="settings-volume-control" for="settings-music-volume">
+              <span><strong>音乐</strong><small>钢琴与柔和氛围声</small></span>
+              <output id="settings-music-value" for="settings-music-volume">34%</output>
+              <input id="settings-music-volume" type="range" min="0" max="100" step="1" value="34" aria-label="音乐音量" />
+            </label>
+
+            <label class="settings-volume-control" for="settings-sound-volume">
+              <span><strong>音效</strong><small>菜单点击、击球、碰撞与落袋</small></span>
+              <output id="settings-sound-value" for="settings-sound-volume">58%</output>
+              <input id="settings-sound-volume" type="range" min="0" max="100" step="1" value="58" aria-label="音效音量" />
+            </label>
+
+            <button id="settings-audio-reset" class="settings-secondary-button" type="button">恢复舒适音量</button>
+          </section>
+
+          <section class="settings-section" aria-labelledby="settings-controls-title">
+            <div class="settings-section-heading">
+              <div>
+                <h3 id="settings-controls-title">对局控制</h3>
+                <p id="settings-controls-note" class="settings-note">鼠标和触摸拖动已使用平滑精细瞄准。</p>
+              </div>
+              <span class="settings-status-badge is-neutral">自动暂停已开启</span>
+            </div>
+            <p class="settings-detail-note">切换到其他窗口时会自动暂停本地对局，返回后再继续，避免误操作。</p>
+          </section>
+
+          <section class="settings-section settings-account-section" aria-labelledby="settings-account-title">
+            <div class="settings-section-heading">
+              <div>
+                <h3 id="settings-account-title">账户安全</h3>
+                <strong id="settings-account-email" class="settings-account-email">游客模式</strong>
+                <p id="settings-account-note" class="settings-note">登录账号后可修改密码并同步游戏进度。</p>
+              </div>
+            </div>
+
+            <form id="settings-password-form" class="settings-password-form">
+              <label class="settings-field" for="settings-new-password">
+                <span>新密码</span>
+                <input id="settings-new-password" type="password" minlength="6" autocomplete="new-password" placeholder="至少 6 位字符" />
+              </label>
+              <label class="settings-field" for="settings-confirm-password">
+                <span>确认新密码</span>
+                <input id="settings-confirm-password" type="password" minlength="6" autocomplete="new-password" placeholder="再次输入新密码" />
+              </label>
+              <div class="settings-account-actions">
+                <button id="settings-password-save" class="settings-primary-button" type="submit">更新密码</button>
+                <button id="settings-logout" class="settings-secondary-button is-danger" type="button" data-audio-cue="back">退出登录</button>
+              </div>
+              <p id="settings-account-feedback" class="settings-account-feedback" role="status" aria-live="polite"></p>
+            </form>
+            <p class="settings-detail-note">退出登录不会删除账户、云端进度或已解锁物品。</p>
+          </section>
         </div>
       </div>
     </section>

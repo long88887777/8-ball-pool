@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { showGameShellForNewGame } from './gameShellVisibility';
+import { finishGameTableLoading, showGameShellForNewGame } from './gameShellVisibility';
 
 function createTrackedElement(
   label: string,
@@ -10,6 +10,7 @@ function createTrackedElement(
 ): HTMLElement {
   let hidden = initialHidden;
   return {
+    dataset: {},
     get hidden() {
       return hidden;
     },
@@ -28,11 +29,13 @@ describe('game shell visibility', () => {
     const menu = createTrackedElement('menu', false, events);
     const challengeSelect = createTrackedElement('challenge', true, events);
     const shell = createTrackedElement('shell', true, events, () => overlay.hidden);
+    const game = createTrackedElement('game', false, events);
     const doc = {
       getElementById: (id: string) => {
         if (id === 'victory-overlay') return overlay;
         if (id === 'main-menu') return menu;
         if (id === 'challenge-select') return challengeSelect;
+        if (id === 'game') return game;
         return null;
       },
       querySelector: (selector: string) => {
@@ -48,5 +51,19 @@ describe('game shell visibility', () => {
     expect(overlayHiddenIndex).toBeGreaterThanOrEqual(0);
     expect(shellShownIndex).toBeGreaterThanOrEqual(0);
     expect(overlayHiddenIndex).toBeLessThan(shellShownIndex);
+    expect(game.dataset.renderState).toBe('loading');
+  });
+
+  it('reveals the table only after its final renderer has settled', () => {
+    const game = createTrackedElement('game', false, []);
+    game.dataset.renderState = 'loading';
+    const doc = {
+      getElementById: (id: string) => id === 'game' ? game : null,
+      querySelector: () => null,
+    };
+
+    finishGameTableLoading(doc);
+
+    expect(game.dataset.renderState).toBe('ready');
   });
 });
