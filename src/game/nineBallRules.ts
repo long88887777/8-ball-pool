@@ -298,8 +298,7 @@ export function getPocketedNineBallDisplayBallIds(state: NineBallState): number[
 }
 
 export function getNineBallTargetDisplayBallIds(state: NineBallState): number[] {
-  const lowest = getLowestRemainingNineBallId(state);
-  return lowest === null ? [] : [lowest];
+  return NINE_BALL_IDS.filter((ballId) => !state.pocketedBallIds.includes(ballId));
 }
 
 export function getLowestRemainingNineBallId(state: NineBallState): number | null {
