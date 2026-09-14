@@ -9,6 +9,8 @@ import checkInHeaderOrnamentsUrl from '../public/assets/check-in/billiards-heade
 import dailyCheckInBackgroundUrl from '../public/assets/check-in/daily-checkin-bg-botanical-glasshouse.png?url';
 import menuMusicUrl from '../public/assets/audio/menu-beautiful-things.mp3?url';
 import gameMusicUrl from '../public/assets/audio/game-gentle-study-flow.mp3?url';
+import backgroundPianoLoopUrl from '../public/assets/audio/game-background-piano-loop.mp3?url';
+import softPianoUrl from '../public/assets/audio/game-soft-piano.mp3?url';
 
 describe('app static assets', () => {
   it('declares an available favicon asset', async () => {
@@ -38,7 +40,11 @@ describe('app static assets', () => {
 
   it('bundles the selected menu and gameplay piano tracks', () => {
     expect(menuMusicUrl).toContain('menu-beautiful-things');
-    expect(gameMusicUrl).toContain('game-gentle-study-flow');
+    expect([gameMusicUrl, backgroundPianoLoopUrl, softPianoUrl]).toEqual([
+      expect.stringContaining('game-gentle-study-flow'),
+      expect.stringContaining('game-background-piano-loop'),
+      expect.stringContaining('game-soft-piano'),
+    ]);
   });
 
   it('offers music and sound effect controls from the in-game pause panel', () => {
