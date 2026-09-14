@@ -45,6 +45,7 @@ const POCKET_CAPTURE_RADIUS = TABLE.pocketRadius + BALL_RADIUS * 1.2;
 
 type VisualDropPocket = {
   pocket: Pocket;
+  visualIndex: number;
   captures(point: Vector): boolean;
 };
 
@@ -53,6 +54,7 @@ type EngineBall = Ball & {
   localKind: 'cue' | 'target';
   emittedPocket?: boolean;
   capturedPocketIndex?: number;
+  capturedPocketSpeed?: number;
 };
 
 export type NetworkBallSnapshot = {
@@ -181,6 +183,7 @@ export class ProfessionalPoolEngine {
     cueBall.state = State.Stationary;
     cueBall.emittedPocket = false;
     cueBall.capturedPocketIndex = undefined;
+    cueBall.capturedPocketSpeed = undefined;
     this.visibleCushionContacts.delete(cueBall.localId);
     this.postUpdateCushionContacts.delete(cueBall.localId);
   }
@@ -197,6 +200,7 @@ export class ProfessionalPoolEngine {
     ball.state = State.Stationary;
     ball.emittedPocket = false;
     ball.capturedPocketIndex = undefined;
+    ball.capturedPocketSpeed = undefined;
     this.visibleCushionContacts.delete(ball.localId);
     this.postUpdateCushionContacts.delete(ball.localId);
   }
@@ -350,6 +354,7 @@ export class ProfessionalPoolEngine {
 
     if (visualPocket) {
       ball.capturedPocketIndex = visualPocket.index;
+      ball.capturedPocketSpeed ??= ball.vel.length();
       visualPocket.pocket.fall(ball, deltaSeconds);
       return false;
     }
@@ -440,31 +445,36 @@ export class ProfessionalPoolEngine {
     const pocketRadius = TABLE.pocketRadius / this.mapper.pixelsPerMeter;
     const middleX = TABLE.width / 2;
 
-    const makePocket = (point: Vector, captures: (point: Vector) => boolean): VisualDropPocket => {
+    const makePocket = (
+      point: Vector,
+      visualIndex: number,
+      captures: (point: Vector) => boolean,
+    ): VisualDropPocket => {
       const physicsPoint = this.mapper.toPhysics(point);
       return {
         pocket: new Pocket(new Vector3(physicsPoint.x, physicsPoint.y, 0), pocketRadius),
+        visualIndex,
         captures,
       };
     };
 
     return [
-      makePocket(POCKETS[0], (point) => {
+      makePocket(POCKETS[0], 0, (point) => {
         return this.isCornerPocketCapture(point, PLAY_AREA.left, PLAY_AREA.top, -1, -1);
       }),
-      makePocket(POCKETS[2], (point) => {
+      makePocket(POCKETS[2], 2, (point) => {
         return this.isCornerPocketCapture(point, PLAY_AREA.right, PLAY_AREA.top, 1, -1);
       }),
-      makePocket(POCKETS[3], (point) => {
+      makePocket(POCKETS[3], 3, (point) => {
         return this.isCornerPocketCapture(point, PLAY_AREA.left, PLAY_AREA.bottom, -1, 1);
       }),
-      makePocket(POCKETS[5], (point) => {
+      makePocket(POCKETS[5], 5, (point) => {
         return this.isCornerPocketCapture(point, PLAY_AREA.right, PLAY_AREA.bottom, 1, 1);
       }),
-      makePocket(POCKETS[1], (point) => {
+      makePocket(POCKETS[1], 1, (point) => {
         return this.isInMiddlePocketCapture(point, true);
       }),
-      makePocket(POCKETS[4], (point) => {
+      makePocket(POCKETS[4], 4, (point) => {
         return this.isInMiddlePocketCapture(point, false);
       }),
     ];
@@ -473,7 +483,8 @@ export class ProfessionalPoolEngine {
   private findVisualDropPocket(futurePixels: Vector): { pocket: Pocket; index: number } | undefined {
     const idx = this.visualDropPockets.findIndex((dropPocket) => dropPocket.captures(futurePixels));
     if (idx === -1) return undefined;
-    return { pocket: this.visualDropPockets[idx].pocket, index: idx };
+    const dropPocket = this.visualDropPockets[idx];
+    return { pocket: dropPocket.pocket, index: dropPocket.visualIndex };
   }
 
   private isNearPocketJaw(point: Vector): boolean {
@@ -699,7 +710,13 @@ export class ProfessionalPoolEngine {
     for (const ball of this.balls) {
       if (!ball.onTable() && !ball.emittedPocket) {
         ball.emittedPocket = true;
-        this.events.push({ type: 'pocket', ballId: ball.localId, kind: ball.localKind, pocketIndex: ball.capturedPocketIndex ?? 0 });
+        this.events.push({
+          type: 'pocket',
+          ballId: ball.localId,
+          kind: ball.localKind,
+          pocketIndex: ball.capturedPocketIndex ?? 0,
+          speed: ball.capturedPocketSpeed ?? ball.vel.length(),
+        });
       }
     }
   }

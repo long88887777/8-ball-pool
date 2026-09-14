@@ -335,6 +335,7 @@ async function showChallengeSelect(): Promise<void> {
   if (shell) shell.hidden = true;
   const requestId = ++challengeSelectRequestId;
   showChallengeSelectLoadingState({ overlay, grid, title, backBtn });
+  await walletSaveQueue.catch(() => undefined);
 
   const [progress, wallet] = await Promise.all([
     readProgressSupabase(supabase),
@@ -394,6 +395,7 @@ async function refreshChallengeRewardPanel(): Promise<void> {
     currentChallengeProgress = context.progress;
     currentWallet = context.wallet;
   } else if (!currentChallengeProgress) {
+    await walletSaveQueue.catch(() => undefined);
     [currentChallengeProgress, currentWallet] = await Promise.all([
       readProgressSupabase(supabase),
       readPlayerWalletSupabase(supabase),
@@ -641,6 +643,7 @@ async function loadUserProfile(): Promise<void> {
 
 async function loadGrowthOverview(): Promise<void> {
   const dateKey = localDateKey();
+  await walletSaveQueue.catch(() => undefined);
   const [stats, tasks, progress, wallet] = await Promise.all([
     readPlayerStatsSupabase(supabase),
     readDailyTaskStateSupabase(supabase, dateKey),
@@ -1069,26 +1072,32 @@ function renderSettingsPanel(): void {
 }
 
 function renderAudioPreferences(): void {
-  const musicInput = document.getElementById('settings-music-volume') as HTMLInputElement | null;
-  const soundInput = document.getElementById('settings-sound-volume') as HTMLInputElement | null;
-  if (musicInput) {
-    musicInput.value = String(audioPreferences.musicVolume);
-    musicInput.style.setProperty('--range-progress', `${audioPreferences.musicVolume}%`);
+  for (const inputId of ['settings-music-volume', 'game-music-volume']) {
+    const input = document.getElementById(inputId) as HTMLInputElement | null;
+    if (!input) continue;
+    input.value = String(audioPreferences.musicVolume);
+    input.style.setProperty('--range-progress', `${audioPreferences.musicVolume}%`);
   }
-  if (soundInput) {
-    soundInput.value = String(audioPreferences.soundVolume);
-    soundInput.style.setProperty('--range-progress', `${audioPreferences.soundVolume}%`);
+  for (const inputId of ['settings-sound-volume', 'game-sound-volume']) {
+    const input = document.getElementById(inputId) as HTMLInputElement | null;
+    if (!input) continue;
+    input.value = String(audioPreferences.soundVolume);
+    input.style.setProperty('--range-progress', `${audioPreferences.soundVolume}%`);
   }
-  setText('settings-music-value', volumeLabel(audioPreferences.musicVolume));
-  setText('settings-sound-value', volumeLabel(audioPreferences.soundVolume));
+  for (const outputId of ['settings-music-value', 'game-music-value']) {
+    setText(outputId, volumeLabel(audioPreferences.musicVolume));
+  }
+  for (const outputId of ['settings-sound-value', 'game-sound-value']) {
+    setText(outputId, volumeLabel(audioPreferences.soundVolume));
+  }
 }
 
-function updateAudioPreferencesFromControls(): void {
-  const musicInput = document.getElementById('settings-music-volume') as HTMLInputElement | null;
-  const soundInput = document.getElementById('settings-sound-volume') as HTMLInputElement | null;
+function updateAudioPreferencesFromControl(event: Event): void {
+  const input = event.currentTarget as HTMLInputElement;
+  const preference = input.id.includes('music') ? 'musicVolume' : 'soundVolume';
   audioPreferences = writeAudioPreferences(browserStorage(), {
-    musicVolume: Number(musicInput?.value ?? audioPreferences.musicVolume),
-    soundVolume: Number(soundInput?.value ?? audioPreferences.soundVolume),
+    ...audioPreferences,
+    [preference]: Number(input.value),
   });
   gameAudio.setPreferences(audioPreferences);
   renderAudioPreferences();
@@ -1213,6 +1222,7 @@ function setStyle(id: string, property: string, value: string): void {
 }
 
 async function loadMenuWallet(): Promise<void> {
+  await walletSaveQueue.catch(() => undefined);
   currentWallet = await readPlayerWalletSupabase(supabase);
   renderMenuEconomy();
 }
@@ -1279,6 +1289,7 @@ async function showCheckInPanel(): Promise<void> {
   closeCheckInRules();
   setCheckInFeedback('正在同步签到记录…');
   renderCheckInPanel();
+  await walletSaveQueue.catch(() => undefined);
   currentWallet = await readPlayerWalletSupabase(supabase);
   if (overlay.hidden) return;
   setCheckInFeedback('');
@@ -2056,9 +2067,17 @@ async function init(): Promise<void> {
   document.getElementById('settings-panel')?.addEventListener('click', (event) => {
     if (event.target === event.currentTarget) hideSettingsPanel();
   });
-  document.getElementById('settings-music-volume')?.addEventListener('input', updateAudioPreferencesFromControls);
-  document.getElementById('settings-sound-volume')?.addEventListener('input', updateAudioPreferencesFromControls);
-  document.getElementById('settings-sound-volume')?.addEventListener('change', () => gameAudio.play('select'));
+  for (const inputId of [
+    'settings-music-volume',
+    'settings-sound-volume',
+    'game-music-volume',
+    'game-sound-volume',
+  ]) {
+    document.getElementById(inputId)?.addEventListener('input', updateAudioPreferencesFromControl);
+  }
+  for (const inputId of ['settings-sound-volume', 'game-sound-volume']) {
+    document.getElementById(inputId)?.addEventListener('change', () => gameAudio.play('select'));
+  }
   document.getElementById('settings-audio-reset')?.addEventListener('click', () => {
     audioPreferences = writeAudioPreferences(browserStorage(), DEFAULT_AUDIO_PREFERENCES);
     gameAudio.setPreferences(audioPreferences);

@@ -14,7 +14,7 @@ vi.mock('phaser', () => ({
 
 import { CUE_START } from './constants';
 import { createEightBallState } from './eightBallRules';
-import { DEFAULT_EQUIPPED_CUE_ID, DEFAULT_PLAYER_WALLET } from './economy';
+import { CUE_CATALOG, DEFAULT_EQUIPPED_CUE_ID, DEFAULT_PLAYER_WALLET } from './economy';
 import { PoolScene } from './PoolScene';
 import { createNineBallState } from './nineBallRules';
 import { createGameState, recordStroke } from './state';
@@ -57,8 +57,12 @@ type InputHarness = {
   onlineState: null;
   physicsEngine: { isSettled: ReturnType<typeof vi.fn> };
   wallet: typeof DEFAULT_PLAYER_WALLET;
+  cueShopOverlay: { hidden: boolean };
   aimLine: { clear: ReturnType<typeof vi.fn> };
   cueGraphics: { clear: ReturnType<typeof vi.fn> };
+  savePlayerWallet: ReturnType<typeof vi.fn>;
+  renderEconomyHud: ReturnType<typeof vi.fn>;
+  renderCueShop: ReturnType<typeof vi.fn>;
   updateAimHud: ReturnType<typeof vi.fn>;
   bindInput: () => void;
   cancelAim: () => void;
@@ -102,15 +106,22 @@ function createInputHarness(): {
   scene.aiThinking = false;
   scene.onlineState = null;
   scene.physicsEngine = { isSettled: vi.fn(() => true) };
+  scene.cueShopOverlay = { hidden: true };
   scene.aimLine = { clear: vi.fn() };
   scene.cueGraphics = { clear: vi.fn() };
+  scene.savePlayerWallet = vi.fn((wallet) => {
+    scene.wallet = wallet;
+    return wallet;
+  });
+  scene.renderEconomyHud = vi.fn();
+  scene.renderCueShop = vi.fn();
   scene.updateAimHud = vi.fn();
 
   return { scene, handlers };
 }
 
 describe('PoolScene aim input', () => {
-  it('does not start aiming while the equipped cue needs repair', () => {
+  it('opens repair immediately when the only owned cue is broken', () => {
     const { scene, handlers } = createInputHarness();
     scene.wallet = {
       ...DEFAULT_PLAYER_WALLET,
@@ -128,6 +139,34 @@ describe('PoolScene aim input', () => {
 
     expect(scene.aimState).toBeNull();
     expect(scene.game.canvas?.setPointerCapture).not.toHaveBeenCalled();
+    expect(scene.cueShopOverlay.hidden).toBe(false);
+    expect(scene.renderCueShop).toHaveBeenCalledWith(expect.stringContaining('耐用度为 0'));
+  });
+
+  it('automatically equips an owned usable cue instead of locking the table', () => {
+    const { scene, handlers } = createInputHarness();
+    const fallbackCue = CUE_CATALOG.find((cue) => cue.id !== DEFAULT_EQUIPPED_CUE_ID)!;
+    scene.wallet = {
+      ...DEFAULT_PLAYER_WALLET,
+      unlockedCueIds: [DEFAULT_EQUIPPED_CUE_ID, fallbackCue.id],
+      cueDurability: {
+        [DEFAULT_EQUIPPED_CUE_ID]: 0,
+        [fallbackCue.id]: 3,
+      },
+    };
+    scene.bindInput();
+
+    handlers.get('pointerdown')!({
+      id: 42,
+      pointerId: 420,
+      worldX: CUE_START.x - 100,
+      worldY: CUE_START.y,
+      rightButtonDown: () => false,
+    });
+
+    expect(scene.wallet.equippedCueId).toBe(fallbackCue.id);
+    expect(scene.savePlayerWallet).toHaveBeenCalledTimes(1);
+    expect(scene.aimState).not.toBeNull();
   });
 
   it('captures the active aim pointer so dragging outside the canvas can keep increasing power', () => {

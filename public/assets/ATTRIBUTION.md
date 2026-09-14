@@ -16,3 +16,17 @@ research folders and is no longer shipped as the active game table.
 
 The generated cloth and mahogany base-color tiles are project-specific derived
 assets created to match the supplied visual reference.
+
+## Music
+
+The following music is used under the Pixabay Content License:
+
+- Menu and selection screens: **Beautiful Things - piano** by Clavier-Music
+  - Source: https://pixabay.com/music/modern-classical-beautiful-things-piano-222056/
+  - File: `audio/menu-beautiful-things.mp3`
+  - Note: the source page marks this track as Content ID registered.
+- Gameplay: **Piano Background Gentle Study Flow** by alex-morgan
+  - Source: https://pixabay.com/music/small-drama-piano-background-gentle-study-flow-578490/
+  - File: `audio/game-gentle-study-flow.mp3`
+
+License summary: https://pixabay.com/service/license-summary/

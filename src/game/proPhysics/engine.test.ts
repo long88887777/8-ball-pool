@@ -48,6 +48,14 @@ function stepUntilSettled(engine: ProfessionalPoolEngine): ReturnType<Profession
 }
 
 describe('ProfessionalPoolEngine', () => {
+  it('reports the matching visual pocket index for all six pocket captures', () => {
+    const engine = new ProfessionalPoolEngine() as unknown as {
+      visualDropPockets: Array<{ visualIndex?: number }>;
+    };
+
+    expect(engine.visualDropPockets.map((pocket) => pocket.visualIndex)).toEqual([0, 2, 3, 5, 1, 4]);
+  });
+
   it('creates cue and target ball snapshots', () => {
     const engine = new ProfessionalPoolEngine();
     engine.rack(starts());
@@ -214,6 +222,22 @@ describe('ProfessionalPoolEngine', () => {
 
     expect(result.events.filter((event) => event.type === 'pocket' && event.ballId === 1)).toHaveLength(1);
     expect(next.events.filter((event) => event.type === 'pocket' && event.ballId === 1)).toHaveLength(0);
+  });
+
+  it('reports the correct pocket index when the cue ball falls', () => {
+    const engine = new ProfessionalPoolEngine();
+    engine.rack([{ id: 0, kind: 'cue', position: { x: TABLE.width / 2, y: 90 } }]);
+    engine.setBallVelocity(0, { x: 0, y: 1.2 });
+
+    let result = engine.step(1 / 60);
+    for (let i = 0; i < 200 && !result.events.some((event) => event.type === 'pocket'); i += 1) {
+      result = engine.step(1 / 60);
+    }
+
+    expect(result.events.find((event) => event.type === 'pocket' && event.ballId === 0)).toMatchObject({
+      kind: 'cue',
+      pocketIndex: 1,
+    });
   });
 
   it('settles gameplay as soon as only pocketed balls are still falling', () => {
@@ -606,6 +630,7 @@ describe('ProfessionalPoolEngine', () => {
     const cases = [
       {
         name: 'upper-left',
+        pocketIndex: 0,
         position: {
           x: PLAY_AREA.left + BALL_RADIUS + CUSHION_NOSE_INSET + 5,
           y: PLAY_AREA.top + BALL_RADIUS + CUSHION_NOSE_INSET + 5,
@@ -614,6 +639,7 @@ describe('ProfessionalPoolEngine', () => {
       },
       {
         name: 'upper-right',
+        pocketIndex: 2,
         position: {
           x: PLAY_AREA.right - BALL_RADIUS - CUSHION_NOSE_INSET - 5,
           y: PLAY_AREA.top + BALL_RADIUS + CUSHION_NOSE_INSET + 5,
@@ -622,6 +648,7 @@ describe('ProfessionalPoolEngine', () => {
       },
       {
         name: 'lower-left',
+        pocketIndex: 3,
         position: {
           x: PLAY_AREA.left + BALL_RADIUS + CUSHION_NOSE_INSET + 5,
           y: PLAY_AREA.bottom - BALL_RADIUS - CUSHION_NOSE_INSET - 5,
@@ -630,6 +657,7 @@ describe('ProfessionalPoolEngine', () => {
       },
       {
         name: 'lower-right',
+        pocketIndex: 5,
         position: {
           x: PLAY_AREA.right - BALL_RADIUS - CUSHION_NOSE_INSET - 5,
           y: PLAY_AREA.bottom - BALL_RADIUS - CUSHION_NOSE_INSET - 5,
@@ -656,6 +684,8 @@ describe('ProfessionalPoolEngine', () => {
       }
 
       expect(events.filter((event) => event.type === 'pocket' && event.ballId === 1), corner.name).toHaveLength(1);
+      expect(events.find((event) => event.type === 'pocket' && event.ballId === 1), corner.name)
+        .toMatchObject({ pocketIndex: corner.pocketIndex });
       expect(result.balls.find((ball) => ball.id === 1)?.pocketed, corner.name).toBe(true);
     }
   });
@@ -664,6 +694,7 @@ describe('ProfessionalPoolEngine', () => {
     const cases = [
       {
         name: 'upper-middle',
+        pocketIndex: 1,
         position: {
           x: TABLE.width / 2,
           y: PLAY_AREA.top + BALL_RADIUS + CUSHION_NOSE_INSET + 5,
@@ -672,6 +703,7 @@ describe('ProfessionalPoolEngine', () => {
       },
       {
         name: 'lower-middle',
+        pocketIndex: 4,
         position: {
           x: TABLE.width / 2,
           y: PLAY_AREA.bottom - BALL_RADIUS - CUSHION_NOSE_INSET - 5,
@@ -699,6 +731,8 @@ describe('ProfessionalPoolEngine', () => {
 
       expect(events.filter((event) => event.type === 'cushion' && event.ballId === 1), middle.name).toHaveLength(0);
       expect(events.filter((event) => event.type === 'pocket' && event.ballId === 1), middle.name).toHaveLength(1);
+      expect(events.find((event) => event.type === 'pocket' && event.ballId === 1), middle.name)
+        .toMatchObject({ pocketIndex: middle.pocketIndex });
       expect(result.balls.find((ball) => ball.id === 1)?.pocketed, middle.name).toBe(true);
     }
   });

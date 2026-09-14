@@ -21,16 +21,31 @@ export type Ball3DRenderStatus =
 
 export type Ball3DStatusCallback = (active: boolean, status: Ball3DRenderStatus) => void;
 
+export type PocketMotionProfile = {
+  style: 'rattle' | 'roll' | 'rear-impact';
+  durationMs: number;
+  rattleAmplitude: number;
+};
+
+export function pocketLipImpactPoint(pocket: Vector, entryDirection: Vector): Vector {
+  const centerInset = BALL_RADIUS * 0.28;
+  return {
+    x: pocket.x - entryDirection.x * centerInset,
+    y: pocket.y - entryDirection.y * centerInset,
+  };
+}
+
 type PocketAnimation = {
   pocket: Vector;
   elapsed: number;
   duration: number;
   start: THREE.Vector3;
+  profile: PocketMotionProfile;
+  entryDirection: Vector;
 };
 
 const TEXTURE_SIZE = 1024;
 const TEXTURE_HEIGHT = 512;
-const POCKET_ANIMATION_SECONDS = 0.42;
 const BALL_CENTER_Z = 53;
 const BALL_SHADOW_Z = 39;
 const POCKET_BOTTOM_Z = 7;
@@ -368,15 +383,17 @@ export class Ball3DRenderer {
     }
   }
 
-  animatePocket(id: number, pocket: Vector): void {
+  animatePocket(id: number, pocket: Vector, profile: PocketMotionProfile, entryDirection: Vector): void {
     const object = this.balls.get(id);
     const shadow = this.shadows.get(id);
     if (!object || !shadow) return;
     this.animations.set(id, {
       pocket,
       elapsed: 0,
-      duration: POCKET_ANIMATION_SECONDS,
+      duration: Math.max(0.1, profile.durationMs / 1000),
       start: object.position.clone(),
+      profile,
+      entryDirection,
     });
     shadow.visible = true;
     object.visible = true;
@@ -414,16 +431,52 @@ export class Ball3DRenderer {
       if (!object || !shadow) continue;
       animation.elapsed += Math.max(0, deltaSeconds);
       const progress = Math.min(animation.elapsed / animation.duration, 1);
-      const eased = 1 - Math.pow(1 - progress, 3);
       const target = new THREE.Vector3(animation.pocket.x, TABLE.height - animation.pocket.y, POCKET_BOTTOM_Z);
-      object.position.lerpVectors(animation.start, target, eased);
+      const { profile, entryDirection } = animation;
+      let dropProgress: number;
+      if (profile.style === 'rattle') {
+        const lipProgress = Math.min(progress / 0.58, 1);
+        dropProgress = Math.max(0, (progress - 0.58) / 0.42);
+        const lip = animation.start.clone().lerp(target, 0.72);
+        lip.z = BALL_CENTER_Z;
+        if (progress < 0.58) {
+          object.position.lerpVectors(animation.start, lip, lipProgress);
+          const wobble = Math.sin(lipProgress * Math.PI * 3) * (1 - lipProgress) * profile.rattleAmplitude;
+          object.position.x += -entryDirection.y * wobble;
+          object.position.y += -entryDirection.x * wobble;
+        } else {
+          object.position.lerpVectors(lip, target, dropProgress * dropProgress);
+        }
+      } else if (profile.style === 'rear-impact') {
+        const impactProgress = Math.min(progress / 0.34, 1);
+        dropProgress = Math.max(0, (progress - 0.34) / 0.66);
+        const impactPoint = pocketLipImpactPoint(animation.pocket, entryDirection);
+        const impact = new THREE.Vector3(impactPoint.x, TABLE.height - impactPoint.y, BALL_CENTER_Z - 2);
+        const impactBottom = new THREE.Vector3(impactPoint.x, TABLE.height - impactPoint.y, POCKET_BOTTOM_Z);
+        if (progress < 0.34) {
+          object.position.lerpVectors(animation.start, impact, impactProgress);
+        } else {
+          object.position.lerpVectors(impact, impactBottom, dropProgress * dropProgress);
+        }
+      } else {
+        const lipProgress = Math.min(progress / 0.34, 1);
+        dropProgress = Math.max(0, (progress - 0.34) / 0.66);
+        const lip = target.clone();
+        lip.z = BALL_CENTER_Z;
+        if (progress < 0.34) {
+          object.position.lerpVectors(animation.start, lip, lipProgress);
+        } else {
+          object.position.lerpVectors(lip, target, dropProgress * dropProgress);
+        }
+      }
       object.rotation.x += 0.14;
       object.rotation.y += 0.2;
-      object.scale.setScalar(1 - eased * 0.72);
-      setObjectOpacity(object, 1 - eased);
+      const disappearance = Math.min(1, dropProgress * dropProgress);
+      object.scale.setScalar(1 - disappearance * 0.72);
+      setObjectOpacity(object, 1 - disappearance);
       shadow.position.set(object.position.x + 3, object.position.y - 2, BALL_SHADOW_Z);
-      shadow.scale.setScalar(1 - eased * 0.58);
-      shadow.material.opacity = 0.38 * (1 - eased);
+      shadow.scale.setScalar(1 - disappearance * 0.58);
+      shadow.material.opacity = 0.38 * (1 - disappearance);
       if (progress >= 1) {
         object.visible = false;
         shadow.visible = false;

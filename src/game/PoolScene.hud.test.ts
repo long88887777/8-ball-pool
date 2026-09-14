@@ -138,6 +138,67 @@ function createFakeButton(): HTMLButtonElement & { click: () => void } {
 }
 
 describe('PoolScene HUD', () => {
+  it('shows a two-second center-table notice on turn exchange and pauses the new clock', () => {
+    vi.useFakeTimers();
+    const scene = new PoolScene() as any;
+    const previousDocument = globalThis.document;
+    const banner = {
+      hidden: true,
+      dataset: {},
+      classList: { remove: vi.fn(), add: vi.fn() },
+      offsetWidth: 420,
+    } as unknown as HTMLElement;
+    const announcement = { textContent: '' } as HTMLElement;
+
+    scene.gameMode = 'pvp';
+    scene.gameRuleset = 'eight-ball';
+    scene.language = 'zh';
+    scene.rules = { currentPlayer: 1, gameOver: false };
+    scene.nineBallRules = { currentPlayer: 0, gameOver: false };
+    scene.onlineState = null;
+    scene.lastTurnAnnouncementPlayer = 0;
+    scene.turnAnnouncementRemaining = 0;
+    scene.shotClockRemaining = 7;
+    scene.strikeLocked = false;
+    scene.cuePlacementState = null;
+    scene.aimLine = { clear: vi.fn() };
+    scene.clearAimState = vi.fn();
+    scene.hideCueStick = vi.fn();
+    scene.physicsEngine = { isSettled: vi.fn(() => true) };
+    scene.updateShotClockHud = vi.fn();
+
+    globalThis.document = {
+      querySelector: vi.fn((selector: string) => {
+        if (selector === '#table-turn-banner') return banner;
+        if (selector === '#table-turn-announcement-text') return announcement;
+        if (selector === '#player-one-name') return { textContent: '玩家一' };
+        if (selector === '#player-two-name') return { textContent: '玩家二' };
+        return null;
+      }),
+    } as unknown as Document;
+
+    try {
+      scene.syncTurnAnnouncement();
+
+      expect(banner.hidden).toBe(false);
+      expect(announcement.textContent).toBe('玩家二击球中，玩家一等待');
+      expect(scene.turnAnnouncementRemaining).toBe(2);
+      expect(scene.shotClockRemaining).toBe(20);
+
+      scene.updateShotClock(1);
+      expect(scene.shotClockRemaining).toBe(20);
+
+      vi.advanceTimersByTime(1999);
+      expect(banner.hidden).toBe(false);
+      vi.advanceTimersByTime(1);
+      expect(banner.hidden).toBe(true);
+      expect(scene.turnAnnouncementRemaining).toBe(0);
+    } finally {
+      globalThis.document = previousDocument;
+      vi.useRealTimers();
+    }
+  });
+
   it('shows each player card shot clock while only the active player counts down', () => {
     const scene = new PoolScene() as unknown as ShotClockHudHarness;
     const previousDocument = globalThis.document;
@@ -145,6 +206,12 @@ describe('PoolScene HUD', () => {
     const shotClock = { textContent: '' } as HTMLElement;
     const playerOneClock = { textContent: '' } as HTMLElement;
     const playerTwoClock = { textContent: '' } as HTMLElement;
+    const tableBanner = {
+      hidden: true,
+      dataset: {},
+      classList: { remove: vi.fn(), add: vi.fn() },
+      offsetWidth: 420,
+    } as unknown as HTMLElement;
     const playerOneCard = {
       classList: { toggle: vi.fn() },
       style: { setProperty: vi.fn() },
@@ -172,6 +239,9 @@ describe('PoolScene HUD', () => {
         if (selector === '#shot-clock') return shotClock;
         if (selector === '#player-one-card') return playerOneCard;
         if (selector === '#player-two-card') return playerTwoCard;
+        if (selector === '#player-one-name') return { textContent: '玩家一' };
+        if (selector === '#player-two-name') return { textContent: '玩家二' };
+        if (selector === '#table-turn-banner') return tableBanner;
         return null;
       }),
     } as unknown as Document;
@@ -184,6 +254,7 @@ describe('PoolScene HUD', () => {
       expect(playerTwoClock.textContent).toBe('14s');
       expect(playerOneCard.classList.toggle).toHaveBeenCalledWith('is-active-turn', false);
       expect(playerTwoCard.classList.toggle).toHaveBeenCalledWith('is-active-turn', true);
+      expect(tableBanner.hidden).toBe(true);
     } finally {
       globalThis.document = previousDocument;
     }

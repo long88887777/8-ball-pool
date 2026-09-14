@@ -13,6 +13,7 @@ vi.mock('phaser', () => ({
 }));
 
 import { CUE_START } from './constants';
+import { impactIntensityFromSpeed } from './audio';
 import { PoolScene } from './PoolScene';
 import { createEightBallState, resolveEightBallShot, startEightBallShot } from './eightBallRules';
 import { createNineBallState, resolveNineBallShot, startNineBallShot, type NineBallState } from './nineBallRules';
@@ -334,6 +335,21 @@ function createOnlineSceneHarness(options: { useRealSync?: boolean } = {}): Shot
 }
 
 describe('PoolScene online turn state', () => {
+  it('plays distinct feedback for ball collisions, cushions, and pockets', () => {
+    const scene = createOnlineSceneHarness();
+    scene.gameMode = 'pvp';
+
+    scene.handlePhysicsEvents([
+      { type: 'collision', ballId: 0, otherBallId: 3, speed: 1 },
+      { type: 'cushion', ballId: 3, speed: 0.6 },
+      { type: 'pocket', ballId: 3, pocketIndex: 0 },
+    ]);
+
+    expect(scene.audio.play).toHaveBeenNthCalledWith(1, 'collision', impactIntensityFromSpeed(1));
+    expect(scene.audio.play).toHaveBeenNthCalledWith(2, 'rail', impactIntensityFromSpeed(0.6));
+    expect(scene.audio.play).toHaveBeenNthCalledWith(3, 'pocket');
+  });
+
   it('keeps a target-ball cushion event that arrives before first-contact in the same physics batch', () => {
     const scene = createOnlineSceneHarness();
     scene.gameMode = 'pvp';

@@ -7,6 +7,8 @@ import epicCheckInChestUrl from '../public/assets/check-in/chest-epic.webp?url';
 import legendaryCheckInChestUrl from '../public/assets/check-in/chest-legendary.webp?url';
 import checkInHeaderOrnamentsUrl from '../public/assets/check-in/billiards-header-ornaments-v2.png?url';
 import dailyCheckInBackgroundUrl from '../public/assets/check-in/daily-checkin-bg-botanical-glasshouse.png?url';
+import menuMusicUrl from '../public/assets/audio/menu-beautiful-things.mp3?url';
+import gameMusicUrl from '../public/assets/audio/game-gentle-study-flow.mp3?url';
 
 describe('app static assets', () => {
   it('declares an available favicon asset', async () => {
@@ -32,6 +34,17 @@ describe('app static assets', () => {
 
   it('bundles the daily check-in glasshouse background', () => {
     expect(dailyCheckInBackgroundUrl).toContain('daily-checkin-bg-botanical-glasshouse');
+  });
+
+  it('bundles the selected menu and gameplay piano tracks', () => {
+    expect(menuMusicUrl).toContain('menu-beautiful-things');
+    expect(gameMusicUrl).toContain('game-gentle-study-flow');
+  });
+
+  it('offers music and sound effect controls from the in-game pause panel', () => {
+    expect(html).toContain('id="game-music-volume"');
+    expect(html).toContain('id="game-sound-volume"');
+    expect(html).toContain('击球、碰撞、碰库与落袋');
   });
 
   it('uses bright pool-themed artwork without a dead settings shortcut', () => {

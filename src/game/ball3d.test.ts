@@ -1,8 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import { BALL_RADIUS } from './constants';
-import { calculateBallRoll, createDefaultBall3DDefinitions } from './ball3d';
+import { calculateBallRoll, createDefaultBall3DDefinitions, pocketLipImpactPoint } from './ball3d';
 
 describe('3D pool balls', () => {
+  it('keeps a hard pocket impact on the table side of the pocket center', () => {
+    const pocket = { x: 83, y: 83 };
+    const entryDirection = { x: -Math.SQRT1_2, y: -Math.SQRT1_2 };
+    const impact = pocketLipImpactPoint(pocket, entryDirection);
+    const beyondPocket = (impact.x - pocket.x) * entryDirection.x
+      + (impact.y - pocket.y) * entryDirection.y;
+
+    expect(beyondPocket).toBeLessThan(0);
+  });
+
   it('creates only the balls present in the active rack', () => {
     const definitions = createDefaultBall3DDefinitions([0, 1, 8, 9]);
     expect(definitions.map((ball) => ball.id)).toEqual([0, 1, 8, 9]);

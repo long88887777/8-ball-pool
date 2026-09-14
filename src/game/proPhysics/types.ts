@@ -49,6 +49,8 @@ export type PhysicsPocketEvent = {
   ballId: number;
   kind: PhysicsBallKind;
   pocketIndex: number;
+  /** Ball speed in metres/second as it crosses the pocket lip. */
+  speed: number;
 };
 
 export type PhysicsCollisionEvent = {

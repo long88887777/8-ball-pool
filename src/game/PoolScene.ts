@@ -2,7 +2,7 @@ import Phaser from 'phaser';
 import { AIController } from './ai/aiController';
 import type { AIDecision } from './ai/types';
 import { getAIDifficultyProfile, normalizeAIDifficulty, type AIDifficulty } from './ai/difficulty';
-import { PoolAudio } from './audio';
+import { impactIntensityFromSpeed, PoolAudio } from './audio';
 import { applyCuePower, applyCueSpin, getCueGuideRatios } from './cueAttributes';
 import { createCueCollection } from './cueShopView';
 import { CHALLENGE_LEVELS, type ChallengeLevel } from './challenge/levels';
@@ -129,8 +129,10 @@ import { finishGameTableLoading } from '../gameShellVisibility';
 import {
   createBall3DRenderer,
   createDefaultBall3DDefinitions,
+  pocketLipImpactPoint,
   type Ball3DRenderer,
   type Ball3DRenderStatus,
+  type PocketMotionProfile,
 } from './ball3d';
 import {
   createBallTexture,
@@ -251,6 +253,22 @@ const ONLINE_SNAPSHOT_INTERVAL_MS = 200;
 const FOUL_FEEDBACK_MS = 1400;
 const OPENING_BREAK_POWER_MULTIPLIER = 1.5;
 const IDLE_MAINTENANCE_INTERVAL_SECONDS = 0.25;
+const TURN_ANNOUNCEMENT_SECONDS = 2;
+
+export function pocketMotionProfile(speed: number): PocketMotionProfile {
+  const entrySpeed = Math.max(0, Number.isFinite(speed) ? speed : 0);
+  if (entrySpeed < 1.1) {
+    return {
+      style: 'rattle',
+      durationMs: Math.round(770 - entrySpeed * 110),
+      rattleAmplitude: 2.5 + (1.1 - entrySpeed) * 2.8,
+    };
+  }
+  if (entrySpeed < 3.2) {
+    return { style: 'roll', durationMs: Math.round(610 - (entrySpeed - 1.1) * 75), rattleAmplitude: 0 };
+  }
+  return { style: 'rear-impact', durationMs: Math.round(450 - Math.min(entrySpeed - 3.2, 2.8) * 38), rattleAmplitude: 0 };
+}
 
 export class PoolScene extends Phaser.Scene {
   private cueBall!: PoolBall;
@@ -277,6 +295,9 @@ export class PoolScene extends Phaser.Scene {
   private lastShotClockHudSecond: number | null = null;
   private lastShotClockHudPlayer: 0 | 1 | null = null;
   private lastShotClockHudMaxTime: number | null = null;
+  private lastTurnAnnouncementPlayer: 0 | 1 | null = null;
+  private turnAnnouncementRemaining = 0;
+  private turnAnnouncementTimer: ReturnType<typeof setTimeout> | null = null;
   private lastAimRenderKey: string | null = null;
   private aimRenderDirty = false;
   private lastHandSpriteKey: string | null = null;
@@ -596,6 +617,10 @@ export class PoolScene extends Phaser.Scene {
     const disposeScene = (): void => {
       if (sceneDisposed) return;
       sceneDisposed = true;
+      if (this.turnAnnouncementTimer) {
+        clearTimeout(this.turnAnnouncementTimer);
+        this.turnAnnouncementTimer = null;
+      }
       this.reportOnlineLeave();
       this.clearAimState();
       this.restartButton?.removeEventListener('click', this.restartHandler);
@@ -835,6 +860,9 @@ export class PoolScene extends Phaser.Scene {
       this.audio.unlock();
       if (pointer.rightButtonDown()) {
         this.cancelAim();
+        return;
+      }
+      if (!this.ensurePlayableCueForInput()) {
         return;
       }
       const point = { x: pointer.worldX, y: pointer.worldY };
@@ -2079,6 +2107,7 @@ export class PoolScene extends Phaser.Scene {
   private canAim(): boolean {
     return (
       !this.strikeLocked &&
+      this.turnAnnouncementRemaining <= 0 &&
       !this.cuePlacementState &&
       !this.activeCueBallInHand() &&
       !this.activeGameOver() &&
@@ -2090,9 +2119,39 @@ export class PoolScene extends Phaser.Scene {
     );
   }
 
+  private ensurePlayableCueForInput(): boolean {
+    if (getCueDurability(this.wallet, this.wallet.equippedCueId) > 0) {
+      return true;
+    }
+
+    const fallback = CUE_CATALOG.find((cue) => (
+      cue.id !== this.wallet.equippedCueId
+      && this.wallet.unlockedCueIds.includes(cue.id)
+      && getCueDurability(this.wallet, cue.id) > 0
+    ));
+    if (fallback) {
+      const equipped = equipCue(this.wallet, fallback.id);
+      if (equipped.equipped) {
+        this.savePlayerWallet(equipped.wallet);
+        this.renderEconomyHud();
+        this.renderCueShop(`当前球杆已损坏，已自动切换为${fallback.name}。`);
+        return true;
+      }
+    }
+
+    this.renderEconomyHud();
+    this.renderCueShop('球杆耐用度为 0，请先维修后再击球。');
+    if (this.cueShopOverlay) {
+      this.cueShopOverlay.hidden = false;
+    }
+    this.updateAimHud();
+    return false;
+  }
+
   private canPlaceBreakCueBall(): boolean {
     return (
       !this.strikeLocked &&
+      this.turnAnnouncementRemaining <= 0 &&
       this.state.strokes === 0 &&
       (this.gameMode !== 'challenge' || !this.breakCuePlacementConfirmed) &&
       !this.activeCueBallInHand() &&
@@ -2104,7 +2163,7 @@ export class PoolScene extends Phaser.Scene {
   }
 
   private canPlaceBallInHandCueBall(): boolean {
-    return !this.strikeLocked && this.activeCueBallInHand() && !this.activeGameOver() && !this.isAITurn() && !this.isOnlineOpponentTurn() && this.physicsEngine.isSettled();
+    return !this.strikeLocked && this.turnAnnouncementRemaining <= 0 && this.activeCueBallInHand() && !this.activeGameOver() && !this.isAITurn() && !this.isOnlineOpponentTurn() && this.physicsEngine.isSettled();
   }
 
   private isCuePlacementStart(point: Vector): boolean {
@@ -2543,14 +2602,14 @@ export class PoolScene extends Phaser.Scene {
         if (this.gameMode === 'challenge' && this.challengeState && event.otherBallId !== undefined) {
           this.challengeState = recordChallengeCollision(this.challengeState, event.ballId, event.otherBallId);
         }
-        this.audio.play('collision');
+        this.audio.play('collision', impactIntensityFromSpeed(event.speed));
         continue;
       }
       if (event.type === 'cushion') {
         if (this.gameMode !== 'challenge') {
           this.recordRulesCushion(event.ballId);
         }
-        this.audio.play('rail');
+        this.audio.play('rail', impactIntensityFromSpeed(event.speed));
         continue;
       }
       if (event.type !== 'pocket') {
@@ -2560,6 +2619,7 @@ export class PoolScene extends Phaser.Scene {
         continue;
       }
       this.ballPocketMap.set(event.ballId, event.pocketIndex);
+      this.startPocketAnimation(event);
       if (this.gameMode === 'challenge' && this.challengeState) {
         if (event.ballId === 0) {
           this.challengeState = recordChallengeCuePocket(this.challengeState);
@@ -2583,6 +2643,104 @@ export class PoolScene extends Phaser.Scene {
       this.audio.play('pocket');
       this.updateHud();
     }
+  }
+
+  private startPocketAnimation(event: Extract<PhysicsEvent, { type: 'pocket' }>): void {
+    const ball = this.allBalls().find((candidate) => candidate.ballId === event.ballId);
+    const pocket = POCKETS[event.pocketIndex];
+    if (!ball || !pocket || this.pocketAnimatingBalls.has(event.ballId)) {
+      return;
+    }
+
+    const speed = Number.isFinite(event.speed) ? event.speed : 0;
+    const profile = pocketMotionProfile(speed);
+    const previous = this.ballPrevPositions.get(event.ballId);
+    const startX = Number.isFinite(ball.x) ? ball.x : previous?.x ?? pocket.x;
+    const startY = Number.isFinite(ball.y) ? ball.y : previous?.y ?? pocket.y;
+    const directionLength = Math.hypot(pocket.x - startX, pocket.y - startY) || 1;
+    const entryDirection = {
+      x: (pocket.x - startX) / directionLength,
+      y: (pocket.y - startY) / directionLength,
+    };
+    const tangent = { x: -entryDirection.y, y: entryDirection.x };
+    const impactPoint = pocketLipImpactPoint(pocket, entryDirection);
+    this.pocketAnimatingBalls.add(event.ballId);
+    ball.pocketed = true;
+    ball.setVisible(!this.threeLayerActive);
+    ball.setDepth(DEPTH.ball + 0.5);
+    this.ball3dRenderer?.animatePocket(event.ballId, pocket, profile, entryDirection);
+
+    const finish = () => {
+      ball.setVisible(false);
+      ball.setScale(1);
+      ball.setAlpha(1);
+      ball.setDepth(DEPTH.ball);
+      this.pocketAnimatingBalls.delete(event.ballId);
+      this.ballPrevPositions.delete(event.ballId);
+    };
+    const dropPoint = profile.style === 'rear-impact' ? impactPoint : pocket;
+    const dropTween = {
+      x: dropPoint.x,
+      y: dropPoint.y,
+      scaleX: 0.2,
+      scaleY: 0.2,
+      alpha: 0,
+      duration: Math.round(profile.durationMs * (profile.style === 'rattle' ? 0.42 : 0.66)),
+      ease: 'Cubic.easeIn',
+      onComplete: finish,
+    };
+    const tweens = profile.style === 'rattle'
+      ? [
+          {
+            x: pocket.x - entryDirection.x * 5 + tangent.x * profile.rattleAmplitude,
+            y: pocket.y - entryDirection.y * 5 + tangent.y * profile.rattleAmplitude,
+            duration: Math.round(profile.durationMs * 0.2),
+            ease: 'Sine.easeOut',
+          },
+          {
+            x: pocket.x - entryDirection.x * 3 - tangent.x * profile.rattleAmplitude * 0.72,
+            y: pocket.y - entryDirection.y * 3 - tangent.y * profile.rattleAmplitude * 0.72,
+            duration: Math.round(profile.durationMs * 0.18),
+            ease: 'Sine.easeInOut',
+          },
+          {
+            x: pocket.x,
+            y: pocket.y,
+            scaleX: 0.92,
+            scaleY: 0.92,
+            duration: Math.round(profile.durationMs * 0.2),
+            ease: 'Quad.easeIn',
+          },
+          dropTween,
+        ]
+      : profile.style === 'rear-impact'
+        ? [
+            {
+              x: impactPoint.x,
+              y: impactPoint.y,
+              scaleX: 0.96,
+              scaleY: 0.96,
+              duration: Math.round(profile.durationMs * 0.34),
+              ease: 'Quad.easeOut',
+            },
+            dropTween,
+          ]
+        : [
+            {
+              x: pocket.x,
+              y: pocket.y,
+              scaleX: 0.9,
+              scaleY: 0.9,
+              duration: Math.round(profile.durationMs * 0.34),
+              ease: 'Sine.easeIn',
+            },
+            dropTween,
+          ];
+
+    this.tweens.chain({
+      targets: ball,
+      tweens,
+    });
   }
 
   private recordFirstCueContact(ballId: number, otherBallId?: number): void {
@@ -2677,6 +2835,10 @@ export class PoolScene extends Phaser.Scene {
     }
 
     if (!this.wasMoving) {
+      return;
+    }
+
+    if (this.pocketAnimatingBalls.size > 0) {
       return;
     }
 
@@ -2893,6 +3055,7 @@ export class PoolScene extends Phaser.Scene {
     if (this.gameMode === 'online') return false;
     return (
       !this.activeGameOver() &&
+      this.turnAnnouncementRemaining <= 0 &&
       !this.strikeLocked &&
       this.physicsEngine.isSettled()
     );
@@ -2922,7 +3085,7 @@ export class PoolScene extends Phaser.Scene {
   }
 
   private scheduleAITurn(): void {
-    if (this.aiThinking || this.activeGameOver()) return;
+    if (this.aiThinking || this.activeGameOver() || this.turnAnnouncementRemaining > 0) return;
     this.aiThinking = true;
     this.updateHud();
     setTimeout(() => {
@@ -3065,6 +3228,12 @@ export class PoolScene extends Phaser.Scene {
     this.currentShotHistory = [];
     this.pendingShotHistoryEntry = null;
     this.shotClockRemaining = SHOT_CLOCK_SECONDS;
+    this.lastTurnAnnouncementPlayer = null;
+    this.turnAnnouncementRemaining = 0;
+    if (this.turnAnnouncementTimer) {
+      clearTimeout(this.turnAnnouncementTimer);
+      this.turnAnnouncementTimer = null;
+    }
     this.wasMoving = false;
     this.matchCoinSettled = false;
     this.matchGrowthSettled = false;
@@ -3086,6 +3255,8 @@ export class PoolScene extends Phaser.Scene {
   private updateHud(): void {
     const matchPanel = document.querySelector('.match-panel') as HTMLElement | null;
     if (matchPanel) matchPanel.hidden = this.gameMode === 'challenge';
+    const tableTurnBanner = document.querySelector<HTMLElement>('#table-turn-banner');
+    if (tableTurnBanner && this.gameMode === 'challenge') tableTurnBanner.hidden = true;
     const mode = document.querySelector<HTMLElement>('#mode');
     const strokes = document.querySelector<HTMLElement>('#strokes');
     const remaining = document.querySelector<HTMLElement>('#remaining');
@@ -3189,6 +3360,7 @@ export class PoolScene extends Phaser.Scene {
     this.renderDomBallList('#pocketed-ball-strip', this.pocketedDisplayBallIds(), copy.hud.noPocketedBalls);
     this.renderDomBallList('#player-one-targets', this.targetDisplayBallIds(0), copy.hud.openTargets);
     this.renderDomBallList('#player-two-targets', this.targetDisplayBallIds(1), copy.hud.openTargets);
+    this.syncTurnAnnouncement();
     this.updateShotClockHud();
     this.updateOnlineNetworkHud();
     if (this.activeGameOver() && this.gameMode !== 'online') {
@@ -3265,6 +3437,74 @@ export class PoolScene extends Phaser.Scene {
     if (shotClock) shotClock.textContent = String(visibleSecond);
     this.updatePlayerClockCard(playerOneCard, activePlayer === 0, activePlayer === 0 ? visibleSecond : maxTime, progress);
     this.updatePlayerClockCard(playerTwoCard, activePlayer === 1, activePlayer === 1 ? visibleSecond : maxTime, progress);
+  }
+
+  private syncTurnAnnouncement(): void {
+    const banner = document.querySelector<HTMLElement>('#table-turn-banner');
+    if (!banner) {
+      return;
+    }
+
+    const activePlayer = this.activeHudPlayer();
+    if (this.gameMode === 'challenge' || activePlayer === null) {
+      banner.hidden = true;
+      this.turnAnnouncementRemaining = 0;
+      return;
+    }
+
+    if (this.lastTurnAnnouncementPlayer === null) {
+      this.lastTurnAnnouncementPlayer = activePlayer;
+      banner.hidden = true;
+      return;
+    }
+
+    if (activePlayer === this.lastTurnAnnouncementPlayer) {
+      return;
+    }
+
+    this.lastTurnAnnouncementPlayer = activePlayer;
+    this.turnAnnouncementRemaining = TURN_ANNOUNCEMENT_SECONDS;
+    this.resetShotClockForTurn();
+    this.clearAimState();
+    this.cuePlacementState = null;
+    this.aimLine?.clear();
+    this.hideCueStick();
+
+    const waitingPlayer = activePlayer === 0 ? 1 : 0;
+    const copy = getCopy(this.language);
+    const playerNames = [
+      document.querySelector<HTMLElement>('#player-one-name')?.textContent || copy.hud.playerName(1),
+      document.querySelector<HTMLElement>('#player-two-name')?.textContent || copy.hud.playerName(2),
+    ];
+    const text = document.querySelector<HTMLElement>('#table-turn-announcement-text');
+    if (text) {
+      text.textContent = this.language === 'zh'
+        ? `${playerNames[activePlayer]}击球中，${playerNames[waitingPlayer]}等待`
+        : `${playerNames[activePlayer]} shooting, ${playerNames[waitingPlayer]} waiting`;
+    }
+
+    banner.hidden = false;
+    banner.dataset.activePlayer = String(activePlayer + 1);
+    banner.classList.remove('is-switching');
+    void banner.offsetWidth;
+    banner.classList.add('is-switching');
+    if (this.turnAnnouncementTimer) {
+      clearTimeout(this.turnAnnouncementTimer);
+    }
+    this.turnAnnouncementTimer = setTimeout(() => this.finishTurnAnnouncement(), TURN_ANNOUNCEMENT_SECONDS * 1000);
+  }
+
+  private finishTurnAnnouncement(): void {
+    const banner = document.querySelector<HTMLElement>('#table-turn-banner');
+    if (banner) {
+      banner.hidden = true;
+      banner.classList.remove('is-switching');
+    }
+    this.turnAnnouncementTimer = null;
+    this.turnAnnouncementRemaining = 0;
+    if (!this.activeGameOver() && this.isAITurn() && !this.aiThinking) {
+      this.scheduleAITurn();
+    }
   }
 
   private activeHudPlayer(): 0 | 1 | null {
@@ -4529,7 +4769,9 @@ export class PoolScene extends Phaser.Scene {
     if (!this.onlineState || this.onlineState.phase === 'game_over') return;
     const now = Date.now();
     if (this.onlineState.phase === 'my_turn') {
-      this.onlineState = tickTurnTimer(this.onlineState, deltaSeconds);
+      if (this.turnAnnouncementRemaining <= 0) {
+        this.onlineState = tickTurnTimer(this.onlineState, deltaSeconds);
+      }
       this.shotClockRemaining = this.onlineState.turnTimer;
       this.updateShotClockHud();
       if (this.onlineState.turnTimer <= 0) {
@@ -4538,7 +4780,9 @@ export class PoolScene extends Phaser.Scene {
       }
     }
     if (this.onlineState.phase === 'opponent_turn') {
-      this.shotClockRemaining = Math.max(0, this.shotClockRemaining - deltaSeconds);
+      if (this.turnAnnouncementRemaining <= 0) {
+        this.shotClockRemaining = Math.max(0, this.shotClockRemaining - deltaSeconds);
+      }
       this.updateShotClockHud();
     }
     if (this.onlineState.phase === 'watching_my_shot' && !this.physicsEngine.isSettled()) {

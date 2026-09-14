@@ -744,6 +744,9 @@
       <section class="play-layout">
         <section class="table-frame" aria-label="Playable pool table">
           <div id="game"></div>
+          <div id="table-turn-banner" class="table-turn-banner" role="status" aria-live="assertive" hidden>
+            <strong id="table-turn-announcement-text">Player One Shooting, Player Two Waiting</strong>
+          </div>
         </section>
         <aside class="pocket-rail" aria-label="Pocketed balls">
           <div id="pocketed-ball-label" class="list-label">Pocketed Balls</div>
@@ -851,7 +854,19 @@
       <section id="pause-overlay" class="pause-overlay" hidden>
         <div class="pause-dialog">
           <h2>游戏暂停</h2>
-          <p>Game Paused</p>
+          <p>声音调整会自动保存</p>
+          <div class="pause-audio-controls" aria-label="对局声音设置">
+            <label class="settings-volume-control" for="game-music-volume">
+              <span><strong>音乐</strong><small>对局背景音乐</small></span>
+              <output id="game-music-value" for="game-music-volume">34%</output>
+              <input id="game-music-volume" type="range" min="0" max="100" step="1" value="34" aria-label="对局音乐音量" />
+            </label>
+            <label class="settings-volume-control" for="game-sound-volume">
+              <span><strong>音效</strong><small>击球、碰撞、碰库与落袋</small></span>
+              <output id="game-sound-value" for="game-sound-volume">58%</output>
+              <input id="game-sound-volume" type="range" min="0" max="100" step="1" value="58" aria-label="对局音效音量" />
+            </label>
+          </div>
           <button id="pause-resume" type="button">继续游戏</button>
         </div>
       </section>

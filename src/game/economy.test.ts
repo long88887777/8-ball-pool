@@ -515,4 +515,60 @@ describe('pool economy', () => {
     expect(read.coins).toBe(880);
     expect(upserts).toEqual([]);
   });
+
+  it('reports a failed authenticated wallet write instead of silently treating it as saved', async () => {
+    const storage = createStorage();
+    const { client } = createSupabaseWalletClient({ upsertError: { message: 'write denied' } });
+
+    await expect(writePlayerWalletSupabase(client, {
+      ...DEFAULT_PLAYER_WALLET,
+      coins: 326,
+      lastCheckInDate: '2026-09-12',
+      checkInDates: ['2026-09-12'],
+      checkInRewardClaims: ['daily-v2:1:day:1:daily'],
+    }, storage)).rejects.toThrow('write denied');
+  });
+
+  it('recovers a locally completed check-in before an older remote row can overwrite it', async () => {
+    const storage = createStorage();
+    const signedWallet: PlayerWallet = {
+      ...DEFAULT_PLAYER_WALLET,
+      coins: DEFAULT_PLAYER_WALLET.coins + DAILY_CHECK_IN_REWARD,
+      lastCheckInDate: '2026-09-12',
+      checkInDates: ['2026-09-12'],
+      checkInRewardClaims: ['daily-v2:1:day:1:daily'],
+    };
+    const failedWrite = createSupabaseWalletClient({ upsertError: { message: 'request aborted' } });
+
+    await expect(writePlayerWalletSupabase(failedWrite.client, signedWallet, storage)).rejects.toThrow();
+
+    const staleRemote = createSupabaseWalletClient({
+      row: {
+        coins: DEFAULT_PLAYER_WALLET.coins,
+        last_check_in_date: null,
+        check_in_dates: [],
+        makeup_cards: 0,
+        makeup_match_progress: 0,
+        last_makeup_date: null,
+        monthly_makeup_counts: {},
+        check_in_reward_claims: [],
+        ai_coin_earned_date: null,
+        ai_coins_earned: 0,
+        unlocked_cue_ids: DEFAULT_PLAYER_WALLET.unlockedCueIds,
+        equipped_cue_id: DEFAULT_PLAYER_WALLET.equippedCueId,
+        cue_durability: DEFAULT_PLAYER_WALLET.cueDurability,
+        challenge_reward_claimed: false,
+      },
+    });
+
+    const recovered = await readPlayerWalletSupabase(staleRemote.client, storage);
+
+    expect(recovered).toEqual(signedWallet);
+    expect(staleRemote.upserts).toEqual([
+      expect.objectContaining({
+        last_check_in_date: '2026-09-12',
+        check_in_reward_claims: ['daily-v2:1:day:1:daily'],
+      }),
+    ]);
+  });
 });

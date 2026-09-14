@@ -93,6 +93,7 @@ export type PlayerWallet = {
 };
 
 export const PLAYER_WALLET_KEY = 'pool.playerWallet.v1';
+const PLAYER_WALLET_PENDING_SYNC_KEY = 'pool.playerWallet.pendingSync.v1';
 export const AI_DAILY_COIN_LIMIT = 300;
 export { DAILY_CHECK_IN_REWARD, applyDailyCheckIn } from './checkIn';
 export const MATCH_COIN_RANGES = {
@@ -409,6 +410,17 @@ export async function readPlayerWalletSupabase(
     return readPlayerWallet(storage);
   }
 
+  const pendingWallet = readPendingPlayerWalletSync(storage, userId);
+  if (pendingWallet) {
+    try {
+      await writePlayerWalletRow(client, userId, pendingWallet.wallet);
+      clearPendingPlayerWalletSync(storage, pendingWallet.marker);
+    } catch {
+      // Keep the newer local wallet authoritative until a later read can retry the sync.
+    }
+    return writePlayerWallet(storage, pendingWallet.wallet);
+  }
+
   try {
     const { data, error } = await client
       .from('player_wallets')
@@ -445,7 +457,11 @@ export async function readPlayerWalletSupabase(
   }
 
   const localWallet = readPlayerWallet(storage);
-  await writePlayerWalletRow(client, userId, localWallet);
+  try {
+    await writePlayerWalletRow(client, userId, localWallet);
+  } catch {
+    // A missing remote row must not make the locally playable wallet unavailable.
+  }
   return localWallet;
 }
 
@@ -465,7 +481,9 @@ export async function writePlayerWalletSupabase(
     return sanitized;
   }
 
+  const pendingMarker = stagePendingPlayerWalletSync(storage, userId, sanitized);
   await writePlayerWalletRow(client, userId, sanitized);
+  clearPendingPlayerWalletSync(storage, pendingMarker);
   return sanitized;
 }
 
@@ -609,7 +627,7 @@ async function writePlayerWalletRow(
 ): Promise<void> {
   try {
     const sanitized = sanitizeWallet(wallet);
-    await supabase.from('player_wallets').upsert({
+    const { error } = await supabase.from('player_wallets').upsert({
       user_id: userId,
       coins: sanitized.coins,
       last_check_in_date: sanitized.lastCheckInDate,
@@ -627,9 +645,55 @@ async function writePlayerWalletRow(
       challenge_reward_claimed: sanitized.challengeRewardClaimed,
       updated_at: new Date().toISOString(),
     });
-  } catch {
-    // Keep local wallet state playable if the remote table is unavailable.
+    if (error) throw walletSyncError(error);
+  } catch (error) {
+    throw walletSyncError(error);
   }
+}
+
+function stagePendingPlayerWalletSync(
+  storage: StorageAdapter,
+  userId: string,
+  wallet: PlayerWallet,
+): string {
+  const marker = JSON.stringify({ userId, wallet: sanitizeWallet(wallet) });
+  try {
+    storage.setItem(PLAYER_WALLET_PENDING_SYNC_KEY, marker);
+  } catch {
+    // The normal wallet remains in memory when browser storage is unavailable.
+  }
+  return marker;
+}
+
+function readPendingPlayerWalletSync(
+  storage: Pick<StorageAdapter, 'getItem'>,
+  userId: string,
+): { marker: string; wallet: PlayerWallet } | null {
+  try {
+    const marker = storage.getItem(PLAYER_WALLET_PENDING_SYNC_KEY);
+    if (!marker) return null;
+    const value = JSON.parse(marker) as { userId?: unknown; wallet?: unknown };
+    if (value.userId !== userId || !isRecord(value.wallet)) return null;
+    return { marker, wallet: sanitizeWallet(value.wallet as Partial<PlayerWallet>) };
+  } catch {
+    return null;
+  }
+}
+
+function clearPendingPlayerWalletSync(storage: StorageAdapter, marker: string): void {
+  try {
+    if (storage.getItem(PLAYER_WALLET_PENDING_SYNC_KEY) === marker) {
+      storage.setItem(PLAYER_WALLET_PENDING_SYNC_KEY, '');
+    }
+  } catch {
+    // A later read will retry if browser storage becomes available again.
+  }
+}
+
+function walletSyncError(error: unknown): Error {
+  if (error instanceof Error) return error;
+  if (isRecord(error) && typeof error.message === 'string') return new Error(error.message);
+  return new Error('Failed to save player wallet');
 }
 
 function browserStorage(): StorageAdapter {
