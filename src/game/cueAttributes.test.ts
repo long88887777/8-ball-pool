@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { CUE_CATALOG } from './economy';
-import { applyCuePower, applyCueSpin, getCueGuideRatios } from './cueAttributes';
+import { applyCuePower, applyCueSpin, getCueGuideLengths, projectGuideEnd } from './cueAttributes';
 
 describe('cue gameplay attributes', () => {
   const starter = CUE_CATALOG.find((cue) => cue.rarity === 'starter')!;
@@ -23,11 +23,21 @@ describe('cue gameplay attributes', () => {
   });
 
   it('makes higher accuracy cues draw longer target, separation, and miss guidelines', () => {
-    const starterRatios = getCueGuideRatios(starter, 0.7);
-    const legendaryRatios = getCueGuideRatios(legendary, 0.7);
+    const starterLengths = getCueGuideLengths(starter);
+    const legendaryLengths = getCueGuideLengths(legendary);
 
-    expect(legendaryRatios.target).toBeGreaterThan(starterRatios.target);
-    expect(legendaryRatios.cueDeflection).toBeGreaterThan(starterRatios.cueDeflection);
-    expect(legendaryRatios.miss).toBeGreaterThan(starterRatios.miss);
+    expect(legendaryLengths.target).toBeGreaterThan(starterLengths.target);
+    expect(legendaryLengths.cueDeflection).toBeGreaterThan(starterLengths.cueDeflection);
+    expect(legendaryLengths.miss).toBeGreaterThan(starterLengths.miss);
+  });
+
+  it('keeps guide length constant while the aim angle changes', () => {
+    const length = getCueGuideLengths(starter).target;
+    const start = { x: 400, y: 300 };
+    const horizontalEnd = projectGuideEnd(start, { x: 900, y: 300 }, length);
+    const diagonalEnd = projectGuideEnd(start, { x: 800, y: 700 }, length);
+
+    expect(Math.hypot(horizontalEnd.x - start.x, horizontalEnd.y - start.y)).toBeCloseTo(length);
+    expect(Math.hypot(diagonalEnd.x - start.x, diagonalEnd.y - start.y)).toBeCloseTo(length);
   });
 });

@@ -2,11 +2,17 @@ import type { Vector } from './constants';
 import type { CueStyle } from './economy';
 import { normalizeCueContactOffset } from './proPhysics/spin';
 
-export type CueGuideRatios = {
+export type CueGuideLengths = {
   target: number;
   cueDeflection: number;
   miss: number;
 };
+
+const GUIDE_LENGTH = {
+  target: { minimum: 110, bonus: 260 },
+  cueDeflection: { minimum: 70, bonus: 150 },
+  miss: { minimum: 180, bonus: 360 },
+} as const;
 
 export function applyCuePower(inputPower: number, cue: CueStyle): number {
   const normalizedPower = Math.max(0, Math.min(1, inputPower));
@@ -23,13 +29,27 @@ export function applyCueSpin(contactOffset: Vector, cue: CueStyle): Vector {
   };
 }
 
-export function getCueGuideRatios(cue: CueStyle, power: number): CueGuideRatios {
+export function getCueGuideLengths(cue: CueStyle): CueGuideLengths {
   const accuracy = normalizeStat(cue.accuracy);
-  const normalizedPower = Math.max(0, Math.min(1, power));
   return {
-    target: Math.min(0.96, 0.20 + accuracy * 0.66 + normalizedPower * 0.08),
-    cueDeflection: Math.min(0.78, 0.12 + accuracy * 0.54 + normalizedPower * 0.06),
-    miss: Math.min(0.94, 0.22 + accuracy * 0.68),
+    target: GUIDE_LENGTH.target.minimum + accuracy * GUIDE_LENGTH.target.bonus,
+    cueDeflection: GUIDE_LENGTH.cueDeflection.minimum + accuracy * GUIDE_LENGTH.cueDeflection.bonus,
+    miss: GUIDE_LENGTH.miss.minimum + accuracy * GUIDE_LENGTH.miss.bonus,
+  };
+}
+
+export function projectGuideEnd(start: Vector, edgeEnd: Vector, length: number): Vector {
+  const dx = edgeEnd.x - start.x;
+  const dy = edgeEnd.y - start.y;
+  const edgeDistance = Math.hypot(dx, dy);
+  if (edgeDistance < 0.001) {
+    return start;
+  }
+
+  const visibleLength = Math.min(Math.max(0, length), edgeDistance);
+  return {
+    x: start.x + (dx / edgeDistance) * visibleLength,
+    y: start.y + (dy / edgeDistance) * visibleLength,
   };
 }
 

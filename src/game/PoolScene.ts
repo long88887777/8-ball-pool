@@ -3,7 +3,7 @@ import { AIController } from './ai/aiController';
 import type { AIDecision } from './ai/types';
 import { getAIDifficultyProfile, normalizeAIDifficulty, type AIDifficulty } from './ai/difficulty';
 import { impactIntensityFromSpeed, PoolAudio } from './audio';
-import { applyCuePower, applyCueSpin, getCueGuideRatios } from './cueAttributes';
+import { applyCuePower, applyCueSpin, getCueGuideLengths, projectGuideEnd } from './cueAttributes';
 import { createCueCollection } from './cueShopView';
 import { CHALLENGE_LEVELS, type ChallengeLevel } from './challenge/levels';
 import {
@@ -2435,7 +2435,7 @@ export class PoolScene extends Phaser.Scene {
     const cueAngle = Math.atan2(direction.y, direction.x);
     const cueBack = getCuePullback(power);
     const cueStyle = this.currentCueStyle();
-    const guideRatios = getCueGuideRatios(cueStyle, power);
+    const guideLengths = getCueGuideLengths(cueStyle);
 
     const aimLineEnabled = this.game.registry.get('aimLineEnabled') ?? true;
     if (aimLineEnabled) {
@@ -2443,10 +2443,10 @@ export class PoolScene extends Phaser.Scene {
       if (nearestHit) {
         const prediction = predictCollisionDirections(cue, direction, nearestHit.ballPos);
         if (prediction) {
-          this.drawPredictedCollisionRoutes(cue, prediction, guideRatios);
+          this.drawPredictedCollisionRoutes(cue, prediction, guideLengths);
         }
       } else {
-        const missEnd = this.scaleRouteEnd(cue, projectRayToPlayArea(cue, direction), guideRatios.miss);
+        const missEnd = projectGuideEnd(cue, projectRayToPlayArea(cue, direction), guideLengths.miss);
         this.aimLine.lineStyle(3, 0xf6e7b4, 0.42);
         this.aimLine.beginPath();
         this.aimLine.moveTo(cue.x + direction.x * BALL_RADIUS, cue.y + direction.y * BALL_RADIUS);
@@ -2501,7 +2501,7 @@ export class PoolScene extends Phaser.Scene {
       cueBallImpactCenter: Vector;
       targetBallCenter: Vector;
     },
-    guideRatios: ReturnType<typeof getCueGuideRatios>,
+    guideLengths: ReturnType<typeof getCueGuideLengths>,
   ): void {
     const hideTarget = this.gameMode === 'challenge' && !!this.currentLevel?.hideTargetRoute;
     const impactDistance = Math.hypot(prediction.cueBallImpactCenter.x - cue.x, prediction.cueBallImpactCenter.y - cue.y);
@@ -2512,16 +2512,16 @@ export class PoolScene extends Phaser.Scene {
             x: cue.x + ((prediction.cueBallImpactCenter.x - cue.x) / impactDistance) * BALL_RADIUS,
             y: cue.y + ((prediction.cueBallImpactCenter.y - cue.y) / impactDistance) * BALL_RADIUS,
           };
-    const targetEnd = hideTarget ? null : this.scaleRouteEnd(
+    const targetEnd = hideTarget ? null : projectGuideEnd(
       prediction.targetBallCenter,
       projectRayToPlayArea(prediction.targetBallCenter, prediction.targetBallDir),
-      guideRatios.target,
+      guideLengths.target,
     );
     const cueDeflectEnd = prediction.cueBallDeflectDir
-      ? this.scaleRouteEnd(
+      ? projectGuideEnd(
           prediction.cueBallImpactCenter,
           projectRayToPlayArea(prediction.cueBallImpactCenter, prediction.cueBallDeflectDir),
-          guideRatios.cueDeflection,
+          guideLengths.cueDeflection,
         )
       : null;
 
@@ -2557,13 +2557,6 @@ export class PoolScene extends Phaser.Scene {
     this.aimLine.moveTo(start.x, start.y);
     this.aimLine.lineTo(end.x, end.y);
     this.aimLine.strokePath();
-  }
-
-  private scaleRouteEnd(start: Vector, edgeEnd: Vector, ratio: number): Vector {
-    return {
-      x: start.x + (edgeEnd.x - start.x) * ratio,
-      y: start.y + (edgeEnd.y - start.y) * ratio,
-    };
   }
 
   private raycastNearestTargetBall(
@@ -3172,7 +3165,7 @@ export class PoolScene extends Phaser.Scene {
         this.drawPredictedCollisionRoutes(
           cue,
           prediction,
-          getCueGuideRatios(this.currentCueStyle(), shot.power),
+          getCueGuideLengths(this.currentCueStyle()),
         );
       }
     } else {
