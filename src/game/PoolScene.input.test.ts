@@ -64,6 +64,7 @@ type InputHarness = {
   renderEconomyHud: ReturnType<typeof vi.fn>;
   renderCueShop: ReturnType<typeof vi.fn>;
   updateAimHud: ReturnType<typeof vi.fn>;
+  currentCueStyle: () => (typeof CUE_CATALOG)[number];
   bindInput: () => void;
   cancelAim: () => void;
 };
@@ -121,7 +122,7 @@ function createInputHarness(): {
 }
 
 describe('PoolScene aim input', () => {
-  it('opens repair immediately when the only owned cue is broken', () => {
+  it('auto-repairs the default cue without opening the repair interface', () => {
     const { scene, handlers } = createInputHarness();
     scene.wallet = {
       ...DEFAULT_PLAYER_WALLET,
@@ -137,21 +138,22 @@ describe('PoolScene aim input', () => {
       rightButtonDown: () => false,
     });
 
-    expect(scene.aimState).toBeNull();
-    expect(scene.game.canvas?.setPointerCapture).not.toHaveBeenCalled();
-    expect(scene.cueShopOverlay.hidden).toBe(false);
-    expect(scene.renderCueShop).toHaveBeenCalledWith(expect.stringContaining('耐用度为 0'));
+    expect(scene.aimState).not.toBeNull();
+    expect(scene.game.canvas?.setPointerCapture).toHaveBeenCalledWith(420);
+    expect(scene.cueShopOverlay.hidden).toBe(true);
+    expect(scene.renderCueShop).not.toHaveBeenCalled();
   });
 
-  it('automatically equips an owned usable cue instead of locking the table', () => {
+  it('keeps a broken paid cue equipped and lets the player aim with fallback attributes', () => {
     const { scene, handlers } = createInputHarness();
     const fallbackCue = CUE_CATALOG.find((cue) => cue.id !== DEFAULT_EQUIPPED_CUE_ID)!;
     scene.wallet = {
       ...DEFAULT_PLAYER_WALLET,
       unlockedCueIds: [DEFAULT_EQUIPPED_CUE_ID, fallbackCue.id],
+      equippedCueId: fallbackCue.id,
       cueDurability: {
-        [DEFAULT_EQUIPPED_CUE_ID]: 0,
-        [fallbackCue.id]: 3,
+        [DEFAULT_EQUIPPED_CUE_ID]: CUE_CATALOG[0].durability,
+        [fallbackCue.id]: 0,
       },
     };
     scene.bindInput();
@@ -165,7 +167,9 @@ describe('PoolScene aim input', () => {
     });
 
     expect(scene.wallet.equippedCueId).toBe(fallbackCue.id);
-    expect(scene.savePlayerWallet).toHaveBeenCalledTimes(1);
+    expect(scene.currentCueStyle()).toBe(CUE_CATALOG[0]);
+    expect(scene.savePlayerWallet).not.toHaveBeenCalled();
+    expect(scene.cueShopOverlay.hidden).toBe(true);
     expect(scene.aimState).not.toBeNull();
   });
 

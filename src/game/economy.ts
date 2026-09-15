@@ -133,7 +133,7 @@ function defineCue({ colors, ...cue }: CueDefinition): CueStyle {
 }
 
 export const CUE_CATALOG: CueStyle[] = [
-  defineCue({ id: DEFAULT_EQUIPPED_CUE_ID, name: '彗星尾迹', tipOffsetX: 19, price: 300, rarity: 'starter', power: 42, accuracy: 58, spin: 44, durability: 50, repairCost: 30, colors: [0xe5c492, 0xdce9ea, 0xd9e2e3, 0x33b8c4, 0xa8f4ff] }),
+  defineCue({ id: DEFAULT_EQUIPPED_CUE_ID, name: '彗星尾迹', tipOffsetX: 19, price: 300, rarity: 'starter', power: 42, accuracy: 58, spin: 44, durability: 50, repairCost: 0, colors: [0xe5c492, 0xdce9ea, 0xd9e2e3, 0x33b8c4, 0xa8f4ff] }),
   defineCue({ id: 'synthwave-sunset', name: '蒸汽波落日', tipOffsetX: 19, price: 520, rarity: 'starter', power: 50, accuracy: 48, spin: 52, durability: 54, repairCost: 36, colors: [0xe1bd86, 0x382057, 0x15151b, 0xff765e, 0xffc45c] }),
   defineCue({ id: 'laser-grid', name: '激光网格', tipOffsetX: 19, price: 600, rarity: 'starter', power: 47, accuracy: 56, spin: 50, durability: 56, repairCost: 40, colors: [0xdfbd87, 0x262d2a, 0x131718, 0x8fd52c, 0xb563ff] }),
   defineCue({ id: 'venetian-masquerade', name: '威尼斯假面', tipOffsetX: 19, price: 680, rarity: 'starter', power: 44, accuracy: 54, spin: 57, durability: 58, repairCost: 44, colors: [0xe4c394, 0x5b172f, 0x4c1733, 0xc6a24e, 0x8d62bd] }),
@@ -217,7 +217,19 @@ export function getCueDurability(wallet: PlayerWallet, cueId: string): number {
   if (!cue || !wallet.unlockedCueIds.includes(cueId)) {
     return 0;
   }
-  return normalizeDurability(wallet.cueDurability?.[cueId], cue.durability);
+  const durability = normalizeDurability(wallet.cueDurability?.[cueId], cue.durability);
+  return cueId === DEFAULT_EQUIPPED_CUE_ID && durability <= 0 ? cue.durability : durability;
+}
+
+export function getEffectiveCueStyle(
+  wallet: PlayerWallet,
+  cueId = wallet.equippedCueId,
+): CueStyle {
+  const cue = getCueStyle(cueId);
+  const isOwnedBrokenCue = cue.id !== DEFAULT_EQUIPPED_CUE_ID
+    && wallet.unlockedCueIds.includes(cue.id)
+    && getCueDurability(wallet, cue.id) <= 0;
+  return isOwnedBrokenCue ? getCueStyle(DEFAULT_EQUIPPED_CUE_ID) : cue;
 }
 
 export type MatchCoinMode = keyof typeof MATCH_COIN_RANGES;
@@ -299,17 +311,13 @@ export function buyCue(
 export function equipCue(
   wallet: PlayerWallet,
   cueId: string,
-): { wallet: PlayerWallet; equipped: boolean; reason?: 'locked' | 'not-found' | 'needs-repair' } {
+): { wallet: PlayerWallet; equipped: boolean; reason?: 'locked' | 'not-found' } {
   if (!cueIds.has(cueId)) {
     return { wallet, equipped: false, reason: 'not-found' };
   }
   if (!wallet.unlockedCueIds.includes(cueId)) {
     return { wallet, equipped: false, reason: 'locked' };
   }
-  if (getCueDurability(wallet, cueId) <= 0) {
-    return { wallet, equipped: false, reason: 'needs-repair' };
-  }
-
   return {
     wallet: sanitizeWallet({ ...wallet, equippedCueId: cueId }),
     equipped: true,
@@ -318,14 +326,17 @@ export function equipCue(
 
 export function consumeEquippedCueDurability(
   wallet: PlayerWallet,
-): { wallet: PlayerWallet; used: boolean; remaining: number; reason?: 'needs-repair' } {
+): { wallet: PlayerWallet; used: boolean; remaining: number } {
   const cueId = wallet.equippedCueId;
   const remaining = getCueDurability(wallet, cueId);
   if (remaining <= 0) {
-    return { wallet, used: false, remaining: 0, reason: 'needs-repair' };
+    return { wallet, used: true, remaining: 0 };
   }
 
-  const nextRemaining = remaining - 1;
+  const cue = getCueStyle(cueId);
+  const nextRemaining = cueId === DEFAULT_EQUIPPED_CUE_ID && remaining === 1
+    ? cue.durability
+    : remaining - 1;
   return {
     wallet: sanitizeWallet({
       ...wallet,
@@ -597,7 +608,8 @@ function normalizeCueDurability(value: unknown, unlockedCueIds: string[]): Recor
   const source = isRecord(value) ? value : {};
   return Object.fromEntries(unlockedCueIds.map((cueId) => {
     const cue = getCueStyle(cueId);
-    return [cueId, normalizeDurability(source[cueId], cue.durability)];
+    const durability = normalizeDurability(source[cueId], cue.durability);
+    return [cueId, cueId === DEFAULT_EQUIPPED_CUE_ID && durability <= 0 ? cue.durability : durability];
   }));
 }
 
