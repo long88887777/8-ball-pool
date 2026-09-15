@@ -14,6 +14,7 @@ import {
   consumeEquippedCueDurability,
   equipCue,
   getCueDurability,
+  getEffectiveCueStyle,
   getCuePerformanceScore,
   getCuesForCollection,
   getDailyAiCoinsEarned,
@@ -120,7 +121,11 @@ describe('pool economy', () => {
       expect(cue.accuracy).toBeGreaterThan(0);
       expect(cue.spin).toBeGreaterThan(0);
       expect(cue.durability).toBeGreaterThan(0);
-      expect(cue.repairCost).toBeGreaterThan(0);
+      if (cue.id === DEFAULT_EQUIPPED_CUE_ID) {
+        expect(cue.repairCost).toBe(0);
+      } else {
+        expect(cue.repairCost).toBeGreaterThan(0);
+      }
     }
 
     for (let index = 1; index < tierRanges.length; index += 1) {
@@ -137,9 +142,11 @@ describe('pool economy', () => {
       expect(cue.price).toBeGreaterThanOrEqual(range.min);
       expect(cue.price).toBeLessThanOrEqual(range.max);
 
-      const repairRange = CUE_REPAIR_COST_RANGES[cue.rarity];
-      expect(cue.repairCost).toBeGreaterThanOrEqual(repairRange.min);
-      expect(cue.repairCost).toBeLessThanOrEqual(repairRange.max);
+      if (cue.id !== DEFAULT_EQUIPPED_CUE_ID) {
+        const repairRange = CUE_REPAIR_COST_RANGES[cue.rarity];
+        expect(cue.repairCost).toBeGreaterThanOrEqual(repairRange.min);
+        expect(cue.repairCost).toBeLessThanOrEqual(repairRange.max);
+      }
     }
   });
 
@@ -346,7 +353,7 @@ describe('pool economy', () => {
     expect(getCueDurability(equipped.wallet, cue.id)).toBe(cue.durability);
   });
 
-  it('consumes one durability per player shot and blocks a broken cue from being equipped', () => {
+  it('keeps a broken paid cue equipped but uses the default cue attributes until repaired', () => {
     const cue = CUE_CATALOG.find((item) => item.id !== DEFAULT_EQUIPPED_CUE_ID)!;
     const owned = {
       ...DEFAULT_PLAYER_WALLET,
@@ -364,18 +371,21 @@ describe('pool economy', () => {
 
     expect(used.used).toBe(true);
     expect(getCueDurability(used.wallet, cue.id)).toBe(0);
-    expect(blocked.used).toBe(false);
-    expect(blocked.reason).toBe('needs-repair');
-    expect(equipBroken.equipped).toBe(false);
-    expect(equipBroken.reason).toBe('needs-repair');
+    expect(blocked.used).toBe(true);
+    expect(blocked.remaining).toBe(0);
+    expect(equipBroken.equipped).toBe(true);
+    expect(equipBroken.wallet.equippedCueId).toBe(cue.id);
+    expect(getEffectiveCueStyle(used.wallet)).toBe(CUE_CATALOG[0]);
   });
 
-  it('repairs an owned broken cue to full durability and charges coins', () => {
-    const cue = CUE_CATALOG[0];
+  it('repairs an owned broken paid cue to full durability and charges coins', () => {
+    const cue = CUE_CATALOG.find((item) => item.id !== DEFAULT_EQUIPPED_CUE_ID)!;
     const broken = {
       ...DEFAULT_PLAYER_WALLET,
       coins: cue.repairCost + 10,
-      cueDurability: { [cue.id]: 0 },
+      unlockedCueIds: [...DEFAULT_PLAYER_WALLET.unlockedCueIds, cue.id],
+      equippedCueId: cue.id,
+      cueDurability: { ...DEFAULT_PLAYER_WALLET.cueDurability, [cue.id]: 0 },
     };
 
     const repaired = repairCue(broken, cue.id);
@@ -384,8 +394,31 @@ describe('pool economy', () => {
     expect(repaired.repaired).toBe(true);
     expect(repaired.wallet.coins).toBe(10);
     expect(getCueDurability(repaired.wallet, cue.id)).toBe(cue.durability);
+    expect(getEffectiveCueStyle(repaired.wallet)).toBe(cue);
     expect(insufficient.repaired).toBe(false);
     expect(insufficient.reason).toBe('not-enough-coins');
+    expect(getEffectiveCueStyle(insufficient.wallet)).toBe(CUE_CATALOG[0]);
+  });
+
+  it('automatically repairs Comet Tail for free without ever losing its attributes', () => {
+    const cue = CUE_CATALOG[0];
+    const nearlyBroken = {
+      ...DEFAULT_PLAYER_WALLET,
+      coins: 0,
+      cueDurability: { [cue.id]: 1 },
+    };
+
+    const used = consumeEquippedCueDurability(nearlyBroken);
+    const legacyBroken = readPlayerWallet(createStorage({
+      'pool.playerWallet.v1': JSON.stringify({ ...nearlyBroken, cueDurability: { [cue.id]: 0 } }),
+    }));
+
+    expect(cue.repairCost).toBe(0);
+    expect(used.used).toBe(true);
+    expect(used.wallet.coins).toBe(0);
+    expect(getCueDurability(used.wallet, cue.id)).toBe(cue.durability);
+    expect(getCueDurability(legacyBroken, cue.id)).toBe(cue.durability);
+    expect(getEffectiveCueStyle(legacyBroken)).toBe(cue);
   });
 
   it('rejects locked cue equip and unaffordable purchases', () => {

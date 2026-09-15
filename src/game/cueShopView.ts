@@ -1,5 +1,7 @@
 import {
+  DEFAULT_EQUIPPED_CUE_ID,
   getCueDurability,
+  getEffectiveCueStyle,
   getCuePerformanceScore,
   getCuesForCollection,
   type CueRarity,
@@ -98,12 +100,13 @@ function createCueListItem(
 ): HTMLButtonElement {
   const owned = wallet.unlockedCueIds.includes(cue.id);
   const equipped = wallet.equippedCueId === cue.id;
+  const effectiveCue = owned ? getEffectiveCueStyle(wallet, cue.id) : cue;
   const button = document.createElement('button');
   button.type = 'button';
   button.className = `cue-index-item cue-rarity-${cue.rarity}${selected ? ' is-selected' : ''}`;
   button.dataset.cueSelectId = cue.id;
   button.setAttribute('aria-pressed', String(selected));
-  button.setAttribute('aria-label', `${cue.name}，${getCueRarityLabel(cue.rarity)}，综合 ${getCuePerformanceScore(cue)}`);
+  button.setAttribute('aria-label', `${cue.name}，${getCueRarityLabel(cue.rarity)}，综合 ${getCuePerformanceScore(effectiveCue)}`);
   setCueColors(button, cue);
 
   const serial = document.createElement('span');
@@ -124,7 +127,7 @@ function createCueListItem(
 
   const score = document.createElement('span');
   score.className = 'cue-index-score';
-  score.textContent = String(getCuePerformanceScore(cue));
+  score.textContent = String(getCuePerformanceScore(effectiveCue));
 
   button.append(serial, copy, score);
   return button;
@@ -134,6 +137,8 @@ function createCueInspector(cue: CueStyle, wallet: PlayerWallet): HTMLElement {
   const owned = wallet.unlockedCueIds.includes(cue.id);
   const equipped = wallet.equippedCueId === cue.id;
   const durability = owned ? getCueDurability(wallet, cue.id) : cue.durability;
+  const effectiveCue = owned ? getEffectiveCueStyle(wallet, cue.id) : cue;
+  const usingFallback = effectiveCue.id !== cue.id;
   const inspector = document.createElement('article');
   inspector.className = `cue-inspector cue-rarity-${cue.rarity}`;
   inspector.dataset.activeCueId = cue.id;
@@ -150,7 +155,9 @@ function createCueInspector(cue: CueStyle, wallet: PlayerWallet): HTMLElement {
   name.textContent = cue.name;
   const ownership = document.createElement('p');
   ownership.className = 'cue-inspector-ownership';
-  ownership.textContent = equipped ? '当前装备' : owned ? '已拥有' : '未拥有';
+  ownership.textContent = usingFallback
+    ? `${equipped ? '当前装备' : '已拥有'} · 未维修，属性按彗星尾迹`
+    : equipped ? '当前装备' : owned ? '已拥有' : '未拥有';
   identity.append(series, name, ownership);
 
   const score = document.createElement('div');
@@ -158,7 +165,7 @@ function createCueInspector(cue: CueStyle, wallet: PlayerWallet): HTMLElement {
   const scoreLabel = document.createElement('span');
   scoreLabel.textContent = '综合性能';
   const scoreValue = document.createElement('strong');
-  scoreValue.textContent = String(getCuePerformanceScore(cue));
+  scoreValue.textContent = String(getCuePerformanceScore(effectiveCue));
   score.append(scoreLabel, scoreValue);
   header.append(identity, score);
 
@@ -179,9 +186,9 @@ function createCueInspector(cue: CueStyle, wallet: PlayerWallet): HTMLElement {
   const specifications = document.createElement('div');
   specifications.className = 'cue-inspector-specifications';
   specifications.append(
-    createCueSpecification('力量', cue.power, `${cue.power}`),
-    createCueSpecification('准度', cue.accuracy, `${cue.accuracy}`),
-    createCueSpecification('加塞', cue.spin, `${cue.spin}`),
+    createCueSpecification('力量', effectiveCue.power, `${effectiveCue.power}`),
+    createCueSpecification('准度', effectiveCue.accuracy, `${effectiveCue.accuracy}`),
+    createCueSpecification('加塞', effectiveCue.spin, `${effectiveCue.spin}`),
     createCueSpecification('耐久', (durability / cue.durability) * 100, `${durability}/${cue.durability}`),
   );
 
@@ -191,7 +198,9 @@ function createCueInspector(cue: CueStyle, wallet: PlayerWallet): HTMLElement {
   service.className = 'cue-inspector-service';
   service.append(
     createCueDatum('最大耐久', String(cue.durability)),
-    createCueDatum('维修费用', `${cue.repairCost.toLocaleString('zh-CN')} 金币`),
+    createCueDatum('维修费用', cue.id === DEFAULT_EQUIPPED_CUE_ID
+      ? '0 金币 · 自动维修'
+      : `${cue.repairCost.toLocaleString('zh-CN')} 金币`),
   );
 
   const purchase = document.createElement('div');

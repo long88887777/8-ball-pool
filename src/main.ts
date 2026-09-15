@@ -37,6 +37,7 @@ import {
   buyCue,
   equipCue,
   getCueDurability,
+  getEffectiveCueStyle,
   readPlayerWalletSupabase,
   repairCue,
   writePlayerWallet,
@@ -1705,7 +1706,11 @@ function showCueDetailPreview(cueId: string, returnFocus?: HTMLElement | null): 
   const durability = currentWallet.unlockedCueIds.includes(cue.id)
     ? getCueDurability(currentWallet, cue.id)
     : cue.durability;
-  meta.textContent = `${getCueRarityLabel(cue.rarity)} · 力量 ${cue.power} · 准度 ${cue.accuracy} · 加塞 ${cue.spin} · 耐用 ${durability}/${cue.durability}`;
+  const effectiveCue = currentWallet.unlockedCueIds.includes(cue.id)
+    ? getEffectiveCueStyle(currentWallet, cue.id)
+    : cue;
+  const fallbackNote = effectiveCue.id === cue.id ? '' : ' · 未维修，属性按彗星尾迹';
+  meta.textContent = `${getCueRarityLabel(cue.rarity)} · 力量 ${effectiveCue.power} · 准度 ${effectiveCue.accuracy} · 加塞 ${effectiveCue.spin} · 耐用 ${durability}/${cue.durability}${fallbackNote}`;
   overlay.hidden = false;
   overlay.setAttribute('aria-hidden', 'false');
   document.body.style.overflow = 'hidden';
@@ -1898,9 +1903,7 @@ function equipCueStyle(cueId: string): void {
   }
   renderCueShop(result.equipped
     ? '已装备。'
-    : result.reason === 'needs-repair'
-      ? '球杆耐用度为 0，请先维修。'
-      : '这支球杆还没有解锁。');
+    : '这支球杆还没有解锁。');
 }
 
 function repairCueStyle(cueId: string): void {

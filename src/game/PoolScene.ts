@@ -65,6 +65,7 @@ import {
   consumeEquippedCueDurability,
   equipCue,
   getCueDurability,
+  getEffectiveCueStyle,
   getDailyAiCoinsEarned,
   getCueStyle,
   readPlayerWallet,
@@ -572,7 +573,7 @@ export class PoolScene extends Phaser.Scene {
     this.handSprite = this.add.image(0, 0, 'hand').setDepth(DEPTH.ball + 1).setVisible(false);
     this.createBalls();
     this.aimLine = this.add.graphics().setDepth(DEPTH.aim);
-    const equippedCue = this.currentCueStyle();
+    const equippedCue = this.equippedCueStyle();
     this.cueShadow = this.add.image(0, 0, equippedCue.textureKey)
       .setDepth(DEPTH.aim + 0.9)
       .setTint(0x000000)
@@ -860,9 +861,6 @@ export class PoolScene extends Phaser.Scene {
       this.audio.unlock();
       if (pointer.rightButtonDown()) {
         this.cancelAim();
-        return;
-      }
-      if (!this.ensurePlayableCueForInput()) {
         return;
       }
       const point = { x: pointer.worldX, y: pointer.worldY };
@@ -1706,9 +1704,7 @@ export class PoolScene extends Phaser.Scene {
     this.renderEconomyHud();
     this.renderCueShop(result.equipped
       ? '已装备。'
-      : result.reason === 'needs-repair'
-        ? '球杆耐用度为 0，请先维修。'
-        : '这支球杆还没有解锁。');
+      : '这支球杆还没有解锁。');
   }
 
   private repairCueStyle(cueId: string): void {
@@ -1726,10 +1722,14 @@ export class PoolScene extends Phaser.Scene {
   }
 
   private currentCueStyle(): CueStyle {
+    return getEffectiveCueStyle(this.wallet);
+  }
+
+  private equippedCueStyle(): CueStyle {
     return getCueStyle(this.wallet.equippedCueId);
   }
 
-  private renderCueStick(cue: Vector, angle: number, pullback: number, style = this.currentCueStyle()): void {
+  private renderCueStick(cue: Vector, angle: number, pullback: number, style = this.equippedCueStyle()): void {
     const pose = computeCueSpritePose(cue, angle, pullback, style);
     const sprites: Array<[Phaser.GameObjects.Image, number]> = [
       [this.cueShadow, 4],
@@ -1915,8 +1915,8 @@ export class PoolScene extends Phaser.Scene {
   private renderEconomyHud(): void {
     const coinBalance = document.querySelector<HTMLElement>('#coin-balance');
     const growthCoins = document.querySelector<HTMLElement>('#growth-stat-coins');
-    const cueName = this.currentCueStyle().name;
-    const cue = this.currentCueStyle();
+    const cue = this.equippedCueStyle();
+    const cueName = cue.name;
     const durability = getCueDurability(this.wallet, cue.id);
     if (coinBalance) {
       coinBalance.textContent = `金币 ${this.wallet.coins}`;
@@ -2114,38 +2114,8 @@ export class PoolScene extends Phaser.Scene {
       !this.aiThinking &&
       !this.isAITurn() &&
       !this.isOnlineOpponentTurn() &&
-      getCueDurability(this.wallet, this.wallet.equippedCueId) > 0 &&
       this.physicsEngine.isSettled()
     );
-  }
-
-  private ensurePlayableCueForInput(): boolean {
-    if (getCueDurability(this.wallet, this.wallet.equippedCueId) > 0) {
-      return true;
-    }
-
-    const fallback = CUE_CATALOG.find((cue) => (
-      cue.id !== this.wallet.equippedCueId
-      && this.wallet.unlockedCueIds.includes(cue.id)
-      && getCueDurability(this.wallet, cue.id) > 0
-    ));
-    if (fallback) {
-      const equipped = equipCue(this.wallet, fallback.id);
-      if (equipped.equipped) {
-        this.savePlayerWallet(equipped.wallet);
-        this.renderEconomyHud();
-        this.renderCueShop(`当前球杆已损坏，已自动切换为${fallback.name}。`);
-        return true;
-      }
-    }
-
-    this.renderEconomyHud();
-    this.renderCueShop('球杆耐用度为 0，请先维修后再击球。');
-    if (this.cueShopOverlay) {
-      this.cueShopOverlay.hidden = false;
-    }
-    this.updateAimHud();
-    return false;
   }
 
   private canPlaceBreakCueBall(): boolean {
@@ -3608,7 +3578,7 @@ export class PoolScene extends Phaser.Scene {
       if (!intent) {
         const needsRepair = getCueDurability(this.wallet, this.wallet.equippedCueId) <= 0;
         shotState.textContent = needsRepair
-          ? (this.language === 'zh' ? '球杆耐用度为 0，请打开球杆属性维修' : 'Cue durability is 0. Open cue stats to repair it')
+          ? (this.language === 'zh' ? '当前按彗星尾迹属性击球，可在球杆页维修' : 'Using Comet Tail stats until this cue is repaired')
           : (this.language === 'zh' ? '拖动球桌开始瞄准' : 'Drag on the table to aim');
       } else if (intent.canShoot) {
         shotState.textContent = this.language === 'zh' ? '滑动微调 · 松开击球 · Esc 取消' : 'Slide to fine-tune · Release to shoot · Esc cancels';
