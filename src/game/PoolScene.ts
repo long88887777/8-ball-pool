@@ -2446,7 +2446,7 @@ export class PoolScene extends Phaser.Scene {
           this.drawPredictedCollisionRoutes(cue, prediction, guideLengths);
         }
       } else {
-        const missEnd = projectGuideEnd(cue, projectRayToPlayArea(cue, direction), guideLengths.miss);
+        const missEnd = projectGuideEnd(cue, direction, guideLengths.miss);
         this.aimLine.lineStyle(3, 0xf6e7b4, 0.42);
         this.aimLine.beginPath();
         this.aimLine.moveTo(cue.x + direction.x * BALL_RADIUS, cue.y + direction.y * BALL_RADIUS);
@@ -2514,13 +2514,13 @@ export class PoolScene extends Phaser.Scene {
           };
     const targetEnd = hideTarget ? null : projectGuideEnd(
       prediction.targetBallCenter,
-      projectRayToPlayArea(prediction.targetBallCenter, prediction.targetBallDir),
+      prediction.targetBallDir,
       guideLengths.target,
     );
     const cueDeflectEnd = prediction.cueBallDeflectDir
       ? projectGuideEnd(
           prediction.cueBallImpactCenter,
-          projectRayToPlayArea(prediction.cueBallImpactCenter, prediction.cueBallDeflectDir),
+          prediction.cueBallDeflectDir,
           guideLengths.cueDeflection,
         )
       : null;

@@ -9,8 +9,7 @@ export type CueGuideLengths = {
 };
 
 const GUIDE_LENGTH = {
-  target: { minimum: 110, bonus: 260 },
-  cueDeflection: { minimum: 70, bonus: 150 },
+  collision: { minimum: 70, bonus: 105 },
   miss: { minimum: 180, bonus: 360 },
 } as const;
 
@@ -31,25 +30,24 @@ export function applyCueSpin(contactOffset: Vector, cue: CueStyle): Vector {
 
 export function getCueGuideLengths(cue: CueStyle): CueGuideLengths {
   const accuracy = normalizeStat(cue.accuracy);
+  const collision = GUIDE_LENGTH.collision.minimum + accuracy * GUIDE_LENGTH.collision.bonus;
   return {
-    target: GUIDE_LENGTH.target.minimum + accuracy * GUIDE_LENGTH.target.bonus,
-    cueDeflection: GUIDE_LENGTH.cueDeflection.minimum + accuracy * GUIDE_LENGTH.cueDeflection.bonus,
+    target: collision,
+    cueDeflection: collision,
     miss: GUIDE_LENGTH.miss.minimum + accuracy * GUIDE_LENGTH.miss.bonus,
   };
 }
 
-export function projectGuideEnd(start: Vector, edgeEnd: Vector, length: number): Vector {
-  const dx = edgeEnd.x - start.x;
-  const dy = edgeEnd.y - start.y;
-  const edgeDistance = Math.hypot(dx, dy);
-  if (edgeDistance < 0.001) {
+export function projectGuideEnd(start: Vector, direction: Vector, length: number): Vector {
+  const directionLength = Math.hypot(direction.x, direction.y);
+  if (directionLength < 0.001) {
     return start;
   }
 
-  const visibleLength = Math.min(Math.max(0, length), edgeDistance);
+  const guideLength = Math.max(0, length);
   return {
-    x: start.x + (dx / edgeDistance) * visibleLength,
-    y: start.y + (dy / edgeDistance) * visibleLength,
+    x: start.x + (direction.x / directionLength) * guideLength,
+    y: start.y + (direction.y / directionLength) * guideLength,
   };
 }
 
