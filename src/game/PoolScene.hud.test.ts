@@ -673,4 +673,28 @@ describe('PoolScene HUD', () => {
       random.mockRestore();
     }
   });
+
+  it('renders persisted player rank and a difficulty-based AI rank in the match cards', () => {
+    const scene = new PoolScene() as any;
+    const previousDocument = globalThis.document;
+    const playerOneRank = { innerHTML: '' } as HTMLElement;
+    const playerTwoRank = { innerHTML: '' } as HTMLElement;
+    scene.gameMode = 'ai';
+    scene.aiDifficulty = 'hard';
+    scene.playerStats = { rankPoints: 1_800 };
+
+    globalThis.document = {
+      querySelector: vi.fn((selector: string) => selector === '#player-one-rank'
+        ? playerOneRank
+        : selector === '#player-two-rank' ? playerTwoRank : null),
+    } as unknown as Document;
+
+    try {
+      scene.renderMatchRankChips();
+      expect(playerOneRank.innerHTML).toContain('data-rank="A-"');
+      expect(playerTwoRank.innerHTML).toContain('data-rank="S"');
+    } finally {
+      globalThis.document = previousDocument;
+    }
+  });
 });

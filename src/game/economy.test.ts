@@ -495,6 +495,7 @@ describe('pool economy', () => {
         'frost-valkyrie': 41,
       },
       challengeRewardClaimed: true,
+      rankRewardClaims: [],
     });
   });
 

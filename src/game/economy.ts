@@ -18,6 +18,7 @@ type WalletSupabaseRow = {
   equipped_cue_id: string | null;
   cue_durability: unknown;
   challenge_reward_claimed: boolean | null;
+  rank_reward_claims?: unknown;
 };
 
 type WalletSupabasePayload = {
@@ -36,6 +37,7 @@ type WalletSupabasePayload = {
   equipped_cue_id: string;
   cue_durability: Record<string, number>;
   challenge_reward_claimed: boolean;
+  rank_reward_claims: string[];
   updated_at: string;
 };
 
@@ -90,6 +92,7 @@ export type PlayerWallet = {
   equippedCueId: string;
   cueDurability: Record<string, number>;
   challengeRewardClaimed: boolean;
+  rankRewardClaims: string[];
 };
 
 export const PLAYER_WALLET_KEY = 'pool.playerWallet.v1';
@@ -204,6 +207,7 @@ export const DEFAULT_PLAYER_WALLET: PlayerWallet = {
     [DEFAULT_EQUIPPED_CUE_ID]: 50,
   },
   challengeRewardClaimed: false,
+  rankRewardClaims: [],
 };
 
 const cueIds = new Set(CUE_CATALOG.map((cue) => cue.id));
@@ -435,7 +439,7 @@ export async function readPlayerWalletSupabase(
   try {
     const { data, error } = await client
       .from('player_wallets')
-      .select('coins, last_check_in_date, check_in_dates, makeup_cards, makeup_match_progress, last_makeup_date, monthly_makeup_counts, check_in_reward_claims, ai_coin_earned_date, ai_coins_earned, unlocked_cue_ids, equipped_cue_id, cue_durability, challenge_reward_claimed')
+      .select('coins, last_check_in_date, check_in_dates, makeup_cards, makeup_match_progress, last_makeup_date, monthly_makeup_counts, check_in_reward_claims, ai_coin_earned_date, ai_coins_earned, unlocked_cue_ids, equipped_cue_id, cue_durability, challenge_reward_claimed, rank_reward_claims')
       .eq('user_id', userId)
       .maybeSingle();
 
@@ -459,6 +463,7 @@ export async function readPlayerWalletSupabase(
           ? data.cue_durability as Record<string, number>
           : undefined,
         challengeRewardClaimed: data.challenge_reward_claimed ?? undefined,
+        rankRewardClaims: Array.isArray(data.rank_reward_claims) ? data.rank_reward_claims : undefined,
       });
       writePlayerWallet(storage, wallet);
       return wallet;
@@ -529,6 +534,7 @@ function sanitizeWallet(wallet: Partial<PlayerWallet>): PlayerWallet {
     equippedCueId: equipped,
     cueDurability: normalizeCueDurability(wallet.cueDurability, unlocked),
     challengeRewardClaimed: wallet.challengeRewardClaimed === true,
+    rankRewardClaims: normalizeRankRewardClaims(wallet.rankRewardClaims),
   };
 }
 
@@ -581,6 +587,12 @@ function normalizeCheckInRewardClaims(value: unknown): string[] {
       || /^daily-v2:[1-9]\d*:(?:day:(?:[1-9]|[12]\d|30):(daily|makeup)|reward:(7|14|30))$/.test(entry)
     )
   )))).sort();
+}
+
+function normalizeRankRewardClaims(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const valid = new Set(['C-', 'B-', 'A-', 'S', 'SS', 'SSS']);
+  return Array.from(new Set(value.filter((entry): entry is string => typeof entry === 'string' && valid.has(entry))));
 }
 
 function normalizeAiCoinsEarned(value: unknown): number {
@@ -655,6 +667,7 @@ async function writePlayerWalletRow(
       equipped_cue_id: sanitized.equippedCueId,
       cue_durability: sanitized.cueDurability,
       challenge_reward_claimed: sanitized.challengeRewardClaimed,
+      rank_reward_claims: sanitized.rankRewardClaims,
       updated_at: new Date().toISOString(),
     });
     if (error) throw walletSyncError(error);

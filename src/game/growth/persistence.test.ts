@@ -135,6 +135,26 @@ describe('growth persistence', () => {
     expect(upserts).toEqual([]);
   });
 
+  it('keeps failed rank saves staged and retries them before accepting stale cloud stats', async () => {
+    const storage = createStorage();
+    const ranked = { ...createDefaultPlayerStats(), rankPoints: 350, aiRankPointsEarnedDate: '2026-09-15', aiRankPointsEarned: 50 };
+    const failing = createGrowthSupabaseClient({ upsertError: { message: 'offline' } });
+
+    await expect(writePlayerStatsSupabase(failing.client, ranked, storage)).rejects.toThrow('offline');
+
+    const recovered = createGrowthSupabaseClient({
+      statsRow: { ...createDefaultPlayerStats(), rank_points: 0 },
+    });
+    const read = await readPlayerStatsSupabase(recovered.client, storage);
+
+    expect(read.rankPoints).toBe(350);
+    expect(read.aiRankPointsEarned).toBe(50);
+    expect(recovered.upserts[0]).toMatchObject({
+      table: 'player_stats',
+      payload: expect.objectContaining({ rank_points: 350, ai_rank_points_earned: 50 }),
+    });
+  });
+
   it('reads and writes authenticated daily tasks for the requested date', async () => {
     const storage = createStorage();
     const taskState: DailyTaskState = createDailyTaskState('2026-05-16');

@@ -42,6 +42,8 @@ type PlayerStatsRow = {
   total_strokes?: number | null;
   best_single_game_strokes?: number | null;
   rank_points?: number | null;
+  ai_rank_points_earned_date?: string | null;
+  ai_rank_points_earned?: number | null;
   recent_matches?: unknown;
 };
 
@@ -51,6 +53,7 @@ type DailyTasksRow = {
 };
 
 export const PLAYER_STATS_KEY = 'pool.playerStats.v1';
+const PLAYER_STATS_PENDING_SYNC_KEY = 'pool.playerStats.pendingSync.v1';
 export const DAILY_TASKS_KEY_PREFIX = 'pool.dailyTasks.v1.';
 
 export function readPlayerStats(storage: Pick<StorageAdapter, 'getItem'>): PlayerStats {
@@ -107,10 +110,21 @@ export async function readPlayerStatsSupabase(
     return readPlayerStats(storage);
   }
 
+  const pendingStats = readPendingPlayerStatsSync(storage, userId);
+  if (pendingStats) {
+    try {
+      await writePlayerStatsRow(client, userId, pendingStats.stats);
+      clearPendingPlayerStatsSync(storage, pendingStats.marker);
+    } catch {
+      // Keep the newer local rank authoritative until a later read can retry.
+    }
+    return writePlayerStats(storage, pendingStats.stats);
+  }
+
   try {
     const { data, error } = await client
       .from('player_stats')
-      .select('total_games, wins, losses, current_streak, best_streak, clearances, total_strokes, best_single_game_strokes, rank_points, recent_matches')
+      .select('total_games, wins, losses, current_streak, best_streak, clearances, total_strokes, best_single_game_strokes, rank_points, ai_rank_points_earned_date, ai_rank_points_earned, recent_matches')
       .eq('user_id', userId)
       .maybeSingle();
 
@@ -124,7 +138,11 @@ export async function readPlayerStatsSupabase(
   }
 
   const localStats = readPlayerStats(storage);
-  await writePlayerStatsRow(client, userId, localStats);
+  try {
+    await writePlayerStatsRow(client, userId, localStats);
+  } catch {
+    // A missing remote row must not make local progress unavailable.
+  }
   return localStats;
 }
 
@@ -144,7 +162,9 @@ export async function writePlayerStatsSupabase(
     return sanitized;
   }
 
+  const pendingMarker = stagePendingPlayerStatsSync(storage, userId, sanitized);
   await writePlayerStatsRow(client, userId, sanitized);
+  clearPendingPlayerStatsSync(storage, pendingMarker);
   return sanitized;
 }
 
@@ -216,6 +236,8 @@ function rowToPlayerStats(row: PlayerStatsRow): PlayerStats {
     totalStrokes: row.total_strokes ?? undefined,
     bestSingleGameStrokes: row.best_single_game_strokes ?? undefined,
     rankPoints: row.rank_points ?? undefined,
+    aiRankPointsEarnedDate: row.ai_rank_points_earned_date ?? undefined,
+    aiRankPointsEarned: row.ai_rank_points_earned ?? undefined,
     recentMatches: Array.isArray(row.recent_matches)
       ? row.recent_matches as RecentMatchRecord[]
       : [],
@@ -235,6 +257,8 @@ function playerStatsToRow(userId: string, stats: PlayerStats): Record<string, un
     total_strokes: sanitized.totalStrokes,
     best_single_game_strokes: sanitized.bestSingleGameStrokes,
     rank_points: sanitized.rankPoints,
+    ai_rank_points_earned_date: sanitized.aiRankPointsEarnedDate,
+    ai_rank_points_earned: sanitized.aiRankPointsEarned,
     recent_matches: sanitized.recentMatches,
     updated_at: new Date().toISOString(),
   };
@@ -263,10 +287,54 @@ async function writePlayerStatsRow(
   stats: PlayerStats,
 ): Promise<void> {
   try {
-    await supabase.from('player_stats').upsert(playerStatsToRow(userId, stats));
-  } catch {
-    // Local stats have already been saved.
+    const { error } = await supabase.from('player_stats').upsert(playerStatsToRow(userId, stats));
+    if (error) throw persistenceError(error);
+  } catch (error) {
+    throw persistenceError(error);
   }
+}
+
+function stagePendingPlayerStatsSync(storage: StorageAdapter, userId: string, stats: PlayerStats): string {
+  const marker = JSON.stringify({ userId, stats: sanitizePlayerStats(stats) });
+  try {
+    storage.setItem(PLAYER_STATS_PENDING_SYNC_KEY, marker);
+  } catch {
+    // The regular local stats still preserve the rank in this session.
+  }
+  return marker;
+}
+
+function readPendingPlayerStatsSync(
+  storage: Pick<StorageAdapter, 'getItem'>,
+  userId: string,
+): { marker: string; stats: PlayerStats } | null {
+  try {
+    const marker = storage.getItem(PLAYER_STATS_PENDING_SYNC_KEY);
+    if (!marker) return null;
+    const value = JSON.parse(marker) as { userId?: unknown; stats?: unknown };
+    if (value.userId !== userId || !value.stats || typeof value.stats !== 'object') return null;
+    return { marker, stats: sanitizePlayerStats(value.stats as Partial<PlayerStats>) };
+  } catch {
+    return null;
+  }
+}
+
+function clearPendingPlayerStatsSync(storage: StorageAdapter, marker: string): void {
+  try {
+    if (storage.getItem(PLAYER_STATS_PENDING_SYNC_KEY) === marker) {
+      storage.setItem(PLAYER_STATS_PENDING_SYNC_KEY, '');
+    }
+  } catch {
+    // A later read retries the staged stats.
+  }
+}
+
+function persistenceError(error: unknown): Error {
+  if (error instanceof Error) return error;
+  if (error && typeof error === 'object' && 'message' in error && typeof error.message === 'string') {
+    return new Error(error.message);
+  }
+  return new Error('Failed to save player stats');
 }
 
 async function writeDailyTaskStateRow(

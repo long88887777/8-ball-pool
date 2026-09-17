@@ -1,11 +1,12 @@
 import { supabase } from '../lib/supabase';
-import type { OnlineMessage, RealtimeConnectionStatus, ShotMessage, ResultMessage, TurnEndMessage, HeartbeatMessage, GameOverMessage, RematchRequestMessage, RematchResponseMessage, RematchStartMessage, ChatMessage, PushOutChoiceMessage, SnapshotMessage } from './types';
+import type { OnlineMessage, RealtimeConnectionStatus, ShotMessage, ResultMessage, TurnEndMessage, HeartbeatMessage, RankIntroMessage, GameOverMessage, RematchRequestMessage, RematchResponseMessage, RematchStartMessage, ChatMessage, PushOutChoiceMessage, SnapshotMessage } from './types';
 
 type MessageWithoutTs =
   | Omit<ShotMessage, 'ts'>
   | Omit<ResultMessage, 'ts'>
   | Omit<TurnEndMessage, 'ts'>
   | Omit<HeartbeatMessage, 'ts'>
+  | Omit<RankIntroMessage, 'ts'>
   | Omit<GameOverMessage, 'ts'>
   | Omit<RematchRequestMessage, 'ts'>
   | Omit<RematchResponseMessage, 'ts'>

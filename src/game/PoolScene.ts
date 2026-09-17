@@ -92,16 +92,19 @@ import {
 } from './recharge';
 import { summarizeChallengeStars } from './growth/challengeSummary';
 import {
+  AI_DAILY_RANK_POINTS_LIMIT,
   applyMatchToStats,
   createDefaultPlayerStats,
   createLocalMatchTracker,
   getRankProgress,
+  getDailyAiRankPointsEarned,
   recordPlayerStroke,
   summarizeStats,
   type LocalMatchTracker,
   type MatchMode,
   type PlayerStats,
 } from './growth/stats';
+import { normalizeRankName, rankBadgeMarkup, type RankName } from './growth/rankVisuals';
 import { appendShotHistoryEntry, type ShotHistoryEntry } from './matchHistory';
 import { recordCompletedMatchForMakeup } from './checkIn';
 import { computeCueSpritePose } from './cueVisual';
@@ -352,6 +355,7 @@ export class PoolScene extends Phaser.Scene {
   private lastCoinMode: MatchCoinMode | null = null;
   private lastCoinDailyLimitReached = false;
   private lastMakeupCardEarned = false;
+  private lastRankDelta = 0;
   private playerStats: PlayerStats = createDefaultPlayerStats();
   private dailyTasks: DailyTaskState = createDailyTaskState(this.localDateKey());
   private growthSaveQueue: Promise<void> = Promise.resolve();
@@ -503,6 +507,7 @@ export class PoolScene extends Phaser.Scene {
   private onlineChannel: GameChannel | null = null;
   private onlineState: OnlineState | null = null;
   private roomInfo: RoomInfo | null = null;
+  private opponentRankName: RankName = 'D-';
   private matchStartedAt: number | null = null;
   private currentMatchId: string | null = null;
   private onlineGameSeq = 1;
@@ -1512,6 +1517,8 @@ export class PoolScene extends Phaser.Scene {
     this.playerStats = stats;
     this.dailyTasks = tasks;
     this.renderGrowthHud();
+    this.updateHud();
+    this.sendOnlineRankIntro();
   }
 
   private savePlayerWallet(wallet: PlayerWallet): PlayerWallet {
@@ -1592,7 +1599,7 @@ export class PoolScene extends Phaser.Scene {
 
   private readonly showCueShop = (): void => {
     this.cancelAim();
-    this.renderCueShop();
+    this.renderCueShop('', this.wallet.equippedCueId);
     if (this.cueShopOverlay) {
       this.cueShopOverlay.hidden = false;
     }
@@ -1803,6 +1810,7 @@ export class PoolScene extends Phaser.Scene {
     const strokes = this.localMatchTracker.playerStrokes[myIndex] || this.state.strokes;
     const clearedTable = won && reason === 'normal';
 
+    const previousRankPoints = this.playerStats.rankPoints;
     this.playerStats = applyMatchToStats(this.playerStats, {
       matchId: this.growthMatchId(),
       playedAt: new Date().toISOString(),
@@ -1813,7 +1821,10 @@ export class PoolScene extends Phaser.Scene {
       clearedTable,
       ruleset: this.gameRuleset,
       shotHistory: this.currentShotHistory,
+      dateKey: this.localDateKey(),
+      performancePlayerIndex: myIndex,
     });
+    this.lastRankDelta = this.playerStats.rankPoints - previousRankPoints;
     this.completeDailyGrowthTask('play_match');
     if (won) {
       this.completeDailyGrowthTask('win_match');
@@ -1909,7 +1920,11 @@ export class PoolScene extends Phaser.Scene {
       ? ` 今日人机胜利金币 ${getDailyAiCoinsEarned(this.wallet, this.localDateKey())}/${AI_DAILY_COIN_LIMIT}${this.lastCoinDailyLimitReached ? '（已达上限）' : ''}。`
       : '';
     const makeupCardNotice = this.lastMakeupCardEarned ? ' 完成 3 场完整对局，获得 1 张补签卡。' : '';
-    return `${modeLabel}：${reason} 金币，本局结算 ${signed}，当前金币 ${this.wallet.coins}。${dailyProgress}${makeupCardNotice}`;
+    const rankSigned = this.lastRankDelta >= 0 ? `+${this.lastRankDelta}` : String(this.lastRankDelta);
+    const aiRankProgress = this.lastCoinMode === 'ai'
+      ? `（今日人机 ${getDailyAiRankPointsEarned(this.playerStats, this.localDateKey())}/${AI_DAILY_RANK_POINTS_LIMIT}）`
+      : '';
+    return `${modeLabel}：${reason} 金币，本局结算 ${signed}，当前金币 ${this.wallet.coins}。${dailyProgress} 段位积分 ${rankSigned}${aiRankProgress}。${makeupCardNotice}`;
   }
 
   private renderEconomyHud(): void {
@@ -1946,7 +1961,7 @@ export class PoolScene extends Phaser.Scene {
     }
   }
 
-  private renderCueShop(feedback = ''): void {
+  private renderCueShop(feedback = '', preferredCueId?: string): void {
     const balance = document.querySelector<HTMLElement>('#cue-shop-balance');
     if (balance) {
       balance.textContent = this.wallet.coins.toLocaleString('zh-CN');
@@ -1958,7 +1973,7 @@ export class PoolScene extends Phaser.Scene {
       return;
     }
 
-    this.cueShopGrid.replaceChildren(createCueCollection(this.wallet));
+    this.cueShopGrid.replaceChildren(createCueCollection(this.wallet, preferredCueId));
   }
 
   private renderRechargePanel(): void {
@@ -3206,6 +3221,7 @@ export class PoolScene extends Phaser.Scene {
     this.lastCoinMode = null;
     this.lastCoinDailyLimitReached = false;
     this.lastMakeupCardEarned = false;
+    this.lastRankDelta = 0;
     this.opponentShotResolved = false;
     this.opponentResultApplied = false;
     this.opponentTurnEndApplied = false;
@@ -3225,6 +3241,7 @@ export class PoolScene extends Phaser.Scene {
     const remaining = document.querySelector<HTMLElement>('#remaining');
     const copy = getCopy(this.language);
     this.updateEndActionLabels();
+    this.renderMatchRankChips();
     if (this.gameMode === 'challenge') {
       document.documentElement.lang = this.language === 'zh' ? 'zh-CN' : 'en';
       document.title = copy.documentTitle;
@@ -3400,6 +3417,25 @@ export class PoolScene extends Phaser.Scene {
     if (shotClock) shotClock.textContent = String(visibleSecond);
     this.updatePlayerClockCard(playerOneCard, activePlayer === 0, activePlayer === 0 ? visibleSecond : maxTime, progress);
     this.updatePlayerClockCard(playerTwoCard, activePlayer === 1, activePlayer === 1 ? visibleSecond : maxTime, progress);
+  }
+
+  private renderMatchRankChips(): void {
+    if (typeof document === 'undefined') return;
+    const localRank = getRankProgress(this.playerStats.rankPoints).rankName as RankName;
+    let playerOneRank = localRank;
+    let playerTwoRank = localRank;
+    if (this.gameMode === 'ai') {
+      playerTwoRank = this.aiDifficulty === 'easy' ? 'D+' : this.aiDifficulty === 'hard' ? 'S' : 'B';
+    } else if (this.gameMode === 'online' && this.roomInfo) {
+      playerOneRank = this.roomInfo.isHost ? localRank : this.opponentRankName;
+      playerTwoRank = this.roomInfo.isHost ? this.opponentRankName : localRank;
+    }
+    const renderChip = (id: string, rankName: RankName): void => {
+      const element = document.querySelector<HTMLElement>(id);
+      if (element) element.innerHTML = `${rankBadgeMarkup(rankName, true)}<b>${rankName}</b>`;
+    };
+    renderChip('#player-one-rank', playerOneRank);
+    renderChip('#player-two-rank', playerTwoRank);
   }
 
   private syncTurnAnnouncement(): void {
@@ -3879,6 +3915,7 @@ export class PoolScene extends Phaser.Scene {
 
   private initOnlineMode(): void {
     if (!this.roomInfo) return;
+    this.opponentRankName = 'D-';
     this.onlineGameSeq = 1;
     this.matchStartedAt = Date.now();
     this.onlineState = createOnlineState({
@@ -3906,6 +3943,7 @@ export class PoolScene extends Phaser.Scene {
 
   private handleOnlinePresence(event: 'join' | 'leave'): void {
     if (!this.onlineState) return;
+    if (event === 'join') this.sendOnlineRankIntro();
     if (event === 'join' && this.onlineState.phase === 'waiting_opponent') {
       const breaker = pickBreakerFromRoomId(this.roomInfo!.roomId);
       const myIndex: 0 | 1 = this.roomInfo!.isHost ? 0 : 1;
@@ -3934,6 +3972,7 @@ export class PoolScene extends Phaser.Scene {
       reason: status,
     });
     this.updateOnlineNetworkHud();
+    if (status === 'stable') this.sendOnlineRankIntro();
   }
 
   private handleOnlineMessage(msg: OnlineMessage): void {
@@ -3941,6 +3980,11 @@ export class PoolScene extends Phaser.Scene {
     if (msg.type === 'heartbeat') {
       this.onlineState = recordHeartbeat(this.onlineState, Date.now());
       this.updateOnlineNetworkHud();
+      return;
+    }
+    if (msg.type === 'rank_intro') {
+      this.opponentRankName = normalizeRankName(msg.rankName);
+      this.updateHud();
       return;
     }
     if (msg.type === 'snapshot') {
@@ -4046,6 +4090,12 @@ export class PoolScene extends Phaser.Scene {
       : transitionToOpponentTurn(this.onlineState);
     this.resetShotClockForTurn();
     this.updateHud();
+  }
+
+  private sendOnlineRankIntro(): void {
+    if (!this.onlineChannel || this.gameMode !== 'online') return;
+    const rankName = getRankProgress(this.playerStats.rankPoints).rankName;
+    this.onlineChannel.send({ type: 'rank_intro', rankName });
   }
 
   private handleOpponentSnapshot(msg: SnapshotMessage): void {
@@ -4959,6 +5009,7 @@ export class PoolScene extends Phaser.Scene {
     this.lastCoinMode = null;
     this.lastCoinDailyLimitReached = false;
     this.lastMakeupCardEarned = false;
+    this.lastRankDelta = 0;
     this.matchGrowthSettled = false;
     this.restartRack();
 
@@ -5105,6 +5156,7 @@ export class PoolScene extends Phaser.Scene {
     this.lastCoinMode = null;
     this.lastCoinDailyLimitReached = false;
     this.lastMakeupCardEarned = false;
+    this.lastRankDelta = 0;
     this.matchGrowthSettled = false;
     this.pendingResult = null;
     this.pendingTurnEnd = null;

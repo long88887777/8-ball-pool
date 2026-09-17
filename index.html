@@ -117,10 +117,14 @@
         </div>
         <div class="menu-control-stack">
           <section class="menu-growth-overview" aria-label="Growth overview">
-            <div class="menu-growth-rank">
-              <span id="menu-growth-rank">Bronze · 1000 分</span>
-              <strong id="menu-growth-rank-gap">下一段还差 200 分</strong>
-            </div>
+            <button id="rank-journey-open" class="menu-rank-entry" type="button" aria-label="打开段位历程">
+              <span id="menu-rank-badge" class="menu-rank-badge" aria-hidden="true"></span>
+              <span class="menu-rank-copy">
+                <span id="menu-growth-rank">D- · 0 分</span>
+                <strong id="menu-growth-rank-gap">下一段还差 100 分</strong>
+              </span>
+              <span class="menu-rank-cta">查看历程 <b aria-hidden="true">→</b></span>
+            </button>
             <div class="menu-growth-progress" aria-hidden="true">
               <span id="menu-growth-rank-fill"></span>
             </div>
@@ -131,8 +135,7 @@
               <span id="menu-growth-stars">挑战 0/30 星</span>
             </div>
           </section>
-          <section class="menu-secondary-actions" aria-labelledby="menu-secondary-title">
-            <span id="menu-secondary-title" class="menu-secondary-title">更多</span>
+          <section class="menu-secondary-actions" aria-label="常用功能">
             <div class="menu-action-group" aria-label="Player actions">
               <button id="checkin-open" class="menu-growth-btn menu-checkin-btn" type="button">
                 <span class="menu-checkin-btn-icon" aria-hidden="true">✓</span>
@@ -141,9 +144,9 @@
               </button>
               <button id="growth-panel-toggle" class="menu-growth-btn" type="button">个人成长</button>
               <button id="history-open" class="menu-growth-btn" type="button">对局历史</button>
-              <button id="settings-open" class="menu-growth-btn" type="button">设置</button>
               <button id="recharge-open" class="menu-growth-btn menu-economy-btn" type="button">充值系统</button>
               <button id="cue-shop-open" class="menu-growth-btn menu-economy-btn" type="button">球杆收藏</button>
+              <button id="settings-open" class="menu-growth-btn" type="button">设置</button>
             </div>
           </section>
           <div class="ai-difficulty-panel" aria-label="AI difficulty">
@@ -286,13 +289,13 @@
         <div class="growth-rank-band">
           <div>
             <span>当前段位</span>
-            <strong id="growth-detail-rank">Bronze</strong>
+            <strong id="growth-detail-rank">D-</strong>
           </div>
           <div>
             <span>积分</span>
-            <strong id="growth-detail-points">1000 分</strong>
+            <strong id="growth-detail-points">0 分</strong>
           </div>
-          <div class="growth-rank-next" id="growth-detail-next">下一段还差 200 分</div>
+          <div class="growth-rank-next" id="growth-detail-next">下一段还差 100 分</div>
         </div>
         <div class="growth-detail-grid">
           <div class="growth-section">
@@ -328,6 +331,50 @@
             <ul id="growth-recent-list" class="growth-list"></ul>
           </div>
         </div>
+        <section class="growth-rank-rewards" aria-labelledby="growth-rank-rewards-title">
+          <div class="growth-rank-rewards-heading">
+            <div>
+              <span>RANK REWARDS</span>
+              <h3 id="growth-rank-rewards-title">段位宝箱</h3>
+            </div>
+            <strong id="growth-ai-rank-limit">今日人机积分 0/100</strong>
+          </div>
+          <div id="growth-rank-reward-list" class="growth-rank-reward-list"></div>
+        </section>
+      </div>
+    </section>
+
+    <section id="rank-journey-panel" class="rank-journey-overlay" hidden>
+      <div class="rank-journey-dialog" role="dialog" aria-modal="true" aria-labelledby="rank-journey-title">
+        <div class="rank-journey-sky" aria-hidden="true">
+          <span class="rank-journey-sun"></span>
+          <span class="rank-journey-cloud cloud-one"></span>
+          <span class="rank-journey-cloud cloud-two"></span>
+          <span class="rank-journey-ball ball-one">3</span>
+          <span class="rank-journey-ball ball-two">9</span>
+        </div>
+        <header class="rank-journey-header">
+          <button id="rank-journey-close" class="rank-journey-close" type="button" aria-label="关闭段位历程">← 返回大厅</button>
+          <div>
+            <span class="rank-journey-kicker">SUNSHINE TOUR</span>
+            <h2 id="rank-journey-title">荣耀巡回赛</h2>
+            <p>每一场认真击球，都会让你的荣誉徽章更闪耀。</p>
+          </div>
+          <div id="rank-journey-current" class="rank-journey-current"></div>
+        </header>
+        <div class="rank-journey-summary">
+          <span><b id="rank-journey-points">0</b> 当前积分</span>
+          <span><b id="rank-journey-next">100</b> 距离下一段</span>
+          <span><b id="rank-journey-ai">0/100</b> 今日人机积分</span>
+        </div>
+        <div class="rank-journey-track-shell">
+          <div class="rank-journey-track" aria-hidden="true"><span id="rank-journey-track-fill"></span></div>
+          <div id="rank-journey-list" class="rank-journey-list"></div>
+        </div>
+        <footer class="rank-journey-footer">
+          <span class="rank-journey-tip-ball">8</span>
+          <p><strong>表现决定每局积分。</strong>控制犯规、提高进球效率并减少杆数，会让升级更快。</p>
+        </footer>
       </div>
     </section>
 
@@ -431,6 +478,17 @@
 
           </section>
         </div>
+      </div>
+    </section>
+
+    <section id="rank-reward-modal" class="rank-reward-overlay" hidden>
+      <div class="rank-reward-dialog" role="dialog" aria-modal="true" aria-labelledby="rank-reward-title">
+        <button id="rank-reward-close" class="rank-reward-close" type="button" aria-label="关闭段位宝箱">×</button>
+        <img id="rank-reward-chest" src="/assets/check-in/chest-rare.webp" alt="段位奖励宝箱" />
+        <span id="rank-reward-kicker">段位奖励</span>
+        <h2 id="rank-reward-title">C- 宝箱</h2>
+        <p id="rank-reward-hint"></p>
+        <div id="rank-reward-options" class="rank-reward-options"></div>
       </div>
     </section>
 
@@ -694,6 +752,7 @@
             <div class="player-row">
               <div class="player-name-group">
                 <strong id="player-one-name">Player One</strong>
+                <span id="player-one-rank" class="match-rank-chip">D-</span>
                 <button id="chat-trigger-p1" class="chat-trigger-btn" type="button" aria-label="Open chat" hidden>
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
                 </button>
@@ -722,6 +781,7 @@
             <div class="player-row">
               <div class="player-name-group">
                 <strong id="player-two-name">Player Two</strong>
+                <span id="player-two-rank" class="match-rank-chip">D-</span>
                 <button id="chat-trigger-p2" class="chat-trigger-btn" type="button" aria-label="Open chat" hidden>
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
                 </button>
