@@ -250,6 +250,11 @@ function startGame(
   currentGameLifecycleDispose = bindGamePowerLifecycle(currentGame, {
     isUserPaused: () => document.getElementById('pause-overlay')?.hidden === false,
   });
+  if (window.innerWidth > 980) {
+    requestAnimationFrame(() => {
+      document.querySelector<HTMLElement>('.spin-panel')?.scrollIntoView({ block: 'end' });
+    });
+  }
 }
 
 function backToMenu(): void {
@@ -272,6 +277,7 @@ function backToMenu(): void {
   if (shell) shell.hidden = true;
   if (pauseOverlay) pauseOverlay.hidden = true;
   if (challengeSelect) challengeSelect.hidden = true;
+  window.scrollTo(0, 0);
   gameAudio.setScene('menu');
   showMenuSplashCursor();
   void loadGrowthOverview();

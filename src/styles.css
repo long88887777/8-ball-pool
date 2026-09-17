@@ -762,6 +762,7 @@ h2 {
 
 .spin-panel {
   display: grid;
+  scroll-margin-bottom: 20px;
   grid-template-columns: minmax(220px, 1fr) auto 62px minmax(0, 1fr);
   align-items: center;
   gap: 12px;
