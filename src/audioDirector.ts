@@ -13,10 +13,23 @@ declare global {
 export type AudioScene = 'silent' | 'menu' | 'game';
 export type GameSound = 'tap' | 'select' | 'back' | 'success' | 'warning' | 'cue' | 'collision' | 'rail' | 'pocket';
 
-const MUSIC_BY_SCENE: Record<Exclude<AudioScene, 'silent'>, string> = {
-  menu: '/assets/audio/menu-beautiful-things.mp3',
-  game: '/assets/audio/game-gentle-study-flow.mp3',
+const MUSIC_BY_SCENE: Record<Exclude<AudioScene, 'silent'>, readonly string[]> = {
+  menu: ['/assets/audio/menu-beautiful-things.mp3'],
+  game: [
+    '/assets/audio/game-gentle-study-flow.mp3',
+    '/assets/audio/game-background-piano-loop.mp3',
+    '/assets/audio/game-soft-piano.mp3',
+  ],
 };
+
+export function selectSceneMusic(
+  scene: Exclude<AudioScene, 'silent'>,
+  randomValue = Math.random(),
+): string {
+  const tracks = MUSIC_BY_SCENE[scene];
+  const safeRandom = Math.min(0.999999, Math.max(0, randomValue));
+  return tracks[Math.floor(safeRandom * tracks.length)];
+}
 
 export class AudioDirector {
   private context: AudioContext | null = null;
@@ -165,7 +178,7 @@ export class AudioDirector {
 
       if (this.musicScene !== scene) {
         this.music.pause();
-        this.music.src = MUSIC_BY_SCENE[scene];
+        this.music.src = selectSceneMusic(scene);
         this.music.currentTime = 0;
         this.musicScene = scene;
       }

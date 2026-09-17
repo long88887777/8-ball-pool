@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { AudioDirector, type GameSound } from './audioDirector';
+import { AudioDirector, selectSceneMusic, type GameSound } from './audioDirector';
 
 class FakeAudioParam {
   value = 1;
@@ -158,5 +158,19 @@ describe('audio director sound effects', () => {
     expect(hard.detailFrequency).toBeGreaterThan(gentle.detailFrequency);
     expect(gentle.bodyType).toBe('sine');
     expect(hard.bodyType).toBe('triangle');
+  });
+});
+
+describe('audio director music selection', () => {
+  it('keeps the menu music fixed', () => {
+    expect(selectSceneMusic('menu', 0.9)).toBe('/assets/audio/menu-beautiful-things.mp3');
+  });
+
+  it.each([
+    [0, '/assets/audio/game-gentle-study-flow.mp3'],
+    [0.34, '/assets/audio/game-background-piano-loop.mp3'],
+    [0.99, '/assets/audio/game-soft-piano.mp3'],
+  ])('maps random value %s to a gameplay track', (randomValue, expectedTrack) => {
+    expect(selectSceneMusic('game', randomValue)).toBe(expectedTrack);
   });
 });

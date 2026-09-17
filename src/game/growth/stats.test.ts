@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_RANK_POINTS,
   applyMatchToStats,
+  AI_DAILY_RANK_POINTS_LIMIT,
   createLocalMatchTracker,
   createDefaultPlayerStats,
   getRankProgress,
@@ -44,7 +45,8 @@ describe('growth stats', () => {
     expect(summary.clearRate).toBe(50);
     expect(summary.averageStrokes).toBe(10.5);
     expect(summary.bestSingleGameStrokes).toBe(8);
-    expect(afterLoss.rankPoints).toBe(DEFAULT_RANK_POINTS);
+    expect(afterWin.rankPoints).toBeGreaterThan(DEFAULT_RANK_POINTS);
+    expect(afterLoss.rankPoints).toBeLessThanOrEqual(afterWin.rankPoints);
     expect(afterLoss.recentMatches.map((match) => match.matchId)).toEqual(['match-2', 'match-1']);
   });
 
@@ -92,10 +94,10 @@ describe('growth stats', () => {
     expect(stats.recentMatches[0].shotHistory).toHaveLength(1);
   });
 
-  it('calculates current rank progress and next-rank gap from points', () => {
+  it('calculates the D through SSS rank ladder and next-rank gap', () => {
     expect(getRankProgress(1000)).toEqual({
-      rankName: 'Bronze',
-      rankIndex: 1,
+      rankName: 'B-',
+      rankIndex: 6,
       points: 1000,
       floor: 900,
       nextFloor: 1200,
@@ -103,11 +105,43 @@ describe('growth stats', () => {
       pointsToNext: 200,
     });
 
-    expect(getRankProgress(2100)).toMatchObject({
-      rankName: 'Master',
+    expect(getRankProgress(4100)).toMatchObject({
+      rankName: 'SSS',
       pointsToNext: 0,
       progressPercent: 100,
     });
+  });
+
+  it('uses performance within the current rank cap and limits positive AI points to 100 per day', () => {
+    let stats = { ...createDefaultPlayerStats(), rankPoints: 1_800 };
+    const strongWin: MatchResultInput = {
+      matchId: 'rank-1', playedAt: '2026-09-15T10:00:00.000Z', dateKey: '2026-09-15', mode: 'ai',
+      opponentName: 'AI', won: true, strokes: 4, clearedTable: true, ruleset: 'eight-ball',
+      shotHistory: Array.from({ length: 4 }, () => ({
+        playerIndex: 0 as const, ruleset: 'eight-ball' as const, powerPercent: 60,
+        spin: { x: 0, y: 0 }, pocketedBallIds: [1, 2], foulReason: null, message: 'pot',
+      })),
+    };
+    stats = applyMatchToStats(stats, strongWin);
+    expect(stats.recentMatches[0].rankDelta).toBe(40);
+    stats = applyMatchToStats({ ...stats, aiRankPointsEarned: 95 }, { ...strongWin, matchId: 'rank-2' });
+    expect(stats.recentMatches[0].rankDelta).toBe(5);
+    expect(stats.aiRankPointsEarned).toBe(AI_DAILY_RANK_POINTS_LIMIT);
+  });
+
+  it('rewards efficient losses with a smaller deduction while never exceeding the tier cap', () => {
+    const base = { ...createDefaultPlayerStats(), rankPoints: 900 };
+    const efficient = applyMatchToStats(base, {
+      matchId: 'loss-good', playedAt: '2026-09-15T10:00:00.000Z', mode: 'online', opponentName: 'Mina',
+      won: false, strokes: 5, clearedTable: false,
+    });
+    const poor = applyMatchToStats(base, {
+      matchId: 'loss-poor', playedAt: '2026-09-15T11:00:00.000Z', mode: 'online', opponentName: 'Mina',
+      won: false, strokes: 30, clearedTable: false,
+      shotHistory: [{ playerIndex: 0, ruleset: 'eight-ball', powerPercent: 20, spin: { x: 0, y: 0 }, pocketedBallIds: [], foulReason: 'scratch', message: 'foul' }],
+    });
+    expect(Math.abs(efficient.recentMatches[0].rankDelta!)).toBeLessThan(Math.abs(poor.recentMatches[0].rankDelta!));
+    expect(Math.abs(poor.recentMatches[0].rankDelta!)).toBeLessThanOrEqual(30);
   });
 
   it('tracks per-player strokes within a local match without changing score stats', () => {

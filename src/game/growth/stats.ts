@@ -13,6 +13,7 @@ export type RecentMatchRecord = {
   clearedTable: boolean;
   ruleset?: GameRuleset;
   shotHistory?: ShotHistoryEntry[];
+  rankDelta?: number;
 };
 
 export type PlayerStats = {
@@ -25,6 +26,8 @@ export type PlayerStats = {
   totalStrokes: number;
   bestSingleGameStrokes: number | null;
   rankPoints: number;
+  aiRankPointsEarnedDate: string | null;
+  aiRankPointsEarned: number;
   recentMatches: RecentMatchRecord[];
 };
 
@@ -34,7 +37,7 @@ export type PlayerStatsSummary = PlayerStats & {
   averageStrokes: number;
 };
 
-export type MatchResultInput = RecentMatchRecord;
+export type MatchResultInput = RecentMatchRecord & { dateKey?: string; performancePlayerIndex?: 0 | 1 };
 
 export type LocalMatchTracker = {
   playerStrokes: [number, number];
@@ -50,16 +53,27 @@ export type RankProgress = {
   pointsToNext: number;
 };
 
-export const DEFAULT_RANK_POINTS = 1000;
+export const DEFAULT_RANK_POINTS = 0;
+export const AI_DAILY_RANK_POINTS_LIMIT = 100;
+export const MAX_RANK_POINTS = 4_100;
 export const MAX_RECENT_MATCHES = 10;
 
-const RANKS = [
-  { name: 'Rookie', floor: 0 },
-  { name: 'Bronze', floor: 900 },
-  { name: 'Silver', floor: 1200 },
-  { name: 'Gold', floor: 1500 },
-  { name: 'Diamond', floor: 1800 },
-  { name: 'Master', floor: 2100 },
+export const RANKS = [
+  { name: 'D-', floor: 0, matchLimit: 10 },
+  { name: 'D', floor: 100, matchLimit: 10 },
+  { name: 'D+', floor: 200, matchLimit: 10 },
+  { name: 'C-', floor: 300, matchLimit: 20 },
+  { name: 'C', floor: 500, matchLimit: 20 },
+  { name: 'C+', floor: 700, matchLimit: 20 },
+  { name: 'B-', floor: 900, matchLimit: 30 },
+  { name: 'B', floor: 1200, matchLimit: 30 },
+  { name: 'B+', floor: 1500, matchLimit: 30 },
+  { name: 'A-', floor: 1800, matchLimit: 40 },
+  { name: 'A', floor: 2200, matchLimit: 40 },
+  { name: 'A+', floor: 2600, matchLimit: 40 },
+  { name: 'S', floor: 3000, matchLimit: 50 },
+  { name: 'SS', floor: 3500, matchLimit: 60 },
+  { name: 'SSS', floor: 4100, matchLimit: 60 },
 ] as const;
 
 export function createDefaultPlayerStats(): PlayerStats {
@@ -73,6 +87,8 @@ export function createDefaultPlayerStats(): PlayerStats {
     totalStrokes: 0,
     bestSingleGameStrokes: null,
     rankPoints: DEFAULT_RANK_POINTS,
+    aiRankPointsEarnedDate: null,
+    aiRankPointsEarned: 0,
     recentMatches: [],
   };
 }
@@ -92,11 +108,23 @@ export function recordPlayerStroke(
 
 export function applyMatchToStats(stats: PlayerStats, match: MatchResultInput): PlayerStats {
   const currentStreak = match.won ? stats.currentStreak + 1 : 0;
-  const rankDelta = match.won ? 18 : -18;
+  const safeStats = sanitizePlayerStats(stats);
+  const rankResult = calculateRankPointResult(safeStats, match);
   const bestSingleGameStrokes =
     stats.bestSingleGameStrokes === null
       ? match.strokes
       : Math.min(stats.bestSingleGameStrokes, match.strokes);
+  const recentMatch: RecentMatchRecord = {
+    matchId: match.matchId,
+    playedAt: match.playedAt,
+    mode: match.mode,
+    opponentName: match.opponentName,
+    won: match.won,
+    strokes: match.strokes,
+    clearedTable: match.clearedTable,
+    ...(match.ruleset ? { ruleset: match.ruleset } : {}),
+    ...(match.shotHistory ? { shotHistory: match.shotHistory } : {}),
+  };
 
   return sanitizePlayerStats({
     ...stats,
@@ -108,9 +136,49 @@ export function applyMatchToStats(stats: PlayerStats, match: MatchResultInput): 
     clearances: stats.clearances + (match.clearedTable ? 1 : 0),
     totalStrokes: stats.totalStrokes + Math.max(0, Math.floor(match.strokes)),
     bestSingleGameStrokes,
-    rankPoints: Math.max(0, stats.rankPoints + rankDelta),
-    recentMatches: [match, ...stats.recentMatches].slice(0, MAX_RECENT_MATCHES),
+    rankPoints: Math.max(0, Math.min(MAX_RANK_POINTS, safeStats.rankPoints + rankResult.rankDelta)),
+    aiRankPointsEarnedDate: rankResult.aiEarnedDate,
+    aiRankPointsEarned: rankResult.aiEarned,
+    recentMatches: [{ ...recentMatch, rankDelta: rankResult.rankDelta }, ...stats.recentMatches].slice(0, MAX_RECENT_MATCHES),
   });
+}
+
+export function getDailyAiRankPointsEarned(stats: PlayerStats, dateKey: string): number {
+  return stats.aiRankPointsEarnedDate === dateKey
+    ? integerRange(stats.aiRankPointsEarned, 0, AI_DAILY_RANK_POINTS_LIMIT)
+    : 0;
+}
+
+export function calculateRankPointResult(
+  stats: PlayerStats,
+  match: MatchResultInput,
+): { rankDelta: number; performance: number; aiEarnedDate: string | null; aiEarned: number } {
+  const dateKey = match.dateKey ?? match.playedAt.slice(0, 10);
+  const earnedToday = getDailyAiRankPointsEarned(stats, dateKey);
+  if (match.mode === 'challenge') {
+    return { rankDelta: 0, performance: 0, aiEarnedDate: stats.aiRankPointsEarnedDate, aiEarned: stats.aiRankPointsEarned };
+  }
+
+  const rank = getRankProgress(stats.rankPoints);
+  const matchLimit = RANKS[rank.rankIndex].matchLimit;
+  const performance = matchPerformance(match);
+  const rawDelta = match.won
+    ? Math.max(1, Math.round(matchLimit * (0.5 + performance * 0.5)))
+    : -Math.max(1, Math.round(matchLimit * (1 - performance * 0.75)));
+  const dailyLimitedDelta = match.mode === 'ai' && rawDelta > 0
+    ? Math.min(rawDelta, Math.max(0, AI_DAILY_RANK_POINTS_LIMIT - earnedToday))
+    : rawDelta;
+  const rankDelta = dailyLimitedDelta > 0
+    ? Math.min(dailyLimitedDelta, Math.max(0, MAX_RANK_POINTS - stats.rankPoints))
+    : dailyLimitedDelta;
+  const nextAiEarned = match.mode === 'ai' && rankDelta > 0 ? earnedToday + rankDelta : earnedToday;
+
+  return {
+    rankDelta,
+    performance,
+    aiEarnedDate: match.mode === 'ai' ? dateKey : stats.aiRankPointsEarnedDate,
+    aiEarned: match.mode === 'ai' ? nextAiEarned : stats.aiRankPointsEarned,
+  };
 }
 
 export function summarizeStats(stats: PlayerStats): PlayerStatsSummary {
@@ -172,7 +240,9 @@ export function sanitizePlayerStats(value: Partial<PlayerStats> | null | undefin
       typeof value.bestSingleGameStrokes === 'number' && Number.isFinite(value.bestSingleGameStrokes)
         ? Math.max(0, Math.floor(value.bestSingleGameStrokes))
         : null,
-    rankPoints: nonNegativeInteger(value.rankPoints, base.rankPoints),
+    rankPoints: integerRange(value.rankPoints, 0, MAX_RANK_POINTS),
+    aiRankPointsEarnedDate: dateKey(value.aiRankPointsEarnedDate),
+    aiRankPointsEarned: integerRange(value.aiRankPointsEarned, 0, AI_DAILY_RANK_POINTS_LIMIT),
     recentMatches: Array.isArray(value.recentMatches)
       ? value.recentMatches
         .map(sanitizeRecentMatchRecord)
@@ -180,6 +250,30 @@ export function sanitizePlayerStats(value: Partial<PlayerStats> | null | undefin
         .slice(0, MAX_RECENT_MATCHES)
       : [],
   };
+}
+
+function matchPerformance(match: MatchResultInput): number {
+  const shots = (match.shotHistory ?? []).filter((shot) => (
+    match.performancePlayerIndex === undefined || shot.playerIndex === match.performancePlayerIndex
+  ));
+  const shotCount = Math.max(1, shots.length || match.strokes);
+  const pocketed = shots.reduce((total, shot) => total + shot.pocketedBallIds.length, 0);
+  const fouls = shots.filter((shot) => shot.foulReason !== null).length;
+  const targetStrokes = match.ruleset === 'nine-ball' ? 7 : 10;
+  const potRate = Math.min(1, pocketed / shotCount);
+  const efficiency = Math.min(1, targetStrokes / Math.max(1, match.strokes));
+  const discipline = Math.max(0, 1 - fouls / shotCount);
+  return Math.max(0, Math.min(1, potRate * 0.45 + efficiency * 0.35 + discipline * 0.2));
+}
+
+function dateKey(value: unknown): string | null {
+  return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : null;
+}
+
+function integerRange(value: unknown, minimum: number, maximum: number): number {
+  return typeof value === 'number' && Number.isFinite(value)
+    ? Math.max(minimum, Math.min(maximum, Math.floor(value)))
+    : minimum;
 }
 
 function nonNegativeInteger(value: unknown, fallback: number): number {
@@ -221,6 +315,9 @@ function sanitizeRecentMatchRecord(value: unknown): RecentMatchRecord | null {
     ? candidate.ruleset
     : undefined;
   const shotHistory = sanitizeShotHistory(candidate.shotHistory);
+  const rankDelta = typeof candidate.rankDelta === 'number' && Number.isFinite(candidate.rankDelta)
+    ? Math.trunc(candidate.rankDelta)
+    : undefined;
   const base = candidate as RecentMatchRecord;
 
   return {
@@ -233,5 +330,6 @@ function sanitizeRecentMatchRecord(value: unknown): RecentMatchRecord | null {
     clearedTable: base.clearedTable,
     ...(ruleset ? { ruleset } : {}),
     ...(shotHistory.length > 0 ? { shotHistory } : {}),
+    ...(rankDelta !== undefined ? { rankDelta } : {}),
   };
 }

@@ -353,9 +353,11 @@ describe('GameChannel', () => {
 
     const peer = FakePeerConnection.instances[0];
     peer.dataChannel.open();
+    channel.send({ type: 'rank_intro', rankName: 'A+' });
     channel.send({ type: 'snapshot', balls: [] });
     channel.send({ type: 'turn_end', foul: false, cueBallInHand: false, nextPlayer: 1, pocketedBallIds: [], gameOver: false, winner: null });
 
-    expect(peer.dataChannel.sent.map((raw) => JSON.parse(raw).type)).toEqual(['snapshot', 'turn_end']);
+    expect(peer.dataChannel.sent.map((raw) => JSON.parse(raw).type)).toEqual(['rank_intro', 'snapshot', 'turn_end']);
+    expect(JSON.parse(peer.dataChannel.sent[0])).toMatchObject({ rankName: 'A+' });
   });
 });

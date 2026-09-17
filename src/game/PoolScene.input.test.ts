@@ -65,6 +65,7 @@ type InputHarness = {
   renderCueShop: ReturnType<typeof vi.fn>;
   updateAimHud: ReturnType<typeof vi.fn>;
   currentCueStyle: () => (typeof CUE_CATALOG)[number];
+  showCueShop: () => void;
   bindInput: () => void;
   cancelAim: () => void;
 };
@@ -122,6 +123,25 @@ function createInputHarness(): {
 }
 
 describe('PoolScene aim input', () => {
+  it('opens the in-match cue shop on the equipped cue', () => {
+    const { scene } = createInputHarness();
+    const equippedCue = CUE_CATALOG.find((cue) => cue.id !== DEFAULT_EQUIPPED_CUE_ID)!;
+    scene.wallet = {
+      ...DEFAULT_PLAYER_WALLET,
+      unlockedCueIds: [DEFAULT_EQUIPPED_CUE_ID, equippedCue.id],
+      equippedCueId: equippedCue.id,
+      cueDurability: {
+        [DEFAULT_EQUIPPED_CUE_ID]: CUE_CATALOG[0].durability,
+        [equippedCue.id]: 0,
+      },
+    };
+
+    scene.showCueShop();
+
+    expect(scene.renderCueShop).toHaveBeenCalledWith('', equippedCue.id);
+    expect(scene.cueShopOverlay.hidden).toBe(false);
+  });
+
   it('auto-repairs the default cue without opening the repair interface', () => {
     const { scene, handlers } = createInputHarness();
     scene.wallet = {

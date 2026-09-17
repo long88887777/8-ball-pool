@@ -28,5 +28,13 @@ The following music is used under the Pixabay Content License:
 - Gameplay: **Piano Background Gentle Study Flow** by alex-morgan
   - Source: https://pixabay.com/music/small-drama-piano-background-gentle-study-flow-578490/
   - File: `audio/game-gentle-study-flow.mp3`
+- Gameplay rotation: **Background Piano Loop** by leberch
+  - Source: https://pixabay.com/music/small-drama-background-piano-loop-589657/
+  - File: `audio/game-background-piano-loop.mp3`
+  - Note: the source page marks this track as Content ID registered.
+- Gameplay rotation: **Soft Piano** by AtlasAudio
+  - Source: https://pixabay.com/music/small-drama-soft-piano-581705/
+  - File: `audio/game-soft-piano.mp3`
+  - Note: the source page marks this track as Content ID registered.
 
 License summary: https://pixabay.com/service/license-summary/

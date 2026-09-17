@@ -20,10 +20,12 @@ const RARITY_META: Record<CueRarity, { label: string }> = {
 
 let selectedCueId: string | null = null;
 
-export function createCueCollection(wallet: PlayerWallet): DocumentFragment {
+export function createCueCollection(wallet: PlayerWallet, preferredCueId?: string): DocumentFragment {
   const collection = document.createDocumentFragment();
   const orderedCues = getCuesForCollection();
-  const selectedCue = orderedCues.find((cue) => cue.id === selectedCueId) ?? orderedCues[0];
+  const selectedCue = orderedCues.find((cue) => cue.id === preferredCueId)
+    ?? orderedCues.find((cue) => cue.id === selectedCueId)
+    ?? orderedCues[0];
   selectedCueId = selectedCue.id;
 
   const catalog = document.createElement('div');

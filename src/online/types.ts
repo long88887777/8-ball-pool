@@ -129,6 +129,11 @@ export type TurnEndMessage = MessageBase & {
 
 export type HeartbeatMessage = MessageBase & { type: 'heartbeat' };
 
+export type RankIntroMessage = MessageBase & {
+  type: 'rank_intro';
+  rankName: string;
+};
+
 export type GameOverMessage = MessageBase & {
   type: 'game_over';
   reason: 'disconnect' | 'surrender' | 'return_to_menu';
@@ -168,6 +173,7 @@ export type OnlineMessage =
   | ResultMessage
   | TurnEndMessage
   | HeartbeatMessage
+  | RankIntroMessage
   | GameOverMessage
   | RematchRequestMessage
   | RematchResponseMessage

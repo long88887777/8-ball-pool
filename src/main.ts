@@ -29,7 +29,23 @@ import {
 } from './game/challenge/reward';
 import { summarizeChallengeStars } from './game/growth/challengeSummary';
 import { readDailyTaskStateSupabase, readPlayerStatsSupabase, writeDailyTaskStateSupabase } from './game/growth/persistence';
-import { getRankProgress, summarizeStats, type PlayerStats } from './game/growth/stats';
+import {
+  AI_DAILY_RANK_POINTS_LIMIT,
+  createDefaultPlayerStats,
+  getDailyAiRankPointsEarned,
+  getRankProgress,
+  RANKS,
+  summarizeStats,
+  type PlayerStats,
+} from './game/growth/stats';
+import { rankBadgeMarkup, rankThemeName, type RankName } from './game/growth/rankVisuals';
+import {
+  RANK_REWARDS,
+  claimRankReward,
+  getRankRewardStatus,
+  getUnownedRankRewardCues,
+  type RankRewardId,
+} from './game/growth/rankRewards';
 import { DAILY_TASKS, completeDailyTask, summarizeDailyTasks, type DailyTaskState } from './game/growth/tasks';
 import {
   CUE_CATALOG,
@@ -121,18 +137,7 @@ let currentGameLifecycleDispose: (() => void) | null = null;
 let guestMode = false;
 let currentProfileName = '游客玩家';
 let currentWallet: PlayerWallet = DEFAULT_PLAYER_WALLET;
-let currentStats: PlayerStats = {
-  totalGames: 0,
-  wins: 0,
-  losses: 0,
-  currentStreak: 0,
-  bestStreak: 0,
-  clearances: 0,
-  totalStrokes: 0,
-  bestSingleGameStrokes: null,
-  rankPoints: 1000,
-  recentMatches: [],
-};
+let currentStats: PlayerStats = createDefaultPlayerStats();
 let walletSaveQueue: Promise<void> = Promise.resolve();
 let rechargePackages: RechargePackage[] = [];
 let rechargeOrders: RechargeOrder[] = [];
@@ -144,6 +149,7 @@ let selectedHistoryIndex: number | null = null;
 let challengeSelectRequestId = 0;
 let currentChallengeProgress: ChallengeProgress | null = null;
 let challengeRewardClaimBusy = false;
+let selectedRankRewardId: RankRewardId | null = null;
 let currentAvatarSelection: AvatarSelection = createDefaultAvatarSelection();
 let pendingAvatarSelection: AvatarSelection = currentAvatarSelection;
 let cropState: CropState | null = null;
@@ -888,6 +894,10 @@ function renderGrowthOverview(
   setText('menu-growth-rank', `${rank.rankName} · ${rank.points} 分`);
   setText('menu-growth-rank-gap', rank.pointsToNext > 0 ? `下一段还差 ${rank.pointsToNext} 分` : '已达最高段位');
   setStyle('menu-growth-rank-fill', '--growth-rank-progress', `${rank.progressPercent}%`);
+  const menuBadge = document.getElementById('menu-rank-badge');
+  const menuRankEntry = document.getElementById('rank-journey-open');
+  if (menuBadge) menuBadge.innerHTML = rankBadgeMarkup(rank.rankName, true);
+  if (menuRankEntry) menuRankEntry.dataset.rank = rank.rankName;
   setText('menu-growth-record', `${summary.totalGames} 局 · ${summary.wins}胜${summary.losses}负 · 胜率 ${summary.winRate}%`);
   setText('menu-growth-streak', `连胜 ${summary.currentStreak} · 最佳 ${summary.bestStreak}`);
   setText('menu-growth-tasks', `每日任务 ${taskSummary.completed}/${taskSummary.total}`);
@@ -907,9 +917,12 @@ function renderGrowthOverview(
   setText('growth-stat-best', summary.bestSingleGameStrokes === null ? '-' : String(summary.bestSingleGameStrokes));
   setText('growth-challenge-stars', `${challengeSummary.earnedStars}/${challengeSummary.totalStars}`);
   setText('growth-challenge-levels', `${challengeSummary.completedLevels}/${challengeSummary.totalLevels}`);
+  setText('growth-ai-rank-limit', `今日人机积分 ${getDailyAiRankPointsEarned(stats, localDateKey())}/${AI_DAILY_RANK_POINTS_LIMIT}`);
 
   renderTaskList(tasks);
   renderRecentMatches(stats);
+  renderRankRewards(stats, wallet);
+  renderRankJourney(stats, wallet);
   const historyPanel = document.getElementById('history-panel');
   if (historyPanel && !historyPanel.hidden) {
     renderHistoryPanel(stats);
@@ -943,7 +956,8 @@ function renderRecentMatches(stats: PlayerStats): void {
     const item = document.createElement('li');
     const time = new Date(match.playedAt);
     const date = Number.isNaN(time.getTime()) ? '' : `${time.getMonth() + 1}/${time.getDate()}`;
-    item.innerHTML = `<span>${match.won ? '胜' : '负'} · ${match.opponentName}</span><strong>${match.strokes}杆 ${date}</strong>`;
+    const rankDelta = match.rankDelta === undefined ? '' : ` · 积分 ${match.rankDelta >= 0 ? '+' : ''}${match.rankDelta}`;
+    item.innerHTML = `<span>${match.won ? '胜' : '负'} · ${match.opponentName}</span><strong>${match.strokes}杆${rankDelta} · ${date}</strong>`;
     return item;
   }));
 }
@@ -1055,6 +1069,134 @@ function showSettingsPanel(): void {
   if (overlay) overlay.hidden = false;
   hideMenuSplashCursor();
   void renderSettingsAccount();
+}
+
+function renderRankJourney(stats: PlayerStats, wallet: PlayerWallet): void {
+  const rank = getRankProgress(stats.rankPoints);
+  const currentName = rank.rankName as RankName;
+  const current = document.getElementById('rank-journey-current');
+  const list = document.getElementById('rank-journey-list');
+  if (!current || !list) return;
+
+  current.innerHTML = `${rankBadgeMarkup(currentName)}<span><small>当前荣誉</small><strong>${currentName}</strong><em>${rankThemeName(currentName)}</em></span>`;
+  setText('rank-journey-points', stats.rankPoints.toLocaleString('zh-CN'));
+  setText('rank-journey-next', rank.pointsToNext > 0 ? rank.pointsToNext.toLocaleString('zh-CN') : '已登顶');
+  setText('rank-journey-ai', `${getDailyAiRankPointsEarned(stats, localDateKey())}/${AI_DAILY_RANK_POINTS_LIMIT}`);
+  setStyle('rank-journey-track-fill', '--rank-journey-progress', `${Math.min(100, Math.round(stats.rankPoints / 4_100 * 100))}%`);
+
+  list.replaceChildren(...RANKS.map((rankDefinition, index) => {
+    const reward = RANK_REWARDS.find((item) => item.id === rankDefinition.name);
+    const rewardStatus = reward ? getRankRewardStatus(stats.rankPoints, wallet, reward.id) : null;
+    const isCurrent = rankDefinition.name === currentName;
+    const isReached = stats.rankPoints >= rankDefinition.floor;
+    const node = document.createElement(rewardStatus === 'ready' ? 'button' : 'article');
+    if (node instanceof HTMLButtonElement) {
+      node.type = 'button';
+      node.dataset.rankRewardId = reward!.id;
+    }
+    node.className = `rank-journey-node${isReached ? ' is-reached' : ''}${isCurrent ? ' is-current' : ''}${rewardStatus ? ` has-reward is-${rewardStatus}` : ''}`;
+    node.style.setProperty('--rank-order', String(index));
+    const rewardMarkup = reward
+      ? `<span class="rank-journey-reward"><img src="/assets/check-in/chest-${reward.quality}.webp" alt="" /><b>${rewardStatus === 'claimed' ? '已领取' : rewardStatus === 'ready' ? '可领取宝箱' : `${reward.floor} 分宝箱`}</b></span>`
+      : '<span class="rank-journey-stage-mark">荣誉刻印</span>';
+    node.innerHTML = `
+      ${isCurrent ? '<span class="rank-journey-you">你在这里</span>' : ''}
+      ${rankBadgeMarkup(rankDefinition.name)}
+      <span class="rank-journey-node-copy"><strong>${rankDefinition.name}</strong><small>${rankDefinition.floor.toLocaleString('zh-CN')} 分 · ${rankThemeName(rankDefinition.name)}</small></span>
+      ${rewardMarkup}
+    `;
+    return node;
+  }));
+}
+
+function showRankJourneyPanel(): void {
+  const panel = document.getElementById('rank-journey-panel');
+  if (panel) panel.hidden = false;
+  void loadGrowthOverview();
+}
+
+function hideRankJourneyPanel(): void {
+  const panel = document.getElementById('rank-journey-panel');
+  if (panel) panel.hidden = true;
+}
+
+function renderRankRewards(stats: PlayerStats, wallet: PlayerWallet): void {
+  const list = document.getElementById('growth-rank-reward-list');
+  if (!list) return;
+  list.replaceChildren(...RANK_REWARDS.map((reward) => {
+    const status = getRankRewardStatus(stats.rankPoints, wallet, reward.id);
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = `growth-rank-reward is-${status} is-${reward.quality}`;
+    button.dataset.rankRewardId = reward.id;
+    button.disabled = status === 'locked';
+    const cueCopy = reward.cueRarity ? `或${reward.cueRarity === 'rare' ? '稀有' : reward.cueRarity === 'epic' ? '史诗' : '传说'}球杆` : '';
+    button.innerHTML = `
+      <img src="/assets/check-in/chest-${reward.quality}.webp" alt="" />
+      <span>${reward.id} 段位</span>
+      <strong>${status === 'claimed' ? '已领取' : status === 'ready' ? '点击领取' : `${reward.floor} 分解锁`}</strong>
+      <small>${reward.coins.toLocaleString('zh-CN')} 金币${cueCopy}</small>
+    `;
+    return button;
+  }));
+}
+
+function showRankRewardModal(rewardId: RankRewardId): void {
+  const reward = RANK_REWARDS.find((item) => item.id === rewardId);
+  const overlay = document.getElementById('rank-reward-modal');
+  const options = document.getElementById('rank-reward-options');
+  const chest = document.querySelector<HTMLImageElement>('#rank-reward-chest');
+  if (!reward || !overlay || !options || !chest) return;
+  if (getRankRewardStatus(currentStats.rankPoints, currentWallet, rewardId) !== 'ready') return;
+
+  selectedRankRewardId = rewardId;
+  chest.src = `/assets/check-in/chest-${reward.quality}.webp`;
+  setText('rank-reward-title', `${reward.id} 段位宝箱`);
+  const cues = getUnownedRankRewardCues(currentWallet, rewardId);
+  setText('rank-reward-hint', reward.cueRarity
+    ? cues.length > 0 ? '选择一支未拥有的限定品质球杆，或领取金币。每个宝箱只能领取一次。' : '该品质球杆已全部拥有，本宝箱只能领取金币。'
+    : '该段位宝箱提供固定金币奖励，每个宝箱只能领取一次。');
+
+  const coinButton = document.createElement('button');
+  coinButton.type = 'button';
+  coinButton.className = 'rank-reward-coin-option';
+  coinButton.dataset.rankRewardChoice = 'coins';
+  coinButton.innerHTML = `<span>金币奖励</span><strong>+${reward.coins.toLocaleString('zh-CN')}</strong>`;
+  const cueButtons = cues.map((cue) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'rank-reward-cue-option';
+    button.dataset.rankRewardChoice = 'cue';
+    button.dataset.cueId = cue.id;
+    button.innerHTML = `<img src="/${cue.assetPath}" alt="" /><span>${cue.name}</span><strong>${cue.rarity === 'rare' ? '稀有' : cue.rarity === 'epic' ? '史诗' : '传说'}</strong>`;
+    return button;
+  });
+  options.replaceChildren(...cueButtons, coinButton);
+  overlay.hidden = false;
+}
+
+function hideRankRewardModal(): void {
+  const overlay = document.getElementById('rank-reward-modal');
+  if (overlay) overlay.hidden = true;
+  selectedRankRewardId = null;
+}
+
+function claimSelectedRankReward(choice: 'coins' | 'cue', cueId?: string): void {
+  if (!selectedRankRewardId) return;
+  const result = claimRankReward(
+    currentStats.rankPoints,
+    currentWallet,
+    selectedRankRewardId,
+    choice === 'cue' && cueId ? { type: 'cue', cueId } : { type: 'coins' },
+  );
+  if (!result.claimed) return;
+  saveMenuWallet(result.wallet);
+  currentWallet = result.wallet;
+  renderRankRewards(currentStats, currentWallet);
+  renderRankJourney(currentStats, currentWallet);
+  renderMenuEconomy();
+  setText('growth-stat-coins', String(currentWallet.coins));
+  hideRankRewardModal();
 }
 
 function hideSettingsPanel(): void {
@@ -1753,10 +1895,12 @@ function hideRechargePanel(): void {
 function hideEconomyPanels(): void {
   hideCheckInPanel();
   hideCheckInChest();
+  hideRankRewardModal();
   hideCueShop();
   hideRechargePanel();
   hideHistoryPanel();
   hideSettingsPanel();
+  hideRankJourneyPanel();
 }
 
 async function loadRechargeData(): Promise<void> {
@@ -2004,6 +2148,30 @@ async function init(): Promise<void> {
     const panel = document.getElementById('growth-panel');
     if (panel) panel.hidden = true;
   });
+  document.getElementById('rank-journey-open')?.addEventListener('click', showRankJourneyPanel);
+  document.getElementById('rank-journey-close')?.addEventListener('click', hideRankJourneyPanel);
+  document.getElementById('rank-journey-panel')?.addEventListener('click', (event) => {
+    if (event.target === event.currentTarget) hideRankJourneyPanel();
+  });
+  document.getElementById('rank-journey-list')?.addEventListener('click', (event) => {
+    const button = (event.target as HTMLElement).closest<HTMLButtonElement>('button[data-rank-reward-id]');
+    const rewardId = button?.dataset.rankRewardId as RankRewardId | undefined;
+    if (rewardId) showRankRewardModal(rewardId);
+  });
+  document.getElementById('growth-rank-reward-list')?.addEventListener('click', (event) => {
+    const button = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-rank-reward-id]');
+    const rewardId = button?.dataset.rankRewardId as RankRewardId | undefined;
+    if (rewardId && !button?.disabled) showRankRewardModal(rewardId);
+  });
+  document.getElementById('rank-reward-close')?.addEventListener('click', hideRankRewardModal);
+  document.getElementById('rank-reward-modal')?.addEventListener('click', (event) => {
+    if (event.target === event.currentTarget) hideRankRewardModal();
+  });
+  document.getElementById('rank-reward-options')?.addEventListener('click', (event) => {
+    const button = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-rank-reward-choice]');
+    if (!button) return;
+    claimSelectedRankReward(button.dataset.rankRewardChoice === 'cue' ? 'cue' : 'coins', button.dataset.cueId);
+  });
 
   document.getElementById('checkin-open')?.addEventListener('click', () => {
     void showCheckInPanel();
@@ -2051,6 +2219,11 @@ async function init(): Promise<void> {
     const panel = document.getElementById('checkin-panel');
     if (panel && !panel.hidden) {
       hideCheckInPanel();
+      return;
+    }
+    const rankJourney = document.getElementById('rank-journey-panel');
+    if (rankJourney && !rankJourney.hidden) {
+      hideRankJourneyPanel();
       return;
     }
     const settingsPanel = document.getElementById('settings-panel');

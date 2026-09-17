@@ -14,21 +14,21 @@ import {
 } from './nineBallRules';
 
 describe('nine-ball rules', () => {
-  it('starts with one shared lowest-number target ball for both players', () => {
+  it('starts with the full shared target sequence for both players', () => {
     const state = createNineBallState();
 
     expect(getRemainingNineBallCount(state)).toBe(9);
-    expect(getNineBallTargetDisplayBallIds(state)).toEqual([1]);
+    expect(getNineBallTargetDisplayBallIds(state)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
     expect(getPocketedNineBallDisplayBallIds(state)).toEqual([]);
   });
 
-  it('advances the shared target to the next lowest remaining ball', () => {
+  it('removes pocketed balls while keeping the remaining targets in order', () => {
     let state = startNineBallShot(createNineBallState());
     state = recordNineBallFirstContact(state, 1);
     state = recordNineBallPocket(state, 1);
     state = resolveNineBallShot(state);
 
-    expect(getNineBallTargetDisplayBallIds(state)).toEqual([2]);
+    expect(getNineBallTargetDisplayBallIds(state)).toEqual([2, 3, 4, 5, 6, 7, 8, 9]);
   });
 
   it('keeps the shooter at the table after legally pocketing any object ball', () => {
@@ -40,7 +40,7 @@ describe('nine-ball rules', () => {
     expect(state.currentPlayer).toBe(0);
     expect(state.cueBallInHand).toBe(false);
     expect(state.messageKey).toBe('nineBallKeepTurn');
-    expect(getNineBallTargetDisplayBallIds(state)).toEqual([1]);
+    expect(getNineBallTargetDisplayBallIds(state)).toEqual([1, 2, 3, 5, 6, 7, 8, 9]);
   });
 
   it('allows push out on the shot immediately after a legal break that pockets an object ball', () => {
@@ -145,7 +145,7 @@ describe('nine-ball rules', () => {
     expect(state.currentPlayer).toBe(1);
     expect(state.cueBallInHand).toBe(true);
     expect(state.pocketedBallIds).not.toContain(9);
-    expect(getNineBallTargetDisplayBallIds(state)).toEqual([1]);
+    expect(getNineBallTargetDisplayBallIds(state)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
   });
 
   it('wins when the nine ball is legally pocketed', () => {
