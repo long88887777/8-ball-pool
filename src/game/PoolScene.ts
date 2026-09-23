@@ -257,6 +257,7 @@ const ONLINE_SNAPSHOT_INTERVAL_MS = 200;
 const FOUL_FEEDBACK_MS = 1400;
 const OPENING_BREAK_POWER_MULTIPLIER = 1.5;
 const IDLE_MAINTENANCE_INTERVAL_SECONDS = 0.25;
+const IDLE_THREE_RENDER_INTERVAL_SECONDS = 0.1;
 const TURN_ANNOUNCEMENT_SECONDS = 2;
 
 export function pocketMotionProfile(speed: number): PocketMotionProfile {
@@ -306,6 +307,7 @@ export class PoolScene extends Phaser.Scene {
   private aimRenderDirty = false;
   private lastHandSpriteKey: string | null = null;
   private idleMaintenanceAccumulator = 0;
+  private idleThreeRenderAccumulator = IDLE_THREE_RENDER_INTERVAL_SECONDS;
   private idleMaintenanceRefreshPending = true;
   private readonly audio = new PoolAudio();
   private readonly physicsEngine = new ProfessionalPoolEngine();
@@ -546,8 +548,11 @@ export class PoolScene extends Phaser.Scene {
 
   preload(): void {
     this.load.image('hand-raw', 'assets/hand-raw.png');
-    for (const cue of CUE_CATALOG) {
-      this.load.image(cue.textureKey, cue.assetPath);
+    const equippedCue = getCueStyle(readPlayerWallet(this.storage()).equippedCueId);
+    const starterCue = CUE_CATALOG[0];
+    this.load.image(starterCue.textureKey, starterCue.assetPath);
+    if (equippedCue.id !== starterCue.id) {
+      this.load.image(equippedCue.textureKey, equippedCue.assetPath);
     }
   }
 
@@ -695,7 +700,12 @@ export class PoolScene extends Phaser.Scene {
     if (this.lastFoulFeedback) {
       this.renderFoulFeedback();
     }
-    this.ball3dRenderer?.render(deltaSeconds);
+    this.idleThreeRenderAccumulator += deltaSeconds;
+    if (this.wasMoving || this.pocketAnimatingBalls.size > 0 || this.cuePlacementState
+      || this.idleThreeRenderAccumulator >= IDLE_THREE_RENDER_INTERVAL_SECONDS) {
+      this.ball3dRenderer?.render(deltaSeconds);
+      this.idleThreeRenderAccumulator = 0;
+    }
   }
 
   private shouldStepPhysics(): boolean {
@@ -1738,6 +1748,10 @@ export class PoolScene extends Phaser.Scene {
 
   private renderCueStick(cue: Vector, angle: number, pullback: number, style = this.equippedCueStyle()): void {
     const pose = computeCueSpritePose(cue, angle, pullback, style);
+    const textureKey = this.textures.exists(pose.textureKey)
+      ? pose.textureKey
+      : CUE_CATALOG[0].textureKey;
+    if (textureKey !== pose.textureKey) this.loadCueTexture(style);
     const sprites: Array<[Phaser.GameObjects.Image, number]> = [
       [this.cueShadow, 4],
       [this.cueSprite, 0],
@@ -1745,13 +1759,32 @@ export class PoolScene extends Phaser.Scene {
 
     for (const [sprite, shadowOffsetY] of sprites) {
       sprite
-        .setTexture(pose.textureKey)
+        .setTexture(textureKey)
         .setOrigin(pose.originX, pose.originY)
         .setDisplaySize(pose.displayWidth, pose.displayHeight)
         .setPosition(pose.x, pose.y + shadowOffsetY)
         .setRotation(pose.rotation)
         .setVisible(true);
     }
+  }
+
+  private readonly loadingCueTextures = new Set<string>();
+
+  private loadCueTexture(style: CueStyle): void {
+    if (this.loadingCueTextures.has(style.textureKey)) return;
+    this.loadingCueTextures.add(style.textureKey);
+    const image = new Image();
+    image.onload = () => {
+      this.loadingCueTextures.delete(style.textureKey);
+      if (!this.sys.isActive() || this.textures.exists(style.textureKey)) return;
+      this.textures.addImage(style.textureKey, image);
+      if (this.equippedCueStyle().id === style.id) {
+        if (this.cueSprite?.visible) this.cueSprite.setTexture(style.textureKey);
+        if (this.cueShadow?.visible) this.cueShadow.setTexture(style.textureKey);
+      }
+    };
+    image.onerror = () => undefined;
+    image.src = style.assetPath;
   }
 
   private hideCueStick(): void {

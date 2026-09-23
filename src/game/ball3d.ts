@@ -184,42 +184,44 @@ export class Ball3DRenderer {
     const ballAssetUrl = hasDevQaFault('qaFailBall')
       ? `${ASSET_ROOT}/qa-missing-pool-ball.glb`
       : `${ASSET_ROOT}/pool-ball.glb`;
-    const [table, ball] = await Promise.allSettled([
-      this.loader.loadAsync(tableAssetUrl),
-      this.loader.loadAsync(ballAssetUrl),
-    ]);
-    if (this.destroyed) {
-      if (table.status === 'fulfilled') disposeObjectMaterials(table.value.scene);
-      if (ball.status === 'fulfilled') disposeObjectMaterials(ball.value.scene);
-      return;
-    }
-
-    if (table.status === 'fulfilled') {
-      this.tableAsset = table.value.scene;
+    void this.loadBallAsset(ballAssetUrl);
+    try {
+      const table = await this.loader.loadAsync(tableAssetUrl);
+      if (this.destroyed) {
+        disposeObjectMaterials(table.scene);
+        return;
+      }
+      this.tableAsset = table.scene;
       prepareTableAsset(this.tableAsset, this.tableTextures);
       this.scene.add(this.tableAsset);
       this.tableAssetState = 'loaded';
       this.renderer.domElement.dataset.tableAsset = 'loaded';
-    } else {
+      if (!this.contextLost) this.setAvailable(true, 'ready');
+    } catch (error) {
+      if (this.destroyed) return;
       this.tableAssetState = 'failed';
       this.renderer.domElement.dataset.tableAsset = 'failed';
-      console.info('pool-table.glb unavailable; using the Phaser 2D fallback.', table.reason);
+      console.info('pool-table.glb unavailable; using the Phaser 2D fallback.', error);
+      this.setAvailable(false, 'table-asset-failed');
     }
 
-    if (ball.status === 'fulfilled') {
-      this.ballAsset = ball.value.scene;
+  }
+
+  private async loadBallAsset(ballAssetUrl: string): Promise<void> {
+    try {
+      const ball = await this.loader.loadAsync(ballAssetUrl);
+      if (this.destroyed) {
+        disposeObjectMaterials(ball.scene);
+        return;
+      }
+      this.ballAsset = ball.scene;
       prepareBallAsset(this.ballAsset);
       this.rebuildBallObjects();
       this.renderer.domElement.dataset.ballAsset = 'loaded';
-    } else {
+    } catch (error) {
+      if (this.destroyed) return;
       this.renderer.domElement.dataset.ballAsset = 'procedural';
-      console.info('pool-ball.glb unavailable; using the Three.js UV-sphere fallback.', ball.reason);
-    }
-
-    if (this.tableAssetState === 'loaded' && !this.contextLost) {
-      this.setAvailable(true, 'ready');
-    } else if (this.tableAssetState === 'failed') {
-      this.setAvailable(false, 'table-asset-failed');
+      console.info('pool-ball.glb unavailable; using the Three.js UV-sphere fallback.', error);
     }
   }
 
@@ -279,40 +281,19 @@ export class Ball3DRenderer {
 
   private rebuildBallObjects(): void {
     if (!this.ballAsset || this.definitions.length === 0) return;
-    const state = this.definitions.map((definition) => {
-      const object = this.balls.get(definition.id);
-      const shadow = this.shadows.get(definition.id);
-      return {
-        definition,
-        position: object?.position.clone() ?? new THREE.Vector3(TABLE.width / 2, TABLE.height / 2, BALL_CENTER_Z),
-        rotation: object?.rotation.clone() ?? new THREE.Euler(),
-        scale: object?.scale.clone() ?? new THREE.Vector3(1, 1, 1),
-        visible: object?.visible ?? true,
-        shadowVisible: shadow?.visible ?? true,
-      };
-    });
-    this.clearBallObjects();
-    for (const entry of state) {
-      const texture = createBallTexture3D(entry.definition);
-      texture.colorSpace = THREE.SRGBColorSpace;
-      const materials = createBallMaterials(texture);
+    for (const definition of this.definitions) {
+      const previous = this.balls.get(definition.id);
+      const materials = this.ballMaterials.get(definition.id);
+      if (!previous || !materials) continue;
       const object = this.createBallObject(materials);
-      object.position.copy(entry.position);
-      object.rotation.copy(entry.rotation);
-      object.scale.copy(entry.scale);
-      object.visible = entry.visible;
+      object.position.copy(previous.position);
+      object.rotation.copy(previous.rotation);
+      object.scale.copy(previous.scale);
+      object.visible = previous.visible;
       object.renderOrder = 4;
+      this.scene.remove(previous);
       this.scene.add(object);
-      this.balls.set(entry.definition.id, object);
-      this.textures.set(entry.definition.id, texture);
-      this.ballMaterials.set(entry.definition.id, materials);
-      const shadow = new THREE.Sprite(this.shadowMaterial.clone());
-      shadow.scale.set(BALL_RADIUS * 3.05, BALL_RADIUS * 1.72, 1);
-      shadow.position.set(entry.position.x + 3, entry.position.y - 2, BALL_SHADOW_Z);
-      shadow.visible = entry.shadowVisible;
-      shadow.renderOrder = 1;
-      this.scene.add(shadow);
-      this.shadows.set(entry.definition.id, shadow);
+      this.balls.set(definition.id, object);
     }
   }
 

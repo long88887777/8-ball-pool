@@ -34,6 +34,7 @@ type UpdateHarness = {
   smoothActiveAim: ReturnType<typeof vi.fn>;
   renderAim: ReturnType<typeof vi.fn>;
   renderFoulFeedback: ReturnType<typeof vi.fn>;
+  ball3dRenderer: { render: ReturnType<typeof vi.fn> };
   handlePhysicsEvents: ReturnType<typeof vi.fn>;
   syncBallsFromPhysics: ReturnType<typeof vi.fn>;
   handleSettledTable: ReturnType<typeof vi.fn>;
@@ -83,6 +84,7 @@ function createUpdateHarness(): UpdateHarness {
   scene.smoothActiveAim = vi.fn();
   scene.renderAim = vi.fn();
   scene.renderFoulFeedback = vi.fn();
+  scene.ball3dRenderer = { render: vi.fn() };
   scene.handlePhysicsEvents = vi.fn();
   scene.syncBallsFromPhysics = vi.fn();
   scene.handleSettledTable = vi.fn();
@@ -90,6 +92,15 @@ function createUpdateHarness(): UpdateHarness {
 }
 
 describe('PoolScene mobile power behavior', () => {
+  it('loads only the active cue before the match starts', () => {
+    const scene = new PoolScene() as unknown as { load: { image: ReturnType<typeof vi.fn> }; preload: () => void };
+    scene.load = { image: vi.fn() };
+
+    scene.preload();
+
+    expect(scene.load.image.mock.calls.map(([key]) => key)).toEqual(['hand-raw', 'cue-comet-tail']);
+  });
+
   it('skips physics stepping and ball syncing while the table is already idle', () => {
     const scene = createUpdateHarness();
 
@@ -115,6 +126,19 @@ describe('PoolScene mobile power behavior', () => {
     scene.update();
 
     expect(scene.updateShotClock).toHaveBeenCalledTimes(2);
+  });
+
+  it('renders the idle 3D table sparingly while preserving every moving frame', () => {
+    const scene = createUpdateHarness();
+    scene.update();
+    scene.update();
+    scene.update();
+    expect(scene.ball3dRenderer.render).toHaveBeenCalledOnce();
+
+    scene.wasMoving = true;
+    scene.update();
+    scene.update();
+    expect(scene.ball3dRenderer.render).toHaveBeenCalledTimes(3);
   });
 
   it('keeps physics stepping while a shot is settling', () => {

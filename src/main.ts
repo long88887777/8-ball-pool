@@ -1,5 +1,5 @@
 import './monitoring';
-import Phaser from 'phaser';
+import type Phaser from 'phaser';
 import { validatePasswordChange } from './accountSettings';
 import { gameAudio, type GameSound } from './audioDirector';
 import {
@@ -8,7 +8,7 @@ import {
   writeAudioPreferences,
   type AudioPreferences,
 } from './audioPreferences';
-import { PoolScene } from './game/PoolScene';
+import type { PoolScene } from './game/PoolScene';
 import { type GameRuleset } from './game/gameRules';
 import { normalizeAIDifficulty, type AIDifficulty } from './game/ai/difficulty';
 import { getCopy, type Language } from './game/i18n';
@@ -133,6 +133,11 @@ import './styles.css';
 type GameMode = 'pvp' | 'ai' | 'challenge' | 'online';
 
 let currentGame: Phaser.Game | null = null;
+let gameRuntimePromise: Promise<{
+  Phaser: typeof Phaser;
+  PoolScene: typeof import('./game/PoolScene').PoolScene;
+}> | null = null;
+let gameStartId = 0;
 let currentGameLifecycleDispose: (() => void) | null = null;
 let guestMode = false;
 let currentProfileName = '游客玩家';
@@ -202,16 +207,42 @@ function selectedAIDifficulty(): AIDifficulty {
   return normalizeAIDifficulty(selected?.value, 'normal');
 }
 
-function startGame(
+function loadGameRuntime() {
+  gameRuntimePromise ??= Promise.all([import('phaser'), import('./game/PoolScene')])
+    .then(([phaser, scene]) => ({ Phaser: phaser.default, PoolScene: scene.PoolScene }))
+    .catch((error: unknown) => {
+      gameRuntimePromise = null;
+      throw error;
+    });
+  return gameRuntimePromise;
+}
+
+async function startGame(
   mode: GameMode,
   roomInfo?: RoomInfo,
   ruleset: GameRuleset = roomInfo?.ruleset ?? 'eight-ball',
   challengeLevelId?: number,
-): void {
-  hideMenuSplashCursor();
+): Promise<void> {
+  const startId = ++gameStartId;
   gameAudio.setScene('game');
-  showGameShellForNewGame();
   hideEconomyPanels();
+  const growthPanel = document.getElementById('growth-panel');
+  const historyPanel = document.getElementById('history-panel');
+  if (growthPanel) growthPanel.hidden = true;
+  if (historyPanel) historyPanel.hidden = true;
+  showGameShellForNewGame();
+  hideMenuSplashCursor();
+
+  let runtime: Awaited<ReturnType<typeof loadGameRuntime>>;
+  try {
+    runtime = await loadGameRuntime();
+  } catch (error) {
+    console.error('Game engine failed to load.', error);
+    if (startId === gameStartId) backToMenu();
+    return;
+  }
+  if (startId !== gameStartId) return;
+  const { Phaser, PoolScene } = runtime;
 
   const baseConfig: Phaser.Types.Core.GameConfig = {
     type: Phaser.AUTO,
@@ -237,6 +268,7 @@ function startGame(
       preBoot: (game) => {
         game.registry.set('initialMode', mode);
         game.registry.set('gameRuleset', ruleset);
+        game.registry.set('avatarSelection', currentAvatarSelection);
         game.registry.set('aimControlSettings', readStoredAimControlSettings(browserStorage()));
         if (challengeLevelId !== undefined) game.registry.set('challengeLevelId', challengeLevelId);
         if (mode === 'ai') game.registry.set('aiDifficulty', selectedAIDifficulty());
@@ -246,13 +278,15 @@ function startGame(
   };
   const config = applyPerformanceProfileToConfig(baseConfig, createBrowserPerformanceProfile());
 
-  currentGame = new Phaser.Game(config);
-  currentGameLifecycleDispose = bindGamePowerLifecycle(currentGame, {
+  const game = new Phaser.Game(config);
+  currentGame = game;
+  currentGameLifecycleDispose = bindGamePowerLifecycle(game, {
     isUserPaused: () => document.getElementById('pause-overlay')?.hidden === false,
   });
 }
 
 function backToMenu(): void {
+  gameStartId += 1;
   if (currentGame) {
     currentGameLifecycleDispose?.();
     currentGameLifecycleDispose = null;
@@ -2067,6 +2101,14 @@ function showMenu(): void {
   if (menu) menu.hidden = false;
   gameAudio.setScene('menu');
   showMenuSplashCursor();
+  const warmGameRuntime = () => {
+    void loadGameRuntime().catch(() => undefined);
+  };
+  if (window.requestIdleCallback) {
+    window.requestIdleCallback(warmGameRuntime, { timeout: 1500 });
+  } else {
+    window.setTimeout(warmGameRuntime, 0);
+  }
 }
 
 async function signOutCurrentPlayer(): Promise<string | null> {
@@ -2091,9 +2133,9 @@ async function init(): Promise<void> {
   installUiAudioFeedback();
   applyShellCopy();
   renderSettingsPanel();
-  const { data: { session } } = await supabase.auth.getSession();
-
+  let authChoiceMade = false;
   const onAuthSuccess = () => {
+    authChoiceMade = true;
     guestMode = false;
     hideAuthPage();
     showMenu();
@@ -2101,6 +2143,7 @@ async function init(): Promise<void> {
   };
 
   const onGuest = () => {
+    authChoiceMade = true;
     guestMode = true;
     hideAuthPage();
     showMenu();
@@ -2113,14 +2156,17 @@ async function init(): Promise<void> {
     startGame('online', roomInfo, roomInfo.ruleset);
   });
 
-  if (session) {
-    onAuthSuccess();
-  } else {
-    gameAudio.setScene('silent');
-    showAuthPage();
-    const menu = document.getElementById('main-menu');
-    if (menu) menu.hidden = true;
-  }
+  void supabase.auth.getSession().then(({ data: { session } }) => {
+    if (authChoiceMade) return;
+    if (session) {
+      onAuthSuccess();
+    } else {
+      gameAudio.setScene('silent');
+      showAuthPage();
+      const menu = document.getElementById('main-menu');
+      if (menu) menu.hidden = true;
+    }
+  });
 
   supabase.auth.onAuthStateChange((event) => {
     if (event === 'SIGNED_OUT') {
