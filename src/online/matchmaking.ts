@@ -1,5 +1,6 @@
 import { supabase } from '../lib/supabase';
 import { normalizeGameRuleset, type GameRuleset } from '../game/gameRules';
+import { createDefaultAvatarSelection, profileRowToAvatarSelection, readStoredAvatarSelection, type AvatarSelection } from '../player/avatar';
 import type { MatchResponse, RoomInfo, QueueRecord, RoomRecord } from './types';
 
 type MatchCallback = (info: RoomInfo) => void;
@@ -38,6 +39,28 @@ async function fetchNickname(userId: string): Promise<string> {
     .eq('id', userId)
     .single();
   return data?.nickname ?? '未知玩家';
+}
+
+async function fetchAvatarSelection(userId: string): Promise<AvatarSelection | null> {
+  try {
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('avatar_kind, avatar_id, avatar_url')
+      .eq('id', userId)
+      .single();
+    if (error || !data) return null;
+    return profileRowToAvatarSelection(data);
+  } catch {
+    return null;
+  }
+}
+
+function readLocalAvatarSelection(): AvatarSelection {
+  try {
+    return readStoredAvatarSelection(window.localStorage);
+  } catch {
+    return createDefaultAvatarSelection();
+  }
 }
 
 function showPanel(panelId: string): void {
@@ -315,14 +338,22 @@ async function onMatchSuccess(callback: MatchCallback, myUserId: string, info: O
   cleanup();
   showPanel('mm-success');
 
-  const [myNickname, opponentNickname] = await Promise.all([
+  const [myNickname, opponentNickname, myAvatarSelection, opponentAvatarSelection] = await Promise.all([
     fetchNickname(myUserId),
     fetchNickname(info.opponentId),
+    fetchAvatarSelection(myUserId),
+    fetchAvatarSelection(info.opponentId),
   ]);
 
   setTimeout(() => {
     closeModal();
-    callback({ ...info, myNickname, opponentNickname });
+    callback({
+      ...info,
+      myNickname,
+      opponentNickname,
+      myAvatarSelection: myAvatarSelection ?? readLocalAvatarSelection(),
+      opponentAvatarSelection: opponentAvatarSelection ?? createDefaultAvatarSelection(),
+    });
   }, 500);
 }
 

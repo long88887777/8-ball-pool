@@ -296,23 +296,17 @@ h2 {
 }
 
 .player-avatar {
+  position: relative;
+  display: grid;
+  place-items: center;
   width: 56px;
   height: 56px;
   border-radius: 50%;
   border: 2px solid var(--poster-ink);
-  background:
-    radial-gradient(circle at 34% 24%, rgba(255, 255, 255, 0.86) 0 13%, transparent 14%),
-    radial-gradient(circle at 50% 50%, #f7f7ee 0 25%, transparent 26%),
-    linear-gradient(180deg, #0f5a38 0 48%, var(--poster-ink) 49% 100%);
+  background: #13212a;
   background-clip: padding-box;
   box-shadow: 4px 5px 0 rgba(16, 16, 14, 0.2);
-}
-
-.player-two .player-avatar {
-  background:
-    radial-gradient(circle at 34% 24%, rgba(255, 255, 255, 0.86) 0 13%, transparent 14%),
-    radial-gradient(circle at 50% 50%, #f7f7ee 0 25%, transparent 26%),
-    linear-gradient(180deg, #d7a327 0 48%, var(--poster-orange) 49% 100%);
+  animation: avatar-portrait-float 4.8s ease-in-out infinite;
 }
 
 .player-info {
@@ -2504,6 +2498,7 @@ body:has(.game-shell:not([hidden])) #splash-cursor { display: none !important; }
   .player-avatar {
     width: 42px;
     height: 42px;
+    --avatar-orbit-radius: 16px;
   }
 
   .player-row {
@@ -7278,6 +7273,107 @@ body.checkin-open {
   50% { transform: translateY(-2px) scale(1.035); }
 }
 
+.player-avatar[data-avatar-id] {
+  border-color: var(--avatar-accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--avatar-accent) 30%, transparent),
+    0 0 15px color-mix(in srgb, var(--avatar-accent) 45%, transparent),
+    4px 5px 0 rgba(16, 16, 14, 0.2);
+}
+
+.player-avatar-portrait {
+  position: relative;
+  z-index: 1;
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  object-fit: cover;
+}
+
+.player-avatar-effect {
+  position: absolute;
+  z-index: 2;
+  inset: -3px;
+  border-radius: inherit;
+  pointer-events: none;
+}
+
+.player-avatar-effect::before,
+.player-avatar-effect::after {
+  position: absolute;
+  content: '';
+}
+
+.player-avatar-effect::before {
+  inset: 1px;
+  border: 1px solid var(--avatar-accent, #dcecf2);
+  border-radius: inherit;
+  opacity: 0.22;
+  animation: avatar-aura 4.8s ease-in-out infinite;
+}
+
+.player-avatar-effect::after {
+  top: 2px;
+  right: 3px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--avatar-accent, #dcecf2);
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.78), 0 0 9px var(--avatar-accent, #dcecf2);
+  opacity: 0.82;
+  animation: avatar-twinkle 2.8s ease-in-out infinite;
+}
+
+.player-avatar[data-avatar-motion='sparkle'] .player-avatar-effect::after {
+  border-radius: 1px;
+  clip-path: polygon(50% 0, 63% 37%, 100% 50%, 63% 63%, 50% 100%, 37% 63%, 0 50%, 37% 37%);
+}
+
+.player-avatar[data-avatar-motion='orbit'] {
+  --avatar-orbit-radius: 22px;
+}
+
+.player-avatar[data-avatar-motion='orbit'] .player-avatar-effect::after {
+  top: 50%;
+  right: auto;
+  left: 50%;
+  animation: avatar-match-orbit 6.5s linear infinite;
+}
+
+.player-avatar[data-avatar-motion='ripple'] .player-avatar-effect::before {
+  animation-name: avatar-ripple;
+}
+
+.player-avatar[data-avatar-motion='shimmer'] .player-avatar-portrait {
+  animation: avatar-shimmer 5s ease-in-out infinite;
+}
+
+.player-avatar[data-avatar-motion='shimmer'] .player-avatar-effect::after {
+  top: 0;
+  right: 5px;
+  width: 24%;
+  height: 92%;
+  border-radius: 50%;
+  background: linear-gradient(110deg, transparent, rgba(255, 255, 255, 0.72), transparent);
+  box-shadow: none;
+  opacity: 0;
+  animation: avatar-glint 5.6s ease-in-out infinite;
+}
+
+.player-avatar[data-avatar-motion='flutter'] .player-avatar-portrait {
+  animation: avatar-flutter 4s ease-in-out infinite;
+}
+
+.player-avatar[data-avatar-motion='flutter'] .player-avatar-effect::after {
+  border-radius: 70% 10% 70% 10%;
+  animation-name: avatar-petal;
+}
+
+@keyframes avatar-match-orbit {
+  from { transform: rotate(0) translateX(var(--avatar-orbit-radius, 22px)); }
+  to { transform: rotate(360deg) translateX(var(--avatar-orbit-radius, 22px)); }
+}
+
 .menu-action-group {
   display: flex;
   align-items: center;
@@ -7696,6 +7792,10 @@ body.checkin-open {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .player-avatar,
+  .player-avatar-portrait,
+  .player-avatar-effect::before,
+  .player-avatar-effect::after,
   .menu-avatar[data-avatar-id],
   .profile-avatar-preview[data-avatar-id],
   .profile-avatar-option,

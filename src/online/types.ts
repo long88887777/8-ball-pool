@@ -1,4 +1,5 @@
 import type { GameRuleset } from '../game/gameRules';
+import type { AvatarSelection } from '../player/avatar';
 
 export interface MatchResult {
   status: 'matched';
@@ -21,6 +22,8 @@ export interface RoomInfo {
   myNickname: string;
   opponentNickname: string;
   myUserId: string;
+  myAvatarSelection?: AvatarSelection;
+  opponentAvatarSelection?: AvatarSelection;
   ruleset: GameRuleset;
 }
 

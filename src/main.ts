@@ -250,6 +250,7 @@ function startGame(
       preBoot: (game) => {
         game.registry.set('initialMode', mode);
         game.registry.set('gameRuleset', ruleset);
+        game.registry.set('avatarSelection', currentAvatarSelection);
         game.registry.set('aimControlSettings', readStoredAimControlSettings(browserStorage()));
         if (challengeLevelId !== undefined) game.registry.set('challengeLevelId', challengeLevelId);
         if (mode === 'ai') game.registry.set('aiDifficulty', selectedAIDifficulty());

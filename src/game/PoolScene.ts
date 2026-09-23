@@ -225,6 +225,13 @@ import type {
   NetworkFoulReason,
 } from '../online/types';
 import { supabase } from '../lib/supabase';
+import {
+  createDefaultAvatarSelection,
+  DEFAULT_AVATARS,
+  resolveAvatarSrc,
+  sanitizeAvatarSelection,
+  type AvatarSelection,
+} from '../player/avatar';
 
 type BallKind = 'cue' | 'target';
 
@@ -522,6 +529,8 @@ export class PoolScene extends Phaser.Scene {
   private onlineState: OnlineState | null = null;
   private roomInfo: RoomInfo | null = null;
   private opponentRankName: RankName = 'D-';
+  private playerAvatarSelection: AvatarSelection = createDefaultAvatarSelection();
+  private aiAvatarSelection: AvatarSelection = createDefaultAvatarSelection();
   private matchStartedAt: number | null = null;
   private currentMatchId: string | null = null;
   private onlineGameSeq = 1;
@@ -572,6 +581,11 @@ export class PoolScene extends Phaser.Scene {
     }
     this.gameRuleset = normalizeGameRuleset(this.game.registry.get('gameRuleset'));
     this.aiDifficulty = normalizeAIDifficulty(this.game.registry.get('aiDifficulty'), 'normal');
+    this.playerAvatarSelection = sanitizeAvatarSelection(this.game.registry.get('avatarSelection'));
+    if (this.gameMode === 'ai') {
+      const avatar = DEFAULT_AVATARS[Math.floor(Math.random() * DEFAULT_AVATARS.length)] ?? DEFAULT_AVATARS[0];
+      this.aiAvatarSelection = { kind: 'default', id: avatar.id };
+    }
     this.aimControlSettings = sanitizeAimControlSettings(this.game.registry.get('aimControlSettings'));
     this.aiController = new AIController({ difficulty: this.aiDifficulty });
     this.createTextures();
@@ -630,6 +644,8 @@ export class PoolScene extends Phaser.Scene {
       this.roomInfo = this.game.registry.get('roomInfo') as RoomInfo | null;
       if (this.roomInfo) this.initOnlineMode();
     }
+
+    this.renderMatchAvatars();
 
     this.scheduleOpeningAITurnIfNeeded();
 
@@ -3594,6 +3610,48 @@ export class PoolScene extends Phaser.Scene {
     if (shotClock) shotClock.textContent = String(visibleSecond);
     this.updatePlayerClockCard(playerOneCard, activePlayer === 0, activePlayer === 0 ? visibleSecond : maxTime, progress);
     this.updatePlayerClockCard(playerTwoCard, activePlayer === 1, activePlayer === 1 ? visibleSecond : maxTime, progress);
+  }
+
+  private renderMatchAvatars(): void {
+    if (typeof document === 'undefined') return;
+
+    let playerOneSelection = this.playerAvatarSelection;
+    let playerTwoSelection = this.playerAvatarSelection;
+    if (this.gameMode === 'ai') {
+      playerTwoSelection = this.aiAvatarSelection;
+    } else if (this.gameMode === 'online' && this.roomInfo) {
+      playerOneSelection = this.roomInfo.isHost
+        ? this.roomInfo.myAvatarSelection ?? this.playerAvatarSelection
+        : this.roomInfo.opponentAvatarSelection ?? createDefaultAvatarSelection();
+      playerTwoSelection = this.roomInfo.isHost
+        ? this.roomInfo.opponentAvatarSelection ?? createDefaultAvatarSelection()
+        : this.roomInfo.myAvatarSelection ?? this.playerAvatarSelection;
+    }
+
+    this.renderMatchAvatar('player-one-avatar', playerOneSelection);
+    this.renderMatchAvatar('player-two-avatar', playerTwoSelection);
+  }
+
+  private renderMatchAvatar(id: string, selection: AvatarSelection): void {
+    const wrapper = document.getElementById(id);
+    const image = wrapper?.querySelector<HTMLImageElement>('.player-avatar-portrait');
+    if (!wrapper || !image) return;
+
+    const sanitized = sanitizeAvatarSelection(selection);
+    image.src = resolveAvatarSrc(sanitized);
+    const avatar = sanitized.kind === 'default'
+      ? DEFAULT_AVATARS.find((candidate) => candidate.id === sanitized.id)
+      : undefined;
+    if (!avatar) {
+      delete wrapper.dataset.avatarId;
+      delete wrapper.dataset.avatarMotion;
+      wrapper.style.removeProperty('--avatar-accent');
+      return;
+    }
+
+    wrapper.dataset.avatarId = avatar.id;
+    wrapper.dataset.avatarMotion = avatar.motion;
+    wrapper.style.setProperty('--avatar-accent', avatar.accent);
   }
 
   private renderMatchRankChips(): void {
