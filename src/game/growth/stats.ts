@@ -13,6 +13,7 @@ export type RecentMatchRecord = {
   clearedTable: boolean;
   ruleset?: GameRuleset;
   shotHistory?: ShotHistoryEntry[];
+  coinDelta?: number;
   rankDelta?: number;
 };
 
@@ -124,6 +125,7 @@ export function applyMatchToStats(stats: PlayerStats, match: MatchResultInput): 
     clearedTable: match.clearedTable,
     ...(match.ruleset ? { ruleset: match.ruleset } : {}),
     ...(match.shotHistory ? { shotHistory: match.shotHistory } : {}),
+    ...(match.coinDelta !== undefined ? { coinDelta: Math.trunc(match.coinDelta) } : {}),
   };
 
   return sanitizePlayerStats({
@@ -318,6 +320,9 @@ function sanitizeRecentMatchRecord(value: unknown): RecentMatchRecord | null {
   const rankDelta = typeof candidate.rankDelta === 'number' && Number.isFinite(candidate.rankDelta)
     ? Math.trunc(candidate.rankDelta)
     : undefined;
+  const coinDelta = typeof candidate.coinDelta === 'number' && Number.isFinite(candidate.coinDelta)
+    ? Math.trunc(candidate.coinDelta)
+    : undefined;
   const base = candidate as RecentMatchRecord;
 
   return {
@@ -330,6 +335,7 @@ function sanitizeRecentMatchRecord(value: unknown): RecentMatchRecord | null {
     clearedTable: base.clearedTable,
     ...(ruleset ? { ruleset } : {}),
     ...(shotHistory.length > 0 ? { shotHistory } : {}),
+    ...(coinDelta !== undefined ? { coinDelta } : {}),
     ...(rankDelta !== undefined ? { rankDelta } : {}),
   };
 }

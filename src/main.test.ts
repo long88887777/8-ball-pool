@@ -4,9 +4,11 @@ import { createModeSelectionState, selectGameMode, selectRuleset } from './menuF
 import {
   formatRecentMatchSummary,
   readStoredAimControlSettings,
+  readStoredHighFrameRateMode,
   resolveHistorySelectionIndex,
   showChallengeSelectLoadingState,
   writeStoredAimControlSettings,
+  writeStoredHighFrameRateMode,
 } from './menuShell';
 import type { RecentMatchRecord } from './game/growth/stats';
 
@@ -102,6 +104,18 @@ describe('menu shell helpers', () => {
     expect(readStoredAimControlSettings(storage)).toEqual(saved);
   });
 
+  it('persists the low-quality high-frame-rate preference', () => {
+    const data = new Map<string, string>();
+    const storage = {
+      getItem: (key: string) => data.get(key) ?? null,
+      setItem: (key: string, value: string) => { data.set(key, value); },
+    };
+
+    expect(readStoredHighFrameRateMode(storage)).toBe(false);
+    expect(writeStoredHighFrameRateMode(storage, true)).toBe(true);
+    expect(readStoredHighFrameRateMode(storage)).toBe(true);
+  });
+
   it('formats recent match history rows with ruleset and result context', () => {
     const match: RecentMatchRecord = {
       matchId: 'match-1',
@@ -113,12 +127,14 @@ describe('menu shell helpers', () => {
       clearedTable: true,
       ruleset: 'nine-ball',
       shotHistory: [],
+      coinDelta: 86,
+      rankDelta: 14,
     };
 
     expect(formatRecentMatchSummary(match, 'zh')).toMatchObject({
       title: '胜 · Mina',
-      meta: '联网 · 9 球 · 6 杆',
-      detail: '2026/5/25 18:00',
+      meta: '联网',
+      detail: '金币 +86 · 段位积分 +14',
     });
   });
 

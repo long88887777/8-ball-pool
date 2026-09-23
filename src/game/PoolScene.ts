@@ -128,7 +128,7 @@ import {
   normalizeCueContactOffset,
   type CueSpinPreset,
 } from './proPhysics/spin';
-import type { PhysicsBallSnapshot, PhysicsEvent } from './proPhysics/types';
+import type { PhysicsBallSnapshot, PhysicsEvent, PhysicsShot } from './proPhysics/types';
 import { finishGameTableLoading } from '../gameShellVisibility';
 import {
   createBall3DRenderer,
@@ -242,7 +242,17 @@ type AimState = {
 
 type CuePlacementState = {
   pointerId: number;
-  kind: 'break' | 'ball-in-hand';
+  kind: 'break' | 'ball-in-hand' | 'training';
+  ballId?: number;
+};
+
+type TrainingSnapshot = {
+  balls: PhysicsBallSnapshot[];
+  state: GameState;
+  rules: EightBallState;
+  nineBallRules: NineBallState;
+  currentShotHistory: ShotHistoryEntry[];
+  localMatchTracker: LocalMatchTracker;
 };
 
 const DEPTH = {
@@ -368,6 +378,10 @@ export class PoolScene extends Phaser.Scene {
   private spinPresetButtons: HTMLButtonElement[] = [];
   private selectedSpin: Vector = SPIN_PRESETS.center;
   private aimControlSettings: AimControlSettings = createDefaultAimControlSettings();
+  private trainingArrangeMode = false;
+  private trainingUndoSnapshot: TrainingSnapshot | null = null;
+  private trainingRepeatSnapshot: TrainingSnapshot | null = null;
+  private lastTrainingShot: PhysicsShot | null = null;
   private spinPadPointerId: number | null = null;
   private ballPrevPositions = new Map<number, Vector>();
   private nineBallPushOutDeclared = false;
@@ -869,6 +883,16 @@ export class PoolScene extends Phaser.Scene {
         return;
       }
       const point = { x: pointer.worldX, y: pointer.worldY };
+      if (this.gameMode === 'pvp' && this.trainingArrangeMode && this.physicsEngine.isSettled()) {
+        const ball = this.nearestTrainingBall(point);
+        if (ball) {
+          this.trainingUndoSnapshot = this.captureTrainingSnapshot();
+          this.cuePlacementState = { pointerId: pointer.id, kind: 'training', ballId: ball.id };
+          this.placeTrainingBall(ball.id, point);
+          this.updateTrainingToolState();
+          return;
+        }
+      }
       if (this.canPlaceBallInHandCueBall() && isOnTableSurface(point)) {
         this.cuePlacementState = { pointerId: pointer.id, kind: 'ball-in-hand' };
         this.clearAimState();
@@ -914,7 +938,9 @@ export class PoolScene extends Phaser.Scene {
     this.input.on('pointermove', (pointer: Phaser.Input.Pointer) => {
       if (this.cuePlacementState && pointer.id === this.cuePlacementState.pointerId) {
         const point = { x: pointer.worldX, y: pointer.worldY };
-        if (this.cuePlacementState.kind === 'break') {
+        if (this.cuePlacementState.kind === 'training' && this.cuePlacementState.ballId !== undefined) {
+          this.placeTrainingBall(this.cuePlacementState.ballId, point);
+        } else if (this.cuePlacementState.kind === 'break') {
           this.placeCueBall(point);
         } else {
           this.placeBallInHandCueBall(point);
@@ -932,7 +958,11 @@ export class PoolScene extends Phaser.Scene {
     this.input.on('pointerup', (pointer: Phaser.Input.Pointer) => {
       if (this.cuePlacementState && pointer.id === this.cuePlacementState.pointerId) {
         const point = { x: pointer.worldX, y: pointer.worldY };
-        if (this.cuePlacementState.kind === 'break') {
+        if (this.cuePlacementState.kind === 'training' && this.cuePlacementState.ballId !== undefined) {
+          this.placeTrainingBall(this.cuePlacementState.ballId, point);
+          this.cuePlacementState = null;
+          this.updateTrainingToolState();
+        } else if (this.cuePlacementState.kind === 'break') {
           this.placeCueBall(point);
           this.breakCuePlacementConfirmed = true;
           this.cuePlacementState = null;
@@ -954,6 +984,121 @@ export class PoolScene extends Phaser.Scene {
 
       this.shootFromAim();
     });
+  }
+
+  public toggleTrainingArrangeMode(): void {
+    if (this.gameMode !== 'pvp' || !this.physicsEngine.isSettled()) return;
+    this.trainingArrangeMode = !this.trainingArrangeMode;
+    this.clearAimState();
+    this.aimLine.clear();
+    this.hideCueStick();
+    this.updateTrainingToolState();
+  }
+
+  public undoTrainingAction(): void {
+    if (this.gameMode !== 'pvp' || !this.trainingUndoSnapshot || !this.physicsEngine.isSettled()) return;
+    const current = this.captureTrainingSnapshot();
+    this.restoreTrainingSnapshot(this.trainingUndoSnapshot);
+    this.trainingUndoSnapshot = current;
+    this.updateTrainingToolState();
+  }
+
+  public repeatTrainingShot(): void {
+    if (this.gameMode !== 'pvp' || !this.trainingRepeatSnapshot || !this.lastTrainingShot || !this.physicsEngine.isSettled()) return;
+    this.trainingUndoSnapshot = this.captureTrainingSnapshot();
+    this.restoreTrainingSnapshot(this.trainingRepeatSnapshot);
+    const shooter = this.activeCurrentPlayer();
+    this.beginShotHistoryEntry(shooter, this.lastTrainingShot.power, this.lastTrainingShot.contactOffset ?? { x: 0, y: 0 });
+    this.localMatchTracker = recordPlayerStroke(this.localMatchTracker, shooter);
+    this.state = recordStroke(this.state);
+    this.startRulesShot();
+    this.physicsEngine.strikeCueBall(this.lastTrainingShot);
+    this.wasMoving = true;
+    this.audio.play('cue');
+    this.updateHud();
+    this.updateTrainingToolState();
+  }
+
+  public forfeitLocalMatch(): void {
+    if (this.gameMode === 'online' || this.gameMode === 'challenge' || this.gameMode === 'pvp') return;
+    this.settleMatchCoins(false);
+    this.settleGrowthForMatch(false, 'surrender');
+  }
+
+  private nearestTrainingBall(point: Vector): PhysicsBallSnapshot | null {
+    if (!isOnTableSurface(point)) return null;
+    let nearest: PhysicsBallSnapshot | null = null;
+    let nearestDistance = BALL_RADIUS * 1.7;
+    for (const ball of this.physicsEngine.getBalls()) {
+      const distance = Math.hypot(ball.position.x - point.x, ball.position.y - point.y);
+      if (!ball.pocketed && distance <= nearestDistance) {
+        nearest = ball;
+        nearestDistance = distance;
+      }
+    }
+    return nearest;
+  }
+
+  private placeTrainingBall(ballId: number, point: Vector): void {
+    if (!isOnTableSurface(point)) return;
+    this.physicsEngine.resetBall(ballId, point);
+    this.syncBallsFromPhysics(this.physicsEngine.getBalls());
+    this.reset3DBalls();
+  }
+
+  private captureTrainingSnapshot(): TrainingSnapshot {
+    return {
+      balls: structuredClone(this.physicsEngine.getBalls()),
+      state: structuredClone(this.state),
+      rules: structuredClone(this.rules),
+      nineBallRules: structuredClone(this.nineBallRules),
+      currentShotHistory: structuredClone(this.currentShotHistory),
+      localMatchTracker: structuredClone(this.localMatchTracker),
+    };
+  }
+
+  private restoreTrainingSnapshot(snapshot: TrainingSnapshot): void {
+    this.clearAimState();
+    this.cuePlacementState = null;
+    this.pocketAnimatingBalls.clear();
+    this.ballPocketMap.clear();
+    this.physicsEngine.rack(snapshot.balls.map((ball) => ({
+      id: ball.id,
+      kind: ball.kind,
+      position: ball.position,
+      ...(ball.kind === 'target' ? { label: ball.id } : {}),
+    })));
+    snapshot.balls.forEach((ball) => {
+      if (ball.pocketed) this.physicsEngine.pocketBall(ball.id);
+    });
+    this.state = structuredClone(snapshot.state);
+    this.rules = structuredClone(snapshot.rules);
+    this.nineBallRules = structuredClone(snapshot.nineBallRules);
+    this.currentShotHistory = structuredClone(snapshot.currentShotHistory);
+    this.localMatchTracker = structuredClone(snapshot.localMatchTracker);
+    this.pendingShotHistoryEntry = null;
+    this.wasMoving = false;
+    this.strikeLocked = false;
+    this.hideVictoryScreen();
+    this.syncBallsFromPhysics(this.physicsEngine.getBalls());
+    this.reset3DBalls();
+    this.updateHud();
+  }
+
+  private updateTrainingToolState(): void {
+    if (typeof document === 'undefined') return;
+    const arrange = document.querySelector<HTMLButtonElement>('#training-arrange');
+    const undo = document.querySelector<HTMLButtonElement>('#training-undo');
+    const repeat = document.querySelector<HTMLButtonElement>('#training-repeat');
+    const hint = document.querySelector<HTMLElement>('#training-tool-hint');
+    if (arrange) {
+      arrange.classList.toggle('is-active', this.trainingArrangeMode);
+      arrange.setAttribute('aria-pressed', String(this.trainingArrangeMode));
+      arrange.textContent = this.trainingArrangeMode ? '完成摆球' : '任意摆球';
+    }
+    if (undo) undo.disabled = !this.trainingUndoSnapshot;
+    if (repeat) repeat.disabled = !this.lastTrainingShot || !this.trainingRepeatSnapshot;
+    if (hint) hint.textContent = this.trainingArrangeMode ? '拖动任意球调整位置' : '无倒计时 · 无收益 · 自由练习';
   }
 
   private captureAimPointer(pointer: Phaser.Input.Pointer): void {
@@ -1760,7 +1905,7 @@ export class PoolScene extends Phaser.Scene {
   }
 
   private settleMatchCoins(won: boolean): void {
-    if (this.matchCoinSettled || this.gameMode === 'challenge') {
+    if (this.matchCoinSettled || this.gameMode === 'challenge' || this.gameMode === 'pvp') {
       return;
     }
     const mode: MatchCoinMode = this.gameMode === 'ai' ? 'ai' : 'pvp';
@@ -1800,6 +1945,9 @@ export class PoolScene extends Phaser.Scene {
       return;
     }
     this.matchGrowthSettled = true;
+    if (this.gameMode === 'pvp') {
+      return;
+    }
     if (reason === 'normal' && this.gameMode !== 'challenge') {
       const makeupResult = recordCompletedMatchForMakeup(this.wallet);
       this.savePlayerWallet(makeupResult.wallet);
@@ -1821,6 +1969,7 @@ export class PoolScene extends Phaser.Scene {
       clearedTable,
       ruleset: this.gameRuleset,
       shotHistory: this.currentShotHistory,
+      coinDelta: this.lastCoinDelta,
       dateKey: this.localDateKey(),
       performancePlayerIndex: myIndex,
     });
@@ -2125,7 +2274,7 @@ export class PoolScene extends Phaser.Scene {
       this.turnAnnouncementRemaining <= 0 &&
       !this.cuePlacementState &&
       !this.activeCueBallInHand() &&
-      !this.activeGameOver() &&
+      (this.gameMode === 'pvp' || !this.activeGameOver()) &&
       !this.aiThinking &&
       !this.isAITurn() &&
       !this.isOnlineOpponentTurn() &&
@@ -2260,7 +2409,10 @@ export class PoolScene extends Phaser.Scene {
     if (current === target) {
       return;
     }
-    const next = smoothAimPoint(current, target, deltaSeconds);
+    const sensitivity = this.aimControlSettings.sensitivity === 'fine'
+      ? 0.55
+      : this.aimControlSettings.sensitivity === 'fast' ? 1.5 : 1;
+    const next = smoothAimPoint(current, target, deltaSeconds * sensitivity);
     if (next !== current) {
       this.aimState.current = next;
       this.markAimRenderDirty();
@@ -2326,17 +2478,29 @@ export class PoolScene extends Phaser.Scene {
     }
 
     const cueStyle = this.currentCueStyle();
-    const cueUse = consumeEquippedCueDurability(this.wallet);
-    if (!cueUse.used) {
+    if (this.gameMode !== 'pvp') {
+      const cueUse = consumeEquippedCueDurability(this.wallet);
+      if (!cueUse.used) {
+        this.renderEconomyHud();
+        this.renderCueShop('球杆耐用度为 0，请先花费金币维修。');
+        this.updateAimHud();
+        return;
+      }
+      this.savePlayerWallet(cueUse.wallet);
       this.renderEconomyHud();
-      this.renderCueShop('球杆耐用度为 0，请先花费金币维修。');
-      this.updateAimHud();
-      return;
     }
-    this.savePlayerWallet(cueUse.wallet);
-    this.renderEconomyHud();
     const shotPower = applyCuePower(aimIntent.power, cueStyle);
     const shotSpin = applyCueSpin(this.selectedSpin, cueStyle);
+    if (this.gameMode === 'pvp') {
+      this.trainingUndoSnapshot = this.captureTrainingSnapshot();
+      this.trainingRepeatSnapshot = this.captureTrainingSnapshot();
+      this.lastTrainingShot = {
+        direction: { ...aimIntent.direction },
+        power: this.openingBreakPower(shotPower),
+        contactOffset: { ...shotSpin },
+      };
+      this.updateTrainingToolState();
+    }
 
     this.alignRulesCurrentPlayerWithOnlineShooter('me');
 
@@ -3030,7 +3194,7 @@ export class PoolScene extends Phaser.Scene {
   }
 
   private shouldRunShotClock(): boolean {
-    if (this.gameMode === 'online') return false;
+    if (this.gameMode === 'online' || this.gameMode === 'pvp') return false;
     return (
       !this.activeGameOver() &&
       this.turnAnnouncementRemaining <= 0 &&
@@ -3222,24 +3386,37 @@ export class PoolScene extends Phaser.Scene {
     this.lastCoinDailyLimitReached = false;
     this.lastMakeupCardEarned = false;
     this.lastRankDelta = 0;
+    this.trainingUndoSnapshot = null;
+    this.trainingRepeatSnapshot = null;
+    this.lastTrainingShot = null;
     this.opponentShotResolved = false;
     this.opponentResultApplied = false;
     this.opponentTurnEndApplied = false;
     this.hideVictoryScreen();
     this.updateHud();
     this.updateAimHud();
+    this.updateTrainingToolState();
     this.scheduleOpeningAITurnIfNeeded();
   }
 
   private updateHud(): void {
     const matchPanel = document.querySelector('.match-panel') as HTMLElement | null;
-    if (matchPanel) matchPanel.hidden = this.gameMode === 'challenge';
+    if (matchPanel) matchPanel.hidden = this.gameMode === 'challenge' || this.gameMode === 'pvp';
     const tableTurnBanner = document.querySelector<HTMLElement>('#table-turn-banner');
     if (tableTurnBanner && this.gameMode === 'challenge') tableTurnBanner.hidden = true;
     const mode = document.querySelector<HTMLElement>('#mode');
     const strokes = document.querySelector<HTMLElement>('#strokes');
     const remaining = document.querySelector<HTMLElement>('#remaining');
     const copy = getCopy(this.language);
+    const trainingTools = document.querySelector<HTMLElement>('#training-tools');
+    if (trainingTools) trainingTools.hidden = this.gameMode !== 'pvp';
+    if (typeof document.querySelectorAll === 'function') {
+      document.querySelectorAll<HTMLElement>('[data-shot-clock]').forEach((clock) => {
+        clock.hidden = this.gameMode === 'pvp';
+      });
+    }
+    const shotClock = document.querySelector<HTMLElement>('#shot-clock');
+    if (shotClock) shotClock.hidden = this.gameMode === 'pvp';
     this.updateEndActionLabels();
     this.renderMatchRankChips();
     if (this.gameMode === 'challenge') {
@@ -3343,7 +3520,7 @@ export class PoolScene extends Phaser.Scene {
     this.syncTurnAnnouncement();
     this.updateShotClockHud();
     this.updateOnlineNetworkHud();
-    if (this.activeGameOver() && this.gameMode !== 'online') {
+    if (this.activeGameOver() && this.gameMode !== 'online' && this.gameMode !== 'pvp') {
       this.showVictoryScreen();
     }
   }

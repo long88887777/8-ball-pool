@@ -1,0 +1,519 @@
+/* The new visual treatment is intentionally limited to in-game and inner panels. */
+/* Menu request: retain the original poster background, but improve its label and reach. */
+.menu-eyebrow {
+  display: inline-block;
+  margin-bottom: 7px;
+  border: 2px solid #17141b;
+  border-radius: 3px;
+  padding: 3px 10px 4px;
+  background: #fff13d;
+  color: #19131a;
+  box-shadow: 4px 4px 0 #b4008e;
+  font-family: 'Bowlby One SC', 'Arial Black', Impact, sans-serif;
+  font-size: clamp(17px, 2.2vw, 21px);
+  font-weight: 400;
+  line-height: 1;
+  letter-spacing: .12em;
+  transform: rotate(-3deg);
+  transition: transform .22s ease, box-shadow .22s ease;
+}
+.menu-brand:hover .menu-eyebrow { transform: rotate(0) translateY(-2px); box-shadow: 5px 6px 0 #b4008e; }
+
+@media (max-height: 920px) {
+  .main-menu { padding-top: 8px; }
+  .menu-content { min-height: 0; justify-content: flex-start; gap: clamp(9px, 1.35vh, 13px); }
+  .menu-title-art { width: clamp(88px, 12vw, 112px); }
+  .menu-growth-overview { gap: 8px; padding-block: 11px; }
+  .menu-growth-grid span { padding-block: 6px; }
+  .menu-secondary-actions { padding-block: 8px !important; }
+  .ai-difficulty-panel { padding-block: 8px; }
+  .menu-buttons { gap: 9px; }
+  .menu-btn { min-height: 72px; padding-block: 12px; }
+}
+
+@media (max-width: 640px) {
+  .menu-content { gap: 11px; }
+  .menu-brand { flex-direction: row; justify-content: space-between; gap: 8px; }
+  .menu-title { text-align: left; }
+  .menu-heading { font-size: clamp(37px, 10vw, 48px); }
+  .menu-title-art { width: clamp(78px, 24vw, 105px); }
+  .menu-growth-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .menu-buttons { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); width: min(520px, 92vw); gap: 8px; }
+  .menu-btn { min-height: 82px; gap: 7px; padding: 10px; border-left-width: 5px; }
+  .menu-btn-icon { font-size: 21px; }
+  .menu-btn-text strong { font-size: 13px; }
+  .menu-btn-text small { font-size: 9px; }
+  .menu-btn-chevron { display: none; }
+}
+
+.game-shell::before {
+  inset: 8px -5px 12px;
+  border: 1px solid rgba(48, 126, 113, .23);
+  border-radius: 20px;
+  background: rgba(255, 253, 246, .66);
+  box-shadow: 0 18px 44px rgba(27, 98, 89, .16);
+  transform: none;
+}
+
+.profile-panel-overlay,
+.pause-overlay,
+.cue-shop-overlay,
+.recharge-overlay,
+.growth-panel-overlay,
+.history-panel-overlay,
+.settings-panel-overlay,
+.ruleset-overlay {
+  background: rgba(226, 246, 237, .82);
+  backdrop-filter: blur(8px);
+}
+
+.profile-panel-dialog,
+.pause-dialog,
+.recharge-dialog,
+.cue-shop-dialog,
+.growth-panel-dialog,
+body .history-panel-dialog,
+.settings-panel-dialog,
+.ruleset-dialog {
+  border: 1px solid rgba(50, 135, 110, .2);
+  border-radius: 18px;
+  background: #fffefa;
+  box-shadow: 0 24px 60px rgba(28, 100, 83, .15);
+}
+
+.profile-panel-header h2,
+.pause-dialog h2,
+.recharge-header h2,
+.cue-shop-header h2 { color: #194d46; }
+.profile-summary-row { border: 1px solid #e1eee2; background: #f1faf4; }
+.pause-dialog button { background: #38a987; color: #fff; font-weight: 800; }
+.pause-dialog button:hover { background: #278a70; transform: translateY(-2px); }
+.cue-shop-header { background: #fffefa; border-bottom-color: #dbece1; }
+.cue-shop-ledger { background: #effaf3; border-bottom-color: #dbece1; }
+.cue-shop-close { background: #e9f6ec; color: #39766a; }
+.cue-shop-close:hover { background: #d8f0e2; }
+
+body:has(.growth-panel-overlay:not([hidden])) #splash-cursor,
+body:has(.history-panel-overlay:not([hidden])) #splash-cursor,
+body:has(.settings-panel-overlay:not([hidden])) #splash-cursor,
+body:has(.profile-panel-overlay:not([hidden])) #splash-cursor,
+body:has(.recharge-overlay:not([hidden])) #splash-cursor,
+body:has(.pause-overlay:not([hidden])) #splash-cursor { display: none; }
+
+.profile-panel-dialog,
+.pause-dialog,
+.recharge-dialog,
+.settings-panel-dialog,
+.cue-shop-dialog,
+.growth-panel-dialog,
+body .history-panel-dialog {
+  animation: panel-into-pocket .42s cubic-bezier(.2, .8, .2, 1) both;
+}
+
+.profile-panel-dialog,
+.pause-dialog,
+.recharge-dialog,
+.settings-panel-dialog { position: relative; isolation: isolate; }
+.profile-panel-dialog::after,
+.pause-dialog::after,
+.recharge-dialog::after,
+.settings-panel-dialog::after {
+  position: absolute;
+  top: 14px;
+  right: 54px;
+  z-index: -1;
+  width: 105px;
+  height: 85px;
+  content: '';
+  pointer-events: none;
+  background: url('/assets/sunlit-pool-growth-sticker.png') center / contain no-repeat;
+  opacity: .3;
+  transform: rotate(7deg);
+}
+.pause-dialog::after { top: 4px; right: 10px; opacity: .18; }
+.settings-panel-dialog,
+.profile-panel-dialog,
+.recharge-dialog { background-image: radial-gradient(circle at 92% 4%, rgba(255, 228, 143, .3), transparent 32%); }
+.cue-shop-header { background-image: linear-gradient(95deg, #fffefa, #e9f8ec); }
+.cue-shop-header::after {
+  position: absolute;
+  top: 10px;
+  right: 92px;
+  width: 100px;
+  height: 72px;
+  content: '';
+  pointer-events: none;
+  background: url('/assets/sunlit-cue-chalk-sticker.png') center / contain no-repeat;
+  opacity: .62;
+}
+
+.settings-panel-dialog::after,
+.pause-dialog::after { background-image: url('/assets/sunlit-cue-chalk-sticker.png'); }
+.rank-journey-dialog::after {
+  position: absolute;
+  top: 5px;
+  right: 34%;
+  width: 130px;
+  height: 105px;
+  content: '';
+  pointer-events: none;
+  background: url('/assets/sunlit-rank-trophy-sticker.png') center / contain no-repeat;
+  filter: drop-shadow(0 8px 9px rgba(57, 105, 71, .16));
+  transform: rotate(-8deg);
+  animation: trophy-hello 3.6s ease-in-out infinite;
+}
+.rank-journey-summary span { transition: transform .2s ease, box-shadow .2s ease; }
+.rank-journey-summary span:hover { transform: translateY(-3px); box-shadow: 0 8px 13px rgba(32, 100, 87, .11); }
+
+.challenge-overlay { background: rgba(226, 246, 237, .86); backdrop-filter: blur(7px); }
+.challenge-select-dialog {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid #b8dec7;
+  background: linear-gradient(135deg, rgba(255, 254, 247, .98), rgba(236, 250, 239, .98));
+  box-shadow: 0 24px 55px rgba(28, 97, 74, .15);
+}
+.challenge-select-dialog::before {
+  position: absolute;
+  top: 8px;
+  right: 12px;
+  width: 76px;
+  height: 64px;
+  content: '';
+  pointer-events: none;
+  background: url('/assets/sunlit-rank-trophy-sticker.png') center / contain no-repeat;
+  opacity: .85;
+  transform: rotate(8deg);
+}
+.challenge-select-dialog h2 { position: relative; color: #245f50; }
+.challenge-grid > * { transition: transform .18s ease, box-shadow .18s ease; }
+.challenge-grid > *:hover { transform: translateY(-4px) rotate(-1deg); box-shadow: 0 9px 15px rgba(29, 99, 71, .13); }
+.challenge-reward-card { transition: transform .2s ease, border-color .2s ease; }
+.challenge-reward-card:hover { border-color: #83cba6; transform: translateY(-2px); }
+
+.ruleset-dialog {
+  position: relative;
+  overflow: hidden;
+  background-image: radial-gradient(circle at 96% 0, rgba(253, 226, 113, .34), transparent 31%);
+}
+.ruleset-dialog::after {
+  position: absolute;
+  top: 8px;
+  right: 20px;
+  width: 76px;
+  height: 65px;
+  content: '';
+  pointer-events: none;
+  background: url('/assets/sunlit-cue-chalk-sticker.png') center / contain no-repeat;
+  opacity: .62;
+  transform: rotate(7deg);
+}
+.ruleset-header,
+.ruleset-hint,
+.ruleset-options { position: relative; z-index: 1; }
+.ruleset-header h2 { color: #245f50; }
+.ruleset-option { border-color: #d5e9db; background: #fffefa; }
+.ruleset-option:hover { border-color: #78c7a8; box-shadow: 0 9px 18px rgba(31, 105, 78, .12); transform: translateY(-3px) rotate(-.5deg); }
+.ruleset-option small { color: #668679; }
+
+.growth-panel-dialog {
+  position: relative;
+  isolation: isolate;
+  padding: 26px;
+  background-image: linear-gradient(125deg, rgba(255, 254, 250, .99) 0 66%, rgba(255, 254, 250, .85) 100%), url('/assets/sunlit-pool-club-bg.png');
+  background-size: auto, 620px auto;
+  background-position: center, right top;
+  background-repeat: no-repeat;
+}
+.growth-panel-dialog::after {
+  position: absolute;
+  top: 23px;
+  right: 185px;
+  z-index: 0;
+  width: 120px;
+  height: 90px;
+  content: '';
+  background: url('/assets/sunlit-pool-growth-sticker.png') center / contain no-repeat;
+  opacity: .72;
+  transform: translate3d(var(--decor-x, 0px), var(--decor-y, 0px), 0) rotate(-9deg);
+  transition: transform .24s ease;
+  pointer-events: none;
+}
+.growth-panel-header { position: relative; z-index: 1; }
+.growth-panel-header,
+.history-panel-header { align-items: center; border-bottom: 1px solid #dbeae1; padding-bottom: 17px; }
+.growth-panel-header h2,
+.history-panel-header h2 { color: #194846; font-size: clamp(25px, 3vw, 32px); }
+.growth-panel-header .eyebrow,
+.history-panel-header .eyebrow { color: #32836d; font-size: 11px; font-weight: 850; letter-spacing: .11em; }
+.growth-panel-intro,
+.history-panel-intro { margin: 5px 0 0; color: #628578; font-size: 12px; line-height: 1.5; }
+.growth-header-actions { display: flex; align-items: center; gap: 9px; }
+.growth-history-open {
+  min-height: 39px;
+  border: 1px solid #8bd0ba;
+  border-radius: 9px;
+  padding: 0 14px;
+  background: #e9f9ef;
+  color: #266d5e;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+  transition: transform .18s ease, background .18s ease, box-shadow .18s ease;
+}
+.growth-history-open:hover { background: #d7f4e6; box-shadow: 0 5px 12px rgba(42, 128, 105, .12); transform: translateY(-2px); }
+.growth-history-open span { margin-left: 8px; font-size: 15px; }
+.growth-panel-close,
+.history-panel-close,
+.settings-panel-close { border: 1px solid #d4e8de; background: #fff; color: #54776f; }
+.growth-rank-band {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid #b8e3d2;
+  border-radius: 13px;
+  background: radial-gradient(circle at 90% 30%, rgba(255, 217, 102, .3), transparent 34%), linear-gradient(100deg, #e6f7ec, #fff6d8);
+}
+.growth-rank-band::before {
+  position: absolute;
+  top: 9px;
+  right: 20px;
+  width: 105px;
+  height: 78px;
+  content: '';
+  pointer-events: none;
+  background: url('/assets/sunlit-pool-growth-sticker.png') center / contain no-repeat;
+  opacity: .23;
+  transform: rotate(-8deg);
+}
+.growth-rank-band::after {
+  position: absolute;
+  top: -38px;
+  right: 8px;
+  width: 145px;
+  height: 145px;
+  border: 2px solid rgba(76, 173, 133, .11);
+  border-radius: 50%;
+  box-shadow: 0 0 0 17px rgba(76, 173, 133, .055), 0 0 0 34px rgba(76, 173, 133, .035);
+  content: '';
+  pointer-events: none;
+}
+.growth-rank-next {
+  grid-column: 1 / -1;
+  display: flex !important;
+  align-items: center;
+  min-height: 33px;
+  border: 1px solid rgba(74, 159, 129, .24);
+  border-radius: 8px;
+  padding: 4px 10px;
+  background: rgba(255, 255, 255, .62);
+  color: #347361;
+}
+.growth-rank-next::before,
+.growth-rank-next::after { display: none; }
+.growth-detail-grid { gap: 14px; }
+.growth-section,
+.growth-rank-rewards { border-color: #d9e8de; border-radius: 13px; background: rgba(255, 255, 255, .9); box-shadow: none; }
+.growth-section,
+.growth-rank-reward,
+body .history-row { transition: transform .2s ease, box-shadow .2s ease, border-color .2s ease; }
+.growth-section:hover,
+.growth-rank-reward:hover,
+body .history-row:hover { border-color: #9bd8bd; box-shadow: 0 9px 20px rgba(37, 115, 89, .1); transform: translateY(-2px); }
+.growth-section h3,
+.growth-rank-rewards-heading h3 { color: #245c55; }
+.growth-section h3::before {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin-right: 8px;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  background: #48b18f;
+  box-shadow: 0 0 0 1px #48b18f, 1px 2px 4px rgba(18, 76, 52, .22);
+  content: '';
+}
+.growth-section:nth-child(2) h3::before { background: #edb650; box-shadow: 0 0 0 1px #edb650, 1px 2px 4px rgba(18, 76, 52, .22); }
+.growth-section:nth-child(3) h3::before { background: #e98269; box-shadow: 0 0 0 1px #e98269, 1px 2px 4px rgba(18, 76, 52, .22); }
+.growth-rank-rewards { background: #f3fbf6; }
+
+body .history-panel-dialog {
+  background-image: linear-gradient(90deg, rgba(255, 254, 250, .99) 0 78%, rgba(255, 254, 250, .82)), url('/assets/sunlit-pool-club-bg.png');
+  background-size: auto, 480px auto;
+  background-position: center, right top;
+  background-repeat: no-repeat;
+}
+body .history-panel-dialog::after {
+  width: 110px;
+  height: 76px;
+  top: 14px;
+  right: 160px;
+  box-shadow: none;
+  background: url('/assets/sunlit-pool-growth-sticker.png') center / contain no-repeat;
+  opacity: .7;
+  transform: translate3d(var(--decor-x, 0px), var(--decor-y, 0px), 0) rotate(10deg);
+  transition: transform .24s ease;
+}
+body .history-panel-close { width: auto; min-width: 138px; height: 38px; border-radius: 8px; padding: 0 12px; color: #2e7567; font-size: 11px; font-weight: 800; }
+body .history-row { border-color: #dbeae1; background: #fff; }
+body .history-row:hover { transform: translateX(4px) rotate(-.35deg); }
+body .history-row.is-selected { border-color: #65bea3; background: #effaf3; box-shadow: inset 4px 0 #51b998; }
+body .history-detail { border-color: #d8eadd; }
+.history-detail-hero {
+  background: linear-gradient(110deg, rgba(222, 247, 235, .96), rgba(255, 248, 221, .91)), url('/assets/sunlit-pool-club-bg.png') center 60% / cover;
+}
+.history-eight-ball { transition: transform .24s ease, filter .24s ease; }
+.history-detail:hover .history-eight-ball { transform: rotate(12deg) scale(1.07); filter: drop-shadow(0 7px 5px rgba(20, 74, 54, .16)); }
+
+.leave-match-overlay { background: rgba(206, 238, 226, .68); backdrop-filter: blur(8px); }
+.leave-match-dialog { border: 1px solid #c9e6d7; border-radius: 18px; background: #fffefa; box-shadow: 0 26px 55px rgba(29, 104, 85, .18); }
+.leave-match-ball { background: #318f79; }
+.leave-match-dialog > p { color: #5f8678; }
+.leave-match-dialog h2 { color: #1d4d46; }
+.leave-match-actions button { border-color: #d4e7dc; background: #fff; color: #2b6558; }
+#leave-match-forfeit { border-color: #edb1a4; background: #fff1ea; color: #b45142; }
+#leave-match-restart { border-color: #47ad91; background: #3ba789; color: #fff; }
+.leave-match-overlay.is-training .leave-match-dialog,
+.leave-match-overlay.is-challenge .leave-match-dialog { border-color: #9fdec6; }
+.leave-match-overlay.is-training #leave-match-forfeit,
+.leave-match-overlay.is-challenge #leave-match-forfeit { border-color: #43b796; background: #3dae8d; color: #fff; }
+.leave-match-overlay.is-training #leave-match-restart,
+.leave-match-overlay.is-challenge #leave-match-restart { display: none; }
+
+/* Billiards intermission moments: sunny table art, floating decals, and crisp feedback. */
+.pause-overlay {
+  background-image:
+    linear-gradient(135deg, rgba(207, 244, 231, .62), rgba(255, 240, 197, .60)),
+    url('/assets/sunlit-pool-club-bg.png');
+  background-position: center, center 56%;
+  background-size: cover, cover;
+  backdrop-filter: blur(5px) saturate(1.08);
+}
+
+.leave-match-overlay {
+  background-image: none;
+  background-color: rgba(232, 245, 238, .36);
+  backdrop-filter: blur(8px) saturate(1.08);
+}
+
+.pause-dialog,
+.leave-match-dialog {
+  position: relative;
+  overflow: visible;
+  isolation: isolate;
+  border: 1px solid rgba(61, 153, 124, .32);
+  background: linear-gradient(145deg, #fffef7 0%, #f6fff7 68%, #fff4dc 100%);
+  box-shadow: 0 24px 70px rgba(36, 102, 78, .25), 0 4px 0 rgba(255, 255, 255, .8) inset;
+}
+
+.leave-match-dialog { animation: panel-into-pocket .42s cubic-bezier(.2, .8, .2, 1) both; }
+.pause-dialog { animation: panel-into-pocket .42s cubic-bezier(.2, .8, .2, 1) both; }
+
+.game-modal-sticker {
+  position: absolute;
+  z-index: 2;
+  display: block;
+  width: 138px;
+  height: auto;
+  max-width: none;
+  pointer-events: none;
+  filter: drop-shadow(0 12px 11px rgba(24, 87, 75, .22));
+  animation: modal-sticker-drift 4.2s ease-in-out infinite;
+  transition: filter .24s ease;
+}
+
+.leave-match-sticker { top: -61px; right: -43px; }
+.pause-modal-sticker { top: -54px; right: -45px; animation-delay: -.9s; }
+.leave-match-ball {
+  display: block;
+  width: 84px;
+  height: 84px;
+  margin: 0 auto;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  object-fit: contain;
+  filter: drop-shadow(0 7px 7px rgba(24, 87, 75, .18));
+}
+.pause-dialog::after { display: none; }
+.leave-match-dialog:hover .game-modal-sticker,
+.pause-dialog:hover .game-modal-sticker { filter: drop-shadow(0 15px 15px rgba(24, 87, 75, .28)) saturate(1.12); }
+
+.leave-match-dialog > p { color: #a17835; font-weight: 750; letter-spacing: .12em; }
+.leave-match-dialog h2 { color: #174e48; letter-spacing: .025em; text-shadow: 0 2px 0 rgba(255, 255, 255, .9); }
+.leave-match-actions button,
+.pause-dialog button {
+  transition: transform .2s cubic-bezier(.2, .8, .2, 1), box-shadow .2s ease, border-color .2s ease, background-color .2s ease;
+}
+.leave-match-actions button:hover:not(:disabled) {
+  transform: translateY(-3px) scale(1.012);
+  border-color: #8bcbb0;
+  box-shadow: 0 8px 18px rgba(51, 129, 99, .15);
+}
+.leave-match-actions button:active:not(:disabled),
+.pause-dialog button:active:not(:disabled) { transform: translateY(0) scale(.985); }
+.leave-match-actions button:focus-visible,
+.pause-dialog button:focus-visible { outline: 3px solid rgba(242, 185, 75, .8); outline-offset: 3px; }
+.leave-match-actions #leave-match-cancel:hover { background: #e9f8ef; color: #21664f; }
+.leave-match-actions #leave-match-forfeit:hover { background: #ffede3; color: #a74635; }
+.leave-match-overlay.is-training #leave-match-forfeit:hover,
+.leave-match-overlay.is-challenge #leave-match-forfeit:hover,
+.leave-match-actions #leave-match-restart:hover { background: #278a70; color: #fff; }
+.pause-dialog button:hover { box-shadow: 0 9px 20px rgba(36, 125, 92, .22); }
+
+@keyframes modal-sticker-drift {
+  0%, 100% { transform: translate3d(0, 0, 0) rotate(-3deg); }
+  50% { transform: translate3d(0, -9px, 0) rotate(3deg); }
+}
+
+@media (max-width: 540px) {
+  .game-modal-sticker { width: 104px; }
+  .leave-match-sticker { top: -47px; right: -16px; }
+  .pause-modal-sticker { top: -45px; right: -16px; }
+}
+
+@keyframes panel-into-pocket {
+  from { opacity: 0; transform: translateY(13px) scale(.985); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes trophy-hello { 50% { transform: rotate(-4deg) translateY(-5px); } }
+
+@media (max-width: 760px) {
+  .growth-panel-dialog { padding: 16px; }
+  .growth-panel-dialog::after,
+  body .history-panel-dialog::after { display: none; }
+  body .history-panel-close { min-width: 108px; font-size: 10px; padding: 0 7px; }
+  .growth-header-actions { gap: 5px; }
+  .growth-history-open { padding: 0 9px; font-size: 11px; }
+  .growth-history-open span { margin-left: 2px; }
+  .growth-panel-intro { max-width: 180px; font-size: 10px; }
+  .cue-shop-header::after { top: 7px; right: 50px; width: 58px; height: 47px; opacity: .36; }
+  .rank-journey-dialog::after { top: 61px; right: 8px; width: 84px; height: 70px; opacity: .6; }
+  .challenge-select-dialog::before { width: 58px; height: 48px; opacity: .5; }
+  .ruleset-dialog::after { right: 12px; width: 58px; height: 50px; opacity: .45; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .growth-history-open,
+  .growth-section,
+  .growth-rank-reward,
+  body .history-row { transition: none; }
+  .menu-eyebrow,
+  .rank-journey-summary span,
+  .challenge-grid > *,
+  .challenge-reward-card { transition: none; }
+  .ruleset-option { transition: none; }
+  .rank-journey-dialog::after { animation: none; }
+  .profile-panel-dialog,
+  .pause-dialog,
+  .leave-match-dialog,
+  .recharge-dialog,
+  .settings-panel-dialog,
+  .cue-shop-dialog,
+  .growth-panel-dialog,
+  body .history-panel-dialog { animation: none; }
+  .game-modal-sticker,
+  .leave-match-actions button,
+  .pause-dialog button { animation: none; transition: none; }
+}

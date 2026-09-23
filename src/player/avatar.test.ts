@@ -21,7 +21,7 @@ function createStorage(seed: Record<string, string> = {}) {
 }
 
 describe('avatar model', () => {
-  it('exposes six built-in avatar assets with stable ids', () => {
+  it('exposes twenty built-in avatar assets with stable ids', () => {
     expect(DEFAULT_AVATARS.map((avatar) => avatar.id)).toEqual([
       'default-01',
       'default-02',
@@ -29,6 +29,20 @@ describe('avatar model', () => {
       'default-04',
       'default-05',
       'default-06',
+      'default-07',
+      'default-08',
+      'default-09',
+      'default-10',
+      'default-11',
+      'default-12',
+      'default-13',
+      'default-14',
+      'default-15',
+      'default-16',
+      'default-17',
+      'default-18',
+      'default-19',
+      'default-20',
     ]);
     expect(DEFAULT_AVATARS.every((avatar) => avatar.src.endsWith('.webp'))).toBe(true);
   });

@@ -100,10 +100,12 @@ import { closeCuePreview, isCuePreviewEscape, openCuePreview, type CuePreviewSta
 import { createCueCollection, getCueRarityLabel } from './game/cueShopView';
 import {
   formatRecentMatchSummary,
-  formatShotHistoryEntry,
   readStoredAimControlSettings,
+  readStoredHighFrameRateMode,
   resolveHistorySelectionIndex,
   showChallengeSelectLoadingState,
+  writeStoredAimControlSettings,
+  writeStoredHighFrameRateMode,
 } from './menuShell';
 import {
   DEFAULT_AVATARS,
@@ -129,6 +131,7 @@ import {
   type AvatarUploadFailureReason,
 } from './player/avatarPersistence';
 import './styles.css';
+import './sunlitTheme.css';
 
 type GameMode = 'pvp' | 'ai' | 'challenge' | 'online';
 
@@ -171,6 +174,12 @@ const rechargeClient = supabase as unknown as SupabaseRechargeClient;
 let disposeSplashCursor: (() => void) | null = null;
 
 function showMenuSplashCursor(): void {
+  const menu = document.getElementById('main-menu');
+  const gameShell = document.querySelector<HTMLElement>('.game-shell');
+  if (!menu || menu.hidden || (gameShell && !gameShell.hidden)) {
+    hideMenuSplashCursor();
+    return;
+  }
   if (disposeSplashCursor) return;
   disposeSplashCursor = installSplashCursor({
     DENSITY_DISSIPATION: 5,
@@ -208,10 +217,14 @@ function startGame(
   ruleset: GameRuleset = roomInfo?.ruleset ?? 'eight-ball',
   challengeLevelId?: number,
 ): void {
-  hideMenuSplashCursor();
   gameAudio.setScene('game');
-  showGameShellForNewGame();
   hideEconomyPanels();
+  const growthPanel = document.getElementById('growth-panel');
+  const historyPanel = document.getElementById('history-panel');
+  if (growthPanel) growthPanel.hidden = true;
+  if (historyPanel) historyPanel.hidden = true;
+  showGameShellForNewGame();
+  hideMenuSplashCursor();
 
   const baseConfig: Phaser.Types.Core.GameConfig = {
     type: Phaser.AUTO,
@@ -244,7 +257,13 @@ function startGame(
       },
     },
   };
-  const config = applyPerformanceProfileToConfig(baseConfig, createBrowserPerformanceProfile());
+  const performanceProfile = createBrowserPerformanceProfile();
+  if (readStoredHighFrameRateMode(browserStorage())) {
+    performanceProfile.fps = { target: 60, limit: 60, smoothStep: true };
+    performanceProfile.render = { antialiasGL: false, powerPreference: 'default' };
+    performanceProfile.autoRound = true;
+  }
+  const config = applyPerformanceProfileToConfig(baseConfig, performanceProfile);
 
   currentGame = new Phaser.Game(config);
   currentGameLifecycleDispose = bindGamePowerLifecycle(currentGame, {
@@ -273,10 +292,12 @@ function backToMenu(): void {
   const shell = document.querySelector<HTMLElement>('.game-shell');
   const pauseOverlay = document.getElementById('pause-overlay');
   const challengeSelect = document.getElementById('challenge-select');
+  const leaveMatchPanel = document.getElementById('leave-match-panel');
   if (menu) menu.hidden = false;
   if (shell) shell.hidden = true;
   if (pauseOverlay) pauseOverlay.hidden = true;
   if (challengeSelect) challengeSelect.hidden = true;
+  if (leaveMatchPanel) leaveMatchPanel.hidden = true;
   window.scrollTo(0, 0);
   gameAudio.setScene('menu');
   showMenuSplashCursor();
@@ -284,16 +305,25 @@ function backToMenu(): void {
 }
 
 function requestBackToMenu(): void {
-  const scene = currentGame?.scene.getScene('PoolScene') as PoolScene | undefined;
-  const isOnlineMatch = currentGame?.registry.get('initialMode') === 'online';
-  if (isOnlineMatch) {
-    const confirmed = window.confirm('返回主菜单将视为认输，确定要返回吗？');
-    if (!confirmed) {
-      return;
-    }
-    scene?.forfeitOnlineMatchToMenu();
-  }
-  backToMenu();
+  const panel = document.getElementById('leave-match-panel');
+  if (!panel) return;
+  const training = currentGame?.registry.get('initialMode') === 'pvp';
+  const challenge = currentGame?.registry.get('initialMode') === 'challenge';
+  const subtitle = panel.querySelector<HTMLElement>('.leave-match-dialog > p');
+  const title = document.getElementById('leave-match-title');
+  const cancel = document.getElementById('leave-match-cancel');
+  const confirm = document.getElementById('leave-match-forfeit');
+  const restart = document.getElementById('leave-match-restart');
+  panel.classList.toggle('is-training', training);
+  panel.classList.toggle('is-challenge', challenge);
+  if (subtitle) subtitle.textContent = training ? '自由训练' : challenge ? '台球闯关' : '离开当前球桌';
+  if (title) title.textContent = challenge
+    ? '您是否返回关卡选择？'
+    : training ? '是否返回主菜单？' : '确定结束这局吗？';
+  if (cancel) cancel.textContent = training || challenge ? '否' : '继续对局';
+  if (confirm) confirm.textContent = training || challenge ? '是' : '认输';
+  if (restart) restart.hidden = training || challenge;
+  panel.hidden = false;
 }
 
 function showRulesetMenu(mode: MenuGameMode): void {
@@ -302,7 +332,7 @@ function showRulesetMenu(mode: MenuGameMode): void {
   const title = document.getElementById('ruleset-title');
   const hint = document.getElementById('ruleset-hint');
   if (title) {
-    title.textContent = mode === 'online' ? '联网对战' : mode === 'ai' ? '人机对战' : '自我练习';
+    title.textContent = mode === 'online' ? '联网对战' : mode === 'ai' ? '人机对战' : '自由训练';
   }
   if (hint) {
     hint.textContent = mode === 'online' ? '选择玩法后进入匹配菜单' : '选择玩法后开始对局';
@@ -335,6 +365,7 @@ async function showChallengeSelect(): Promise<void> {
   modeSelectionState = selectGameMode(modeSelectionState, 'challenge');
   hideRulesetMenu();
   hideEconomyPanels();
+  hideMenuSplashCursor();
 
   const menu = document.getElementById('main-menu');
   const shell = document.querySelector<HTMLElement>('.game-shell');
@@ -582,6 +613,66 @@ window.addEventListener('pool:challenge-select-ready', () => void refreshChallen
 document.getElementById('btn-back')?.addEventListener('click', requestBackToMenu);
 window.addEventListener('pool:return-to-menu', backToMenu);
 
+if (window.matchMedia('(hover: hover) and (pointer: fine) and (prefers-reduced-motion: no-preference)').matches) {
+  for (const selector of ['.growth-panel-dialog', '.history-panel-dialog']) {
+    const surface = document.querySelector<HTMLElement>(selector);
+    surface?.addEventListener('pointermove', (event) => {
+      const bounds = surface.getBoundingClientRect();
+      const x = (event.clientX - bounds.left) / bounds.width - 0.5;
+      const y = (event.clientY - bounds.top) / bounds.height - 0.5;
+      surface.style.setProperty('--decor-x', `${(x * 12).toFixed(1)}px`);
+      surface.style.setProperty('--decor-y', `${(y * 12).toFixed(1)}px`);
+    });
+    surface?.addEventListener('pointerleave', () => {
+      surface.style.removeProperty('--decor-x');
+      surface.style.removeProperty('--decor-y');
+    });
+  }
+}
+
+function hideLeaveMatchPanel(): void {
+  const panel = document.getElementById('leave-match-panel');
+  if (panel) panel.hidden = true;
+}
+
+function finishCurrentMatch(restart: boolean): void {
+  const mode = currentGame?.registry.get('initialMode') as GameMode | undefined;
+  const ruleset = currentGame?.registry.get('gameRuleset') as GameRuleset | undefined;
+  const scene = currentGame?.scene.getScene('PoolScene') as PoolScene | undefined;
+  hideLeaveMatchPanel();
+
+  if (mode === 'challenge') {
+    backToMenu();
+    void showChallengeSelect();
+    return;
+  }
+  if (mode === 'online') scene?.forfeitOnlineMatchToMenu();
+  else scene?.forfeitLocalMatch();
+  backToMenu();
+
+  if (!restart || !mode || !ruleset) return;
+  if (mode === 'online') {
+    openMatchModal(ruleset);
+    return;
+  }
+  startGame(mode, undefined, ruleset);
+}
+
+document.getElementById('leave-match-cancel')?.addEventListener('click', hideLeaveMatchPanel);
+document.getElementById('leave-match-forfeit')?.addEventListener('click', () => finishCurrentMatch(false));
+document.getElementById('leave-match-restart')?.addEventListener('click', () => finishCurrentMatch(true));
+document.getElementById('leave-match-panel')?.addEventListener('click', (event) => {
+  if (event.target === event.currentTarget) hideLeaveMatchPanel();
+});
+
+function activePoolScene(): PoolScene | undefined {
+  return currentGame?.scene.getScene('PoolScene') as PoolScene | undefined;
+}
+
+document.getElementById('training-arrange')?.addEventListener('click', () => activePoolScene()?.toggleTrainingArrangeMode());
+document.getElementById('training-undo')?.addEventListener('click', () => activePoolScene()?.undoTrainingAction());
+document.getElementById('training-repeat')?.addEventListener('click', () => activePoolScene()?.repeatTrainingShot());
+
 document.getElementById('btn-pause')?.addEventListener('click', () => {
   const pauseOverlay = document.getElementById('pause-overlay');
   if (pauseOverlay) {
@@ -682,17 +773,34 @@ function renderProfileSummary(stats: PlayerStats | null, tasks: DailyTaskState |
 
 function renderAvatarSelection(selection: AvatarSelection): void {
   currentAvatarSelection = selection;
-  const src = resolveAvatarSrc(selection);
   const menuAvatar = document.getElementById('menu-avatar') as HTMLImageElement | null;
   const profilePreview = document.getElementById('profile-avatar-preview') as HTMLImageElement | null;
-  if (menuAvatar) menuAvatar.src = src;
-  if (profilePreview) profilePreview.src = src;
+  renderAvatarImage(menuAvatar, selection);
+  renderAvatarImage(profilePreview, selection);
+}
+
+function renderAvatarImage(image: HTMLImageElement | null, selection: AvatarSelection): void {
+  if (!image) return;
+  image.src = resolveAvatarSrc(selection);
+
+  const avatar = selection.kind === 'default'
+    ? DEFAULT_AVATARS.find((candidate) => candidate.id === selection.id)
+    : undefined;
+  if (!avatar) {
+    delete image.dataset.avatarId;
+    delete image.dataset.avatarMotion;
+    image.style.removeProperty('--avatar-accent');
+    return;
+  }
+
+  image.dataset.avatarId = avatar.id;
+  image.dataset.avatarMotion = avatar.motion;
+  image.style.setProperty('--avatar-accent', avatar.accent);
 }
 
 function renderProfileAvatarPreview(selection: AvatarSelection): void {
-  const src = resolveAvatarSrc(selection);
   const profilePreview = document.getElementById('profile-avatar-preview') as HTMLImageElement | null;
-  if (profilePreview) profilePreview.src = src;
+  renderAvatarImage(profilePreview, selection);
 }
 
 function renderProfilePanel(): void {
@@ -714,19 +822,27 @@ function renderProfilePanel(): void {
 function renderProfileAvatarGrid(): void {
   const grid = document.getElementById('profile-avatar-grid');
   if (!grid) return;
-  grid.replaceChildren(...DEFAULT_AVATARS.map((avatar) => {
+  grid.replaceChildren(...DEFAULT_AVATARS.map((avatar, index) => {
     const isSelected = pendingAvatarSelection.kind === 'default' && pendingAvatarSelection.id === avatar.id;
     const button = document.createElement('button');
     button.type = 'button';
     button.className = `profile-avatar-option${isSelected ? ' is-selected' : ''}`;
     button.dataset.avatarId = avatar.id;
+    button.dataset.avatarMotion = avatar.motion;
+    button.style.setProperty('--avatar-accent', avatar.accent);
+    button.style.setProperty('--avatar-delay', `${-(index % 7) * 0.38}s`);
     button.setAttribute('role', 'option');
     button.setAttribute('aria-selected', String(isSelected));
 
     const img = document.createElement('img');
     img.src = avatar.src;
     img.alt = avatar.label;
-    button.append(img);
+
+    const effect = document.createElement('span');
+    effect.className = 'profile-avatar-option-effect';
+    effect.setAttribute('aria-hidden', 'true');
+
+    button.append(img, effect);
     return button;
   }));
 }
@@ -926,7 +1042,6 @@ function renderGrowthOverview(
   setText('growth-ai-rank-limit', `今日人机积分 ${getDailyAiRankPointsEarned(stats, localDateKey())}/${AI_DAILY_RANK_POINTS_LIMIT}`);
 
   renderTaskList(tasks);
-  renderRecentMatches(stats);
   renderRankRewards(stats, wallet);
   renderRankJourney(stats, wallet);
   const historyPanel = document.getElementById('history-panel');
@@ -947,30 +1062,11 @@ function renderTaskList(tasks: DailyTaskState): void {
   }));
 }
 
-function renderRecentMatches(stats: PlayerStats): void {
-  const list = document.getElementById('growth-recent-list');
-  if (!list) return;
-  if (stats.recentMatches.length === 0) {
-    const empty = document.createElement('li');
-    empty.className = 'growth-empty-row';
-    empty.textContent = '还没有对局记录';
-    list.replaceChildren(empty);
-    return;
-  }
-
-  list.replaceChildren(...stats.recentMatches.slice(0, 6).map((match) => {
-    const item = document.createElement('li');
-    const time = new Date(match.playedAt);
-    const date = Number.isNaN(time.getTime()) ? '' : `${time.getMonth() + 1}/${time.getDate()}`;
-    const rankDelta = match.rankDelta === undefined ? '' : ` · 积分 ${match.rankDelta >= 0 ? '+' : ''}${match.rankDelta}`;
-    item.innerHTML = `<span>${match.won ? '胜' : '负'} · ${match.opponentName}</span><strong>${match.strokes}杆${rankDelta} · ${date}</strong>`;
-    return item;
-  }));
-}
-
 function showHistoryPanel(): void {
   const overlay = document.getElementById('history-panel');
   if (!overlay) return;
+  const growthPanel = document.getElementById('growth-panel');
+  if (growthPanel) growthPanel.hidden = true;
   overlay.hidden = false;
   renderHistoryPanel(currentStats);
   void loadGrowthOverview();
@@ -978,7 +1074,10 @@ function showHistoryPanel(): void {
 
 function hideHistoryPanel(): void {
   const overlay = document.getElementById('history-panel');
+  const wasOpen = Boolean(overlay && !overlay.hidden);
   if (overlay) overlay.hidden = true;
+  const growthPanel = document.getElementById('growth-panel');
+  if (wasOpen && growthPanel) growthPanel.hidden = false;
 }
 
 function renderHistoryPanel(stats: PlayerStats): void {
@@ -1012,14 +1111,21 @@ function createHistoryRow(match: PlayerStats['recentMatches'][number], index: nu
   button.className = `history-row${index === selectedHistoryIndex ? ' is-selected' : ''}`;
   button.dataset.matchIndex = String(index);
 
+  const result = document.createElement('span');
+  result.className = `history-result-mark ${match.won ? 'is-win' : 'is-loss'}`;
+  result.textContent = match.won ? '胜' : '负';
+  const copy = document.createElement('span');
+  copy.className = 'history-row-copy';
   const title = document.createElement('strong');
-  title.textContent = summary.title;
-  const meta = document.createElement('span');
+  title.textContent = match.opponentName;
+  const meta = document.createElement('small');
   meta.textContent = summary.meta;
-  const detail = document.createElement('small');
-  detail.textContent = summary.detail;
+  copy.append(title, meta);
+  const changes = document.createElement('span');
+  changes.className = 'history-row-changes';
+  changes.textContent = summary.detail;
 
-  button.append(title, meta, detail);
+  button.append(result, copy, changes);
   item.append(button);
   return item;
 }
@@ -1028,40 +1134,34 @@ function renderHistoryDetail(match: PlayerStats['recentMatches'][number]): void 
   const detail = document.getElementById('history-detail');
   if (!detail) return;
 
-  const copy = getCopy(shellLanguage).shell;
   const summary = formatRecentMatchSummary(match, shellLanguage);
-  const title = document.createElement('h3');
-  title.textContent = summary.title;
-  const meta = document.createElement('p');
-  meta.className = 'history-detail-meta';
-  meta.textContent = `${summary.meta} · ${summary.detail}`;
-
-  if (!match.shotHistory || match.shotHistory.length === 0) {
-    const empty = document.createElement('p');
-    empty.className = 'history-detail-empty';
-    empty.textContent = copy.noShotHistory;
-    detail.replaceChildren(title, meta, empty);
-    detail.hidden = false;
-    return;
-  }
-
-  const heading = document.createElement('h4');
-  heading.textContent = copy.shotHistory;
-  const shots = document.createElement('ol');
-  shots.className = 'history-shot-list';
-  shots.replaceChildren(...match.shotHistory.map((entry) => {
-    const item = document.createElement('li');
-    item.textContent = formatShotHistoryEntry(entry, shellLanguage);
-    if (entry.message) {
-      const message = document.createElement('small');
-      message.textContent = entry.message;
-      item.append(message);
-    }
+  const hero = document.createElement('div');
+  hero.className = `history-detail-hero ${match.won ? 'is-win' : 'is-loss'}`;
+  hero.innerHTML = `<span class="history-eight-ball">8</span><div><small>${summary.meta}</small><h3>${match.won ? '漂亮收杆' : '好球还在下一局'}</h3><p>${match.won ? '这一杆的手感，值得记住。' : '记住这一球，下一局打得更漂亮。'}</p></div>`;
+  const facts = document.createElement('dl');
+  facts.className = 'history-facts';
+  const fact = (label: string, value: string, tone = ''): HTMLElement => {
+    const item = document.createElement('div');
+    if (tone) item.className = tone;
+    const term = document.createElement('dt');
+    const description = document.createElement('dd');
+    term.textContent = label;
+    description.textContent = value;
+    item.append(term, description);
     return item;
-  }));
-
-  detail.replaceChildren(title, meta, heading, shots);
+  };
+  facts.append(
+    fact('对手', match.opponentName),
+    fact('结果', match.won ? '胜利' : '失利', match.won ? 'is-positive' : 'is-negative'),
+    fact('金币变化', formatHistoryDelta(match.coinDelta), match.coinDelta == null ? '' : match.coinDelta >= 0 ? 'is-positive' : 'is-negative'),
+    fact('段位积分', formatHistoryDelta(match.rankDelta), match.rankDelta == null ? '' : match.rankDelta >= 0 ? 'is-positive' : 'is-negative'),
+  );
+  detail.replaceChildren(hero, facts);
   detail.hidden = false;
+}
+
+function formatHistoryDelta(value: number | undefined): string {
+  return value == null ? '未记录' : `${value > 0 ? '+' : ''}${value}`;
 }
 
 function selectHistoryMatch(index: number): void {
@@ -1217,7 +1317,28 @@ function hideSettingsPanel(): void {
 
 function renderSettingsPanel(): void {
   setText('settings-controls-note', getCopy(shellLanguage).shell.smoothAimNote);
+  const controls = readStoredAimControlSettings(browserStorage());
+  const sensitivity = document.getElementById('settings-aim-sensitivity') as HTMLSelectElement | null;
+  const powerStep = document.getElementById('settings-power-step') as HTMLSelectElement | null;
+  const powerLock = document.getElementById('settings-power-lock') as HTMLInputElement | null;
+  const highFps = document.getElementById('settings-high-fps') as HTMLInputElement | null;
+  if (sensitivity) sensitivity.value = controls.sensitivity;
+  if (powerStep) powerStep.value = String(controls.powerStep);
+  if (powerLock) powerLock.checked = controls.powerLocked;
+  if (highFps) highFps.checked = readStoredHighFrameRateMode(browserStorage());
   renderAudioPreferences();
+}
+
+function updateAimControlPreferences(): void {
+  const sensitivity = document.getElementById('settings-aim-sensitivity') as HTMLSelectElement | null;
+  const powerStep = document.getElementById('settings-power-step') as HTMLSelectElement | null;
+  const powerLock = document.getElementById('settings-power-lock') as HTMLInputElement | null;
+  writeStoredAimControlSettings(browserStorage(), {
+    sensitivity: sensitivity?.value === 'fine' || sensitivity?.value === 'fast' ? sensitivity.value : 'normal',
+    powerStep: Number(powerStep?.value ?? 5),
+    powerLocked: powerLock?.checked === true,
+  });
+  setText('settings-controls-note', '控制设置已保存，将在下一局自动应用。');
 }
 
 function renderAudioPreferences(): void {
@@ -1233,6 +1354,16 @@ function renderAudioPreferences(): void {
     input.value = String(audioPreferences.soundVolume);
     input.style.setProperty('--range-progress', `${audioPreferences.soundVolume}%`);
   }
+  for (const inputId of ['settings-aim-sensitivity', 'settings-power-step', 'settings-power-lock']) {
+    document.getElementById(inputId)?.addEventListener('change', updateAimControlPreferences);
+  }
+  document.getElementById('settings-high-fps')?.addEventListener('change', (event) => {
+    const enabled = (event.currentTarget as HTMLInputElement).checked;
+    writeStoredHighFrameRateMode(browserStorage(), enabled);
+    setText('settings-controls-note', enabled
+      ? '高帧率模式已保存，将在下一局降低画质开销。'
+      : '标准画质已保存，将在下一局生效。');
+  });
   for (const outputId of ['settings-music-value', 'game-music-value']) {
     setText(outputId, volumeLabel(audioPreferences.musicVolume));
   }
@@ -1356,7 +1487,7 @@ function applyShellCopy(): void {
   setText('settings-title', copy.settings);
   setText('settings-controls-title', copy.controls);
   setText('settings-controls-note', copy.smoothAimNote);
-  document.getElementById('history-close')?.setAttribute('aria-label', copy.close);
+  document.getElementById('history-close')?.setAttribute('aria-label', shellLanguage === 'zh' ? '返回个人成长' : 'Back to Growth');
   document.getElementById('settings-close')?.setAttribute('aria-label', copy.close);
 }
 

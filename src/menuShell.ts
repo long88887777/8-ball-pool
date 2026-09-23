@@ -19,6 +19,7 @@ export type MatchSummaryCopy = {
 };
 
 export const AIM_CONTROL_SETTINGS_KEY = 'pool.aimControlSettings.v1';
+export const HIGH_FRAME_RATE_MODE_KEY = 'pool.highFrameRateMode.v1';
 
 export type ChallengeSelectElements = {
   overlay: HTMLElement;
@@ -68,6 +69,23 @@ export function writeStoredAimControlSettings(
   return sanitized;
 }
 
+export function readStoredHighFrameRateMode(storage: Pick<MenuStorage, 'getItem'>): boolean {
+  try {
+    return storage.getItem(HIGH_FRAME_RATE_MODE_KEY) === 'true';
+  } catch {
+    return false;
+  }
+}
+
+export function writeStoredHighFrameRateMode(storage: MenuStorage, enabled: boolean): boolean {
+  try {
+    storage.setItem(HIGH_FRAME_RATE_MODE_KEY, String(enabled));
+  } catch {
+    // Keep the live selection even when browser storage is unavailable.
+  }
+  return enabled;
+}
+
 export function formatRecentMatchSummary(
   match: RecentMatchRecord,
   language: Language,
@@ -76,14 +94,20 @@ export function formatRecentMatchSummary(
     ? match.won ? '胜' : '负'
     : match.won ? 'Win' : 'Loss';
   const mode = modeLabel(match.mode, language);
-  const ruleset = rulesetLabel(match.ruleset, language);
-  const strokes = language === 'zh' ? `${match.strokes} 杆` : `${match.strokes} strokes`;
+  const coinDelta = signedDelta(match.coinDelta, language === 'zh' ? '金币' : 'coins');
+  const rankDelta = signedDelta(match.rankDelta, language === 'zh' ? '段位积分' : 'rank');
 
   return {
     title: `${result} · ${match.opponentName}`,
-    meta: `${mode} · ${ruleset} · ${strokes}`,
-    detail: formatPlayedAt(match.playedAt),
+    meta: mode,
+    detail: `${coinDelta} · ${rankDelta}`,
   };
+}
+
+function signedDelta(value: number | undefined, label: string): string {
+  if (value == null || !Number.isFinite(value)) return `${label} —`;
+  const amount = Math.trunc(value);
+  return `${label} ${amount > 0 ? '+' : ''}${amount}`;
 }
 
 export function formatShotHistoryEntry(
@@ -134,24 +158,4 @@ function modeLabel(mode: RecentMatchRecord['mode'], language: Language): string 
   if (mode === 'pvp') return 'Practice';
   if (mode === 'challenge') return 'Challenge';
   return 'Online';
-}
-
-function rulesetLabel(ruleset: RecentMatchRecord['ruleset'], language: Language): string {
-  if (language === 'zh') {
-    return ruleset === 'nine-ball' ? '9 球' : '8 球';
-  }
-  return ruleset === 'nine-ball' ? '9-Ball' : '8-Ball';
-}
-
-function formatPlayedAt(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return '';
-  }
-  const year = date.getFullYear();
-  const month = date.getMonth() + 1;
-  const day = date.getDate();
-  const hour = String(date.getHours()).padStart(2, '0');
-  const minute = String(date.getMinutes()).padStart(2, '0');
-  return `${year}/${month}/${day} ${hour}:${minute}`;
 }

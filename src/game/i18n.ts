@@ -253,7 +253,7 @@ const COPY: Record<Language, GameCopy> = {
   },
   zh: {
     documentTitle: '写实 2D 台球',
-    eyebrow: '自我练习',
+    eyebrow: '自由训练',
     title: '台球厅',
     languageLabel: '语言',
     languageToggle: 'EN',
@@ -318,10 +318,10 @@ const COPY: Record<Language, GameCopy> = {
     },
     hud: {
       mode: '清台练习',
-      eightBallMode: '自我练习 · 8 球',
-      nineBallMode: '自我练习 · 9 球',
+      eightBallMode: '自由训练 · 8 球',
+      nineBallMode: '自由训练 · 9 球',
       modeLabel: '模式',
-      modePvp: '自我练习',
+      modePvp: '自由训练',
       modeAi: '人机对战',
       playerName: (player) => (player === 1 ? '玩家一' : '玩家二'),
       score: (score) => `得分 ${score}`,

@@ -1,7 +1,9 @@
 import { supabase } from '../lib/supabase';
 import { AUTH_IRIDESCENCE_MOUNT_ID, createIridescenceBackground } from './iridescenceBackground';
+import { installSplashCursor } from '../splashCursor';
 
 let disposeAuthBackground: (() => void) | null = null;
+let disposeAuthSplashCursor: (() => void) | null = null;
 
 export function initAuthPage(onSuccess: () => void, onGuest?: () => void): void {
   const loginCard = document.getElementById('auth-login-card')!;
@@ -88,12 +90,38 @@ export function showAuthPage(): void {
   if (!authPage) return;
   authPage.hidden = false;
   startAuthBackground();
+  startAuthSplashCursor();
 }
 
 export function hideAuthPage(): void {
   const authPage = document.getElementById('auth-page');
   if (authPage) authPage.hidden = true;
   stopAuthBackground();
+  stopAuthSplashCursor();
+}
+
+function startAuthSplashCursor(): void {
+  const supportsFinePointer = typeof window.matchMedia !== 'function'
+    || window.matchMedia('(pointer: fine)').matches;
+  if (disposeAuthSplashCursor || prefersReducedMotion() || !supportsFinePointer) return;
+  disposeAuthSplashCursor = installSplashCursor({
+    SIM_RESOLUTION: 96,
+    DYE_RESOLUTION: 1024,
+    DENSITY_DISSIPATION: 5,
+    VELOCITY_DISSIPATION: 1,
+    PRESSURE: 0.15,
+    CURL: 9,
+    SPLAT_RADIUS: 0.09,
+    SPLAT_FORCE: 3000,
+    COLOR_UPDATE_SPEED: 2,
+    RAINBOW_MODE: true,
+    COLOR: '#24484d',
+  });
+}
+
+function stopAuthSplashCursor(): void {
+  disposeAuthSplashCursor?.();
+  disposeAuthSplashCursor = null;
 }
 
 function startAuthBackground(): void {

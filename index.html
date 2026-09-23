@@ -143,8 +143,6 @@
                 <span id="checkin-ready-dot" class="menu-checkin-ready-dot" hidden aria-label="有奖励可领取"></span>
               </button>
               <button id="growth-panel-toggle" class="menu-growth-btn" type="button">个人成长</button>
-              <button id="history-open" class="menu-growth-btn" type="button">对局历史</button>
-              <button id="recharge-open" class="menu-growth-btn menu-economy-btn" type="button">充值系统</button>
               <button id="cue-shop-open" class="menu-growth-btn menu-economy-btn" type="button">球杆收藏</button>
               <button id="settings-open" class="menu-growth-btn" type="button">设置</button>
             </div>
@@ -176,11 +174,11 @@
             </span>
             <span class="menu-btn-chevron" aria-hidden="true">›</span>
           </button>
-          <button class="menu-btn" data-mode="pvp" aria-label="Self practice mode">
+          <button class="menu-btn" data-mode="pvp" aria-label="自由训练">
             <span class="menu-btn-icon">👥</span>
             <span class="menu-btn-text">
-              <strong>自我练习</strong>
-              <small>Self Practice</small>
+              <strong>自由训练</strong>
+              <small>Free Training</small>
             </span>
             <span class="menu-btn-chevron" aria-hidden="true">›</span>
           </button>
@@ -281,10 +279,14 @@
       <div class="growth-panel-dialog">
         <div class="growth-panel-header">
           <div>
-            <p class="eyebrow">Progress</p>
+            <p class="eyebrow">每一杆，都算成长</p>
             <h2>个人成长</h2>
+            <p class="growth-panel-intro">把今天的好状态，留在下一颗进袋的球里。</p>
           </div>
-          <button id="growth-panel-close" class="growth-panel-close" type="button" aria-label="Close growth panel">&times;</button>
+          <div class="growth-header-actions">
+            <button id="history-open" class="growth-history-open" type="button">对局历史 <span aria-hidden="true">↗</span></button>
+            <button id="growth-panel-close" class="growth-panel-close" type="button" aria-label="Close growth panel">&times;</button>
+          </div>
         </div>
         <div class="growth-rank-band">
           <div>
@@ -299,7 +301,7 @@
         </div>
         <div class="growth-detail-grid">
           <div class="growth-section">
-            <h3>统计</h3>
+            <h3>我的球房成绩单</h3>
             <dl class="growth-stats-grid">
               <div><dt>总局数</dt><dd id="growth-stat-games">0</dd></div>
               <div><dt>拥有金币</dt><dd id="growth-stat-coins">260</dd></div>
@@ -312,11 +314,11 @@
             </dl>
           </div>
           <div class="growth-section">
-            <h3>每日任务</h3>
+            <h3>今日开杆清单</h3>
             <ul id="growth-task-list" class="growth-list"></ul>
           </div>
           <div class="growth-section">
-            <h3>挑战总览</h3>
+            <h3>闯关足迹</h3>
             <div class="growth-challenge-row">
               <span>星数</span>
               <strong id="growth-challenge-stars">0/30</strong>
@@ -325,10 +327,6 @@
               <span>完成关卡</span>
               <strong id="growth-challenge-levels">0/10</strong>
             </div>
-          </div>
-          <div class="growth-section">
-            <h3>最近战绩</h3>
-            <ul id="growth-recent-list" class="growth-list"></ul>
           </div>
         </div>
         <section class="growth-rank-rewards" aria-labelledby="growth-rank-rewards-title">
@@ -528,10 +526,11 @@
       <div class="history-panel-dialog">
         <div class="history-panel-header">
           <div>
-            <p class="eyebrow">History</p>
+            <p class="eyebrow">球房战报</p>
             <h2 id="history-title">对局历史</h2>
+            <p class="history-panel-intro">胜负有回声，下一杆有新故事。</p>
           </div>
-          <button id="history-close" class="history-panel-close" type="button" aria-label="关闭">&times;</button>
+          <button id="history-close" class="history-panel-close" type="button" aria-label="返回个人成长">← 返回个人成长</button>
         </div>
         <div class="history-panel-body">
           <ul id="history-list" class="history-list"></ul>
@@ -554,7 +553,7 @@
             <div class="settings-section-heading">
               <div>
                 <h3 id="settings-audio-title">声音</h3>
-                <p class="settings-note">菜单与选关播放《静夜球房》，对局播放《蓝毡微光》。</p>
+                <p class="settings-note">菜单 / 选关固定播放：《Beautiful Things - piano》；对局随机选播以下 3 首之一并循环：《Piano Background Gentle Study Flow》·《Background Piano Loop》·《Soft Piano》。</p>
               </div>
               <span class="settings-status-badge">原创纯音乐</span>
             </div>
@@ -582,7 +581,34 @@
               </div>
               <span class="settings-status-badge is-neutral">自动暂停已开启</span>
             </div>
-            <p class="settings-detail-note">切换到其他窗口时会自动暂停本地对局，返回后再继续，避免误操作。</p>
+            <div class="settings-control-grid">
+              <label class="settings-field" for="settings-aim-sensitivity">
+                <span>瞄准灵敏度</span>
+                <select id="settings-aim-sensitivity">
+                  <option value="fine">精细</option>
+                  <option value="normal">标准</option>
+                  <option value="fast">快速</option>
+                </select>
+              </label>
+              <label class="settings-field" for="settings-power-step">
+                <span>力度步进</span>
+                <select id="settings-power-step">
+                  <option value="1">1%</option>
+                  <option value="5">5%</option>
+                  <option value="10">10%</option>
+                  <option value="20">20%</option>
+                </select>
+              </label>
+            </div>
+            <label class="settings-switch" for="settings-power-lock">
+              <span><strong>力度锁定</strong><small>锁定后方向键只微调瞄准方向</small></span>
+              <input id="settings-power-lock" type="checkbox" />
+            </label>
+            <label class="settings-switch" for="settings-high-fps">
+              <span><strong>低画质 / 高帧率模式</strong><small>降低抗锯齿开销，优先保持流畅击球</small></span>
+              <input id="settings-high-fps" type="checkbox" />
+            </label>
+            <p class="settings-detail-note">切换到其他窗口时会自动暂停本地对局；控制设置会自动保存，并在下一局生效。</p>
           </section>
 
           <section class="settings-section settings-account-section" aria-labelledby="settings-account-title">
@@ -801,6 +827,13 @@
         </article>
       </section>
 
+      <section id="training-tools" class="training-tools" aria-label="自由训练工具" hidden>
+        <button id="training-arrange" type="button" aria-pressed="false">任意摆球</button>
+        <button id="training-undo" type="button" disabled>撤销</button>
+        <button id="training-repeat" type="button" disabled>重复上一杆</button>
+        <span id="training-tool-hint">拖动任意球调整局面</span>
+      </section>
+
       <section class="play-layout">
         <section class="table-frame" aria-label="Playable pool table">
           <div id="game"></div>
@@ -913,6 +946,7 @@
 
       <section id="pause-overlay" class="pause-overlay" hidden>
         <div class="pause-dialog">
+          <img class="game-modal-sticker pause-modal-sticker" src="/assets/sunlit-pool-butterfly-sticker.png" alt="" aria-hidden="true" width="138" height="115" decoding="async" loading="lazy" />
           <h2>游戏暂停</h2>
           <p>声音调整会自动保存</p>
           <div class="pause-audio-controls" aria-label="对局声音设置">
@@ -930,14 +964,29 @@
           <button id="pause-resume" type="button">继续游戏</button>
         </div>
       </section>
+
     </main>
+
+    <section id="leave-match-panel" class="leave-match-overlay" hidden>
+      <div class="leave-match-dialog" role="dialog" aria-modal="true" aria-labelledby="leave-match-title">
+        <img class="game-modal-sticker leave-match-sticker" src="/assets/sunlit-pool-butterfly-sticker.png" alt="" aria-hidden="true" width="138" height="115" decoding="async" loading="lazy" />
+        <img class="leave-match-ball" src="/assets/eight-ball-title-art.webp" alt="" aria-hidden="true" width="84" height="84" decoding="async" />
+        <p>离开当前球桌</p>
+        <h2 id="leave-match-title">确定结束这局吗？</h2>
+        <div class="leave-match-actions">
+          <button id="leave-match-cancel" type="button">继续对局</button>
+          <button id="leave-match-forfeit" type="button">认输</button>
+          <button id="leave-match-restart" type="button">认输并重开一局</button>
+        </div>
+      </div>
+    </section>
 
     <section id="cue-shop" class="cue-shop-overlay" hidden>
       <div class="cue-shop-dialog" role="dialog" aria-modal="true" aria-labelledby="cue-shop-title">
         <div class="cue-shop-header">
           <div class="cue-shop-heading-copy">
             <h2 id="cue-shop-title">球杆收藏</h2>
-            <p class="cue-shop-subtitle">按品质与综合评分排列</p>
+            <p class="cue-shop-subtitle">筛选、对比并保存常用装备预设</p>
           </div>
           <button id="cue-shop-close" class="cue-shop-close" type="button" aria-label="关闭球杆收藏" title="关闭">&times;</button>
         </div>

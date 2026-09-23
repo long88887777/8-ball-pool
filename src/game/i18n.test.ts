@@ -43,7 +43,7 @@ describe('localized copy', () => {
   it('formats HUD and game messages in Chinese', () => {
     const copy = getCopy('zh');
 
-    expect(copy.eyebrow).toBe('自我练习');
+    expect(copy.eyebrow).toBe('自由训练');
     expect(copy.hud.score(120)).toBe('得分 120');
     expect(copy.aimLabel).toBe('瞄准线');
     expect(copy.aimOn).toBe('开');
@@ -54,7 +54,7 @@ describe('localized copy', () => {
     expect(copy.spin.left).toBe('左塞');
     expect(copy.spin.right).toBe('右塞');
     expect(copy.spin.selected(copy.spin.left)).toBe('左塞');
-    expect(copy.hud.eightBallMode).toBe('自我练习 · 8 球');
+    expect(copy.hud.eightBallMode).toBe('自由训练 · 8 球');
     expect(copy.hud.playerName(1)).toBe('玩家一');
     expect(copy.hud.pocketedBalls).toBe('已进球');
     expect(copy.hud.targetBalls).toBe('目标球');
@@ -111,7 +111,7 @@ describe('i18n AI keys', () => {
     expect(copy.ai.thinkingWithDifficulty('熟练')).toBe('AI 思考中 · 熟练');
     expect(copy.ai.aimingWithDifficulty('熟练')).toBe('AI 瞄准中 · 熟练');
     expect(copy.hud.modeLabel).toBe('模式');
-    expect(copy.hud.modePvp).toBe('自我练习');
+    expect(copy.hud.modePvp).toBe('自由训练');
     expect(copy.hud.modeAi).toBe('人机对战');
     expect(copy.shell.settings).toBe('设置');
     expect(copy.shell.history).toBe('对局历史');
